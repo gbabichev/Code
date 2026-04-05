@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var workspace: EditorWorkspace
+    @State private var isShowingSettingsPopover = false
 
     var body: some View {
         NavigationSplitView {
@@ -28,7 +29,24 @@ struct ContentView: View {
                 }
                 .keyboardShortcut("s", modifiers: [.command])
                 .disabled(workspace.selectedTab == nil)
+
+                Button {
+                    isShowingSettingsPopover.toggle()
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .popover(isPresented: $isShowingSettingsPopover, arrowEdge: .bottom) {
+                    SettingsPopoverView()
+                        .environmentObject(workspace)
+                }
             }
+        }
+        .preferredColorScheme(preferredColorScheme)
+        .onChange(of: workspace.appTheme) { _, _ in
+            workspace.persistSession()
+        }
+        .onChange(of: workspace.syntaxHighlightingSkin) { _, _ in
+            workspace.persistSession()
         }
         .alert("Editor Error", isPresented: errorBinding) {
             Button("OK") {
@@ -117,6 +135,7 @@ struct ContentView: View {
                         CodeEditorView(
                             text: selectedTabBinding(selectedTab),
                             isWordWrapEnabled: workspace.isWordWrapEnabled,
+                            syntaxHighlightingSkin: workspace.syntaxHighlightingSkin,
                             language: selectedTab.language
                         )
                     }
@@ -141,5 +160,50 @@ struct ContentView: View {
                 }
             }
         )
+    }
+
+    private var preferredColorScheme: ColorScheme? {
+        switch workspace.appTheme {
+        case .system:
+            nil
+        case .light:
+            .light
+        case .dark:
+            .dark
+        }
+    }
+}
+
+private struct SettingsPopoverView: View {
+    @EnvironmentObject private var workspace: EditorWorkspace
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Theme")
+                    .font(.headline)
+
+                Picker("Theme", selection: $workspace.appTheme) {
+                    ForEach(AppTheme.allCases) { theme in
+                        Text(theme.title).tag(theme)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Syntax Highlighting Skin")
+                    .font(.headline)
+
+                Picker("Syntax Highlighting Skin", selection: $workspace.syntaxHighlightingSkin) {
+                    ForEach(SyntaxHighlightingSkin.allCases) { skin in
+                        Text(skin.title).tag(skin)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
     }
 }

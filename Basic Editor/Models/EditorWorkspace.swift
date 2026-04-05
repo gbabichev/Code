@@ -17,6 +17,8 @@ final class EditorWorkspace: ObservableObject {
     @Published var selectedTabID: EditorTab.ID?
     @Published var selectedFileID: FileNode.ID?
     @Published var isWordWrapEnabled = false
+    @Published var appTheme: AppTheme = .system
+    @Published var syntaxHighlightingSkin: SyntaxHighlightingSkin = .classic
     @Published var errorMessage: String?
 
     private let fileManager: FileManager
@@ -137,6 +139,8 @@ final class EditorWorkspace: ObservableObject {
             selectedFilePath: selectedFileID,
             selectedTabPath: selectedTabID,
             isWordWrapEnabled: isWordWrapEnabled,
+            appTheme: appTheme,
+            syntaxHighlightingSkin: syntaxHighlightingSkin,
             tabs: openTabs.map {
                 EditorTabSnapshot(
                     filePath: $0.fileURL.path(percentEncoded: false),
@@ -160,6 +164,8 @@ final class EditorWorkspace: ObservableObject {
         }
 
         isWordWrapEnabled = snapshot.isWordWrapEnabled
+        appTheme = snapshot.appTheme
+        syntaxHighlightingSkin = snapshot.syntaxHighlightingSkin
 
         let restoredTabs = snapshot.tabs.compactMap { item -> EditorTab? in
             let url = URL(fileURLWithPath: item.filePath)
