@@ -89,6 +89,24 @@ enum SyntaxHighlighterFactory {
 struct SkinTheme {
     static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
     static let semiboldFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold)
+    static let fallback = SkinDefinition(
+        schemaVersion: 1,
+        id: "classic",
+        name: "Classic",
+        editor: .init(
+            background: .init(light: "#FFFFFF", dark: "#1E1E1E"),
+            foreground: .init(light: "#111111", dark: "#E6E6E6")
+        ),
+        tokens: .init(
+            keyword: .init(light: "#FF2D92", dark: "#FF7ABD"),
+            builtin: .init(light: "#0A84FF", dark: "#6DB7FF"),
+            variable: .init(light: "#FF9F0A", dark: "#FFC457"),
+            string: .init(light: "#2DA44E", dark: "#7BDC8B"),
+            comment: .init(light: "#6E6E73", dark: "#8E8E93"),
+            command: .init(light: "#AF52DE", dark: "#D69CFF")
+        ),
+        languageOverrides: [:]
+    ).makeTheme(for: .plainText)
 
     let editorBackgroundColor: NSColor
     let baseColor: NSColor
@@ -98,6 +116,13 @@ struct SkinTheme {
     let stringColor: NSColor
     let commentColor: NSColor
     let commandColor: NSColor
+    let currentLineColor: NSColor
+    let selectionColor: NSColor
+    let gutterBackgroundColor: NSColor
+    let gutterBorderColor: NSColor
+    let gutterTextColor: NSColor
+    let gutterCurrentLineColor: NSColor
+    let gutterCurrentLineNumberColor: NSColor
 
     var baseAttributes: [NSAttributedString.Key: Any] {
         [

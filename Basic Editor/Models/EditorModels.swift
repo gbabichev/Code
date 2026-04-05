@@ -59,15 +59,24 @@ struct SkinDefinition: Codable, Identifiable, Hashable {
 
     func makeTheme(for language: EditorLanguage) -> SkinTheme {
         let palette = languageOverrides[language.rawValue] ?? tokens
+        let backgroundColor = editor.background.resolveColor()
+        let foregroundColor = editor.foreground.resolveColor()
         return SkinTheme(
-            editorBackgroundColor: editor.background.resolveColor(),
-            baseColor: editor.foreground.resolveColor(),
+            editorBackgroundColor: backgroundColor,
+            baseColor: foregroundColor,
             keywordColor: palette.keyword.resolveColor(),
             builtinColor: palette.builtin.resolveColor(),
             variableColor: palette.variable.resolveColor(),
             stringColor: palette.string.resolveColor(),
             commentColor: palette.comment.resolveColor(),
-            commandColor: palette.command.resolveColor()
+            commandColor: palette.command.resolveColor(),
+            currentLineColor: editor.background.mixed(with: editor.foreground, fraction: 0.08, overlayAlpha: 0.20),
+            selectionColor: editor.foreground.withAlpha(0.15),
+            gutterBackgroundColor: backgroundColor,
+            gutterBorderColor: editor.foreground.withAlpha(0.10),
+            gutterTextColor: editor.foreground.withAlpha(0.55),
+            gutterCurrentLineColor: editor.background.mixed(with: editor.foreground, fraction: 0.04, overlayAlpha: 0.08),
+            gutterCurrentLineNumberColor: editor.foreground.withAlpha(0.90)
         )
     }
 }
@@ -93,6 +102,26 @@ struct SkinAppearanceColor: Codable, Hashable {
     func resolveColor() -> NSColor {
         NSColor(lightHex: light, darkHex: dark)
     }
+
+    func withAlpha(_ alpha: CGFloat) -> NSColor {
+        NSColor(
+            lightHex: light,
+            darkHex: dark,
+            lightAlpha: alpha,
+            darkAlpha: alpha
+        )
+    }
+
+    func mixed(with other: SkinAppearanceColor, fraction: CGFloat, overlayAlpha: CGFloat = 1) -> NSColor {
+        NSColor(
+            lightHex: light,
+            darkHex: dark,
+            mixedLightHex: other.light,
+            mixedDarkHex: other.dark,
+            fraction: fraction,
+            overlayAlpha: overlayAlpha
+        )
+    }
 }
 
 extension NSColor {
@@ -100,6 +129,32 @@ extension NSColor {
         self.init(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             return NSColor(hex: isDark ? darkHex : lightHex) ?? .textColor
+        }
+    }
+
+    convenience init(lightHex: String, darkHex: String, lightAlpha: CGFloat, darkAlpha: CGFloat) {
+        self.init(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let base = NSColor(hex: isDark ? darkHex : lightHex) ?? .textColor
+            return base.withAlphaComponent(isDark ? darkAlpha : lightAlpha)
+        }
+    }
+
+    convenience init(
+        lightHex: String,
+        darkHex: String,
+        mixedLightHex: String,
+        mixedDarkHex: String,
+        fraction: CGFloat,
+        overlayAlpha: CGFloat
+    ) {
+        self.init(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let baseHex = isDark ? darkHex : lightHex
+            let mixedHex = isDark ? mixedDarkHex : mixedLightHex
+            let base = NSColor(hex: baseHex) ?? .textColor
+            let overlay = (NSColor(hex: mixedHex) ?? .textColor).withAlphaComponent(overlayAlpha)
+            return base.blended(withFraction: fraction, of: overlay) ?? base
         }
     }
 
