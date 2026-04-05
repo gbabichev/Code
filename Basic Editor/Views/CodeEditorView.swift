@@ -10,6 +10,7 @@ import SwiftUI
 
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
+    let isWordWrapEnabled: Bool
     let language: EditorLanguage
 
     func makeCoordinator() -> Coordinator {
@@ -30,22 +31,16 @@ struct CodeEditorView: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 14, height: 16)
         textView.allowsUndo = true
         textView.autoresizingMask = [.width]
-        textView.isHorizontallyResizable = true
         textView.isVerticallyResizable = true
-        textView.textContainer?.widthTracksTextView = false
-        textView.textContainer?.containerSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
         textView.string = text
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
         scrollView.borderType = .noBorder
         scrollView.documentView = textView
 
         context.coordinator.textView = textView
+        context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled, in: scrollView)
         context.coordinator.applyHighlighting()
         return scrollView
     }
@@ -53,6 +48,7 @@ struct CodeEditorView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.language = language
         context.coordinator.textBinding = $text
+        context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled, in: scrollView)
 
         guard let textView = context.coordinator.textView else { return }
         if textView.string != text {
@@ -75,6 +71,28 @@ struct CodeEditorView: NSViewRepresentable {
             guard let textView else { return }
             textBinding.wrappedValue = textView.string
             applyHighlighting()
+        }
+
+        func configureLayout(isWordWrapEnabled: Bool, in scrollView: NSScrollView) {
+            guard let textView, let textContainer = textView.textContainer else { return }
+
+            if isWordWrapEnabled {
+                textView.isHorizontallyResizable = false
+                textContainer.widthTracksTextView = true
+                textContainer.containerSize = NSSize(
+                    width: 0,
+                    height: CGFloat.greatestFiniteMagnitude
+                )
+                scrollView.hasHorizontalScroller = false
+            } else {
+                textView.isHorizontallyResizable = true
+                textContainer.widthTracksTextView = false
+                textContainer.containerSize = NSSize(
+                    width: CGFloat.greatestFiniteMagnitude,
+                    height: CGFloat.greatestFiniteMagnitude
+                )
+                scrollView.hasHorizontalScroller = true
+            }
         }
 
         func applyHighlighting() {

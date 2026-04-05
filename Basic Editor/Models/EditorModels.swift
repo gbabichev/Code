@@ -54,6 +54,7 @@ struct EditorSessionSnapshot: Codable {
     let rootFolderPath: String?
     let selectedFilePath: String?
     let selectedTabPath: String?
+    let isWordWrapEnabled: Bool
     let tabs: [EditorTabSnapshot]
 }
 

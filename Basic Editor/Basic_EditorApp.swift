@@ -24,6 +24,11 @@ struct Basic_EditorApp: App {
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
             }
+
+            CommandGroup(after: .sidebar) {
+                Toggle("Word Wrap", isOn: $workspace.isWordWrapEnabled)
+                    .keyboardShortcut("z", modifiers: [.option, .command])
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active {

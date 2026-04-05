@@ -114,7 +114,11 @@ struct ContentView: View {
 
                         Divider()
 
-                        CodeEditorView(text: selectedTabBinding(selectedTab), language: selectedTab.language)
+                        CodeEditorView(
+                            text: selectedTabBinding(selectedTab),
+                            isWordWrapEnabled: workspace.isWordWrapEnabled,
+                            language: selectedTab.language
+                        )
                     }
                 }
             }

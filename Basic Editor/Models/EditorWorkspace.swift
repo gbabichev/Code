@@ -16,6 +16,7 @@ final class EditorWorkspace: ObservableObject {
     @Published private(set) var openTabs: [EditorTab] = []
     @Published var selectedTabID: EditorTab.ID?
     @Published var selectedFileID: FileNode.ID?
+    @Published var isWordWrapEnabled = false
     @Published var errorMessage: String?
 
     private let fileManager: FileManager
@@ -113,6 +114,11 @@ final class EditorWorkspace: ObservableObject {
         saveTab(id: tab.id)
     }
 
+    func toggleWordWrap() {
+        isWordWrapEnabled.toggle()
+        persistSession()
+    }
+
     func saveTab(id: EditorTab.ID) {
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
 
@@ -130,6 +136,7 @@ final class EditorWorkspace: ObservableObject {
             rootFolderPath: rootFolderURL?.path(percentEncoded: false),
             selectedFilePath: selectedFileID,
             selectedTabPath: selectedTabID,
+            isWordWrapEnabled: isWordWrapEnabled,
             tabs: openTabs.map {
                 EditorTabSnapshot(
                     filePath: $0.fileURL.path(percentEncoded: false),
@@ -151,6 +158,8 @@ final class EditorWorkspace: ObservableObject {
                 reloadFileTree()
             }
         }
+
+        isWordWrapEnabled = snapshot.isWordWrapEnabled
 
         let restoredTabs = snapshot.tabs.compactMap { item -> EditorTab? in
             let url = URL(fileURLWithPath: item.filePath)
