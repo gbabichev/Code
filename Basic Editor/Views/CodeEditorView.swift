@@ -11,24 +11,24 @@ import SwiftUI
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
     let isWordWrapEnabled: Bool
-    let syntaxHighlightingSkin: SyntaxHighlightingSkin
+    let skin: SkinDefinition
     let language: EditorLanguage
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(textBinding: $text, language: language, syntaxHighlightingSkin: syntaxHighlightingSkin)
+        Coordinator(textBinding: $text, language: language, skin: skin)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
         let textView = NSTextView()
-        let skin = SyntaxSkin.make(for: syntaxHighlightingSkin)
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticDataDetectionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
-        textView.font = SyntaxSkin.font
-        textView.textColor = skin.baseColor
-        textView.backgroundColor = skin.editorBackgroundColor
+        textView.font = SkinTheme.font
+        let theme = skin.makeTheme(for: language)
+        textView.textColor = theme.baseColor
+        textView.backgroundColor = theme.editorBackgroundColor
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 14, height: 16)
         textView.allowsUndo = true
@@ -49,14 +49,14 @@ struct CodeEditorView: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.language = language
-        context.coordinator.syntaxHighlightingSkin = syntaxHighlightingSkin
+        context.coordinator.skin = skin
         context.coordinator.textBinding = $text
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled, in: scrollView)
 
         guard let textView = context.coordinator.textView else { return }
-        let skin = SyntaxSkin.make(for: syntaxHighlightingSkin)
-        textView.textColor = skin.baseColor
-        textView.backgroundColor = skin.editorBackgroundColor
+        let theme = skin.makeTheme(for: language)
+        textView.textColor = theme.baseColor
+        textView.backgroundColor = theme.editorBackgroundColor
         if textView.string != text {
             textView.string = text
             context.coordinator.applyHighlighting()
@@ -68,13 +68,13 @@ struct CodeEditorView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var textBinding: Binding<String>
         var language: EditorLanguage
-        var syntaxHighlightingSkin: SyntaxHighlightingSkin
+        var skin: SkinDefinition
         weak var textView: NSTextView?
 
-        init(textBinding: Binding<String>, language: EditorLanguage, syntaxHighlightingSkin: SyntaxHighlightingSkin) {
+        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition) {
             self.textBinding = textBinding
             self.language = language
-            self.syntaxHighlightingSkin = syntaxHighlightingSkin
+            self.skin = skin
         }
 
         func textDidChange(_ notification: Notification) {
@@ -110,7 +110,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             let selectedRanges = textView.selectedRanges
             textStorage.beginEditing()
-            SyntaxHighlighterFactory.makeHighlighter(for: language, skin: syntaxHighlightingSkin)
+            SyntaxHighlighterFactory.makeHighlighter(for: language, skin: skin)
                 .apply(to: textStorage, text: textView.string)
             textStorage.endEditing()
             textView.selectedRanges = selectedRanges

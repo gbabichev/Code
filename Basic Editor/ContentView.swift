@@ -45,7 +45,7 @@ struct ContentView: View {
         .onChange(of: workspace.appTheme) { _, _ in
             workspace.persistSession()
         }
-        .onChange(of: workspace.syntaxHighlightingSkin) { _, _ in
+        .onChange(of: workspace.selectedSkinID) { _, _ in
             workspace.persistSession()
         }
         .alert("Editor Error", isPresented: errorBinding) {
@@ -135,7 +135,7 @@ struct ContentView: View {
                         CodeEditorView(
                             text: selectedTabBinding(selectedTab),
                             isWordWrapEnabled: workspace.isWordWrapEnabled,
-                            syntaxHighlightingSkin: workspace.syntaxHighlightingSkin,
+                            skin: workspace.selectedSkin,
                             language: selectedTab.language
                         )
                     }
@@ -195,12 +195,21 @@ private struct SettingsPopoverView: View {
                 Text("Syntax Highlighting Skin")
                     .font(.headline)
 
-                Picker("Syntax Highlighting Skin", selection: $workspace.syntaxHighlightingSkin) {
-                    ForEach(SyntaxHighlightingSkin.allCases) { skin in
-                        Text(skin.title).tag(skin)
+                Picker("Syntax Highlighting Skin", selection: $workspace.selectedSkinID) {
+                    ForEach(workspace.availableSkins) { skin in
+                        Text(skin.name).tag(skin.id)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
+
+                HStack {
+                    Button("Import…") {
+                        workspace.importSkin()
+                    }
+                    Button("Export Current…") {
+                        workspace.exportSelectedSkin()
+                    }
+                }
             }
         }
         .padding(16)

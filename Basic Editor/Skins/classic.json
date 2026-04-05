@@ -1,0 +1,69 @@
+{
+  "editor" : {
+    "background" : {
+      "dark" : "#1E1E1EFF",
+      "light" : "#FFFFFFFF"
+    },
+    "foreground" : {
+      "dark" : "#E6E6E6FF",
+      "light" : "#111111FF"
+    }
+  },
+  "id" : "classic",
+  "languageOverrides" : {
+    "shell" : {
+      "builtin" : {
+        "dark" : "#6DB7FFFF",
+        "light" : "#0A84FFFF"
+      },
+      "command" : {
+        "dark" : "#D69CFFFF",
+        "light" : "#AF52DEFF"
+      },
+      "comment" : {
+        "dark" : "#8E8E93FF",
+        "light" : "#6E6E73FF"
+      },
+      "keyword" : {
+        "dark" : "#FF7ABDFF",
+        "light" : "#FF2D92FF"
+      },
+      "string" : {
+        "dark" : "#7BDC8BFF",
+        "light" : "#2DA44EFF"
+      },
+      "variable" : {
+        "dark" : "#FFC457FF",
+        "light" : "#FF9F0AFF"
+      }
+    }
+  },
+  "name" : "Classic",
+  "schemaVersion" : 1,
+  "tokens" : {
+    "builtin" : {
+      "dark" : "#6DB7FFFF",
+      "light" : "#0A84FFFF"
+    },
+    "command" : {
+      "dark" : "#D69CFFFF",
+      "light" : "#AF52DEFF"
+    },
+    "comment" : {
+      "dark" : "#8E8E93FF",
+      "light" : "#6E6E73FF"
+    },
+    "keyword" : {
+      "dark" : "#FF7ABDFF",
+      "light" : "#FF2D92FF"
+    },
+    "string" : {
+      "dark" : "#7BDC8BFF",
+      "light" : "#2DA44EFF"
+    },
+    "variable" : {
+      "dark" : "#FFC457FF",
+      "light" : "#FF9F0AFF"
+    }
+  }
+}

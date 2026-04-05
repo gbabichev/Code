@@ -1,0 +1,69 @@
+{
+  "schemaVersion" : 1,
+  "id" : "vscode",
+  "name" : "VSCode",
+  "editor" : {
+    "background" : {
+      "light" : "#FFFFFF",
+      "dark" : "#1E1E1E"
+    },
+    "foreground" : {
+      "light" : "#1F2328",
+      "dark" : "#D4D4D4"
+    }
+  },
+  "tokens" : {
+    "keyword" : {
+      "light" : "#0000FF",
+      "dark" : "#569CD6"
+    },
+    "builtin" : {
+      "light" : "#795E26",
+      "dark" : "#DCDCAA"
+    },
+    "variable" : {
+      "light" : "#001080",
+      "dark" : "#9CDCFE"
+    },
+    "string" : {
+      "light" : "#A31515",
+      "dark" : "#CE9178"
+    },
+    "comment" : {
+      "light" : "#008000",
+      "dark" : "#6A9955"
+    },
+    "command" : {
+      "light" : "#267F99",
+      "dark" : "#4EC9B0"
+    }
+  },
+  "languageOverrides" : {
+    "shell" : {
+      "keyword" : {
+        "light" : "#0000FF",
+        "dark" : "#569CD6"
+      },
+      "builtin" : {
+        "light" : "#795E26",
+        "dark" : "#DCDCAA"
+      },
+      "variable" : {
+        "light" : "#001080",
+        "dark" : "#9CDCFE"
+      },
+      "string" : {
+        "light" : "#A31515",
+        "dark" : "#CE9178"
+      },
+      "comment" : {
+        "light" : "#008000",
+        "dark" : "#6A9955"
+      },
+      "command" : {
+        "light" : "#267F99",
+        "dark" : "#4EC9B0"
+      }
+    }
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "editor" : {
+    "background" : {
+      "dark" : "#171C18FF",
+      "light" : "#F2F5E6FF"
+    },
+    "foreground" : {
+      "dark" : "#D9E3D2FF",
+      "light" : "#2B3328FF"
+    }
+  },
+  "id" : "forest",
+  "languageOverrides" : {
+    "shell" : {
+      "builtin" : {
+        "dark" : "#75B8FFFF",
+        "light" : "#2759B8FF"
+      },
+      "command" : {
+        "dark" : "#D5A3FFFF",
+        "light" : "#6A2FB0FF"
+      },
+      "comment" : {
+        "dark" : "#78907BFF",
+        "light" : "#6A7A67FF"
+      },
+      "keyword" : {
+        "dark" : "#88F2DDFF",
+        "light" : "#007768FF"
+      },
+      "string" : {
+        "dark" : "#A8E882FF",
+        "light" : "#2F7A1FFF"
+      },
+      "variable" : {
+        "dark" : "#F5C467FF",
+        "light" : "#A75A0BFF"
+      }
+    }
+  },
+  "name" : "Forest",
+  "schemaVersion" : 1,
+  "tokens" : {
+    "builtin" : {
+      "dark" : "#75B8FFFF",
+      "light" : "#2759B8FF"
+    },
+    "command" : {
+      "dark" : "#D5A3FFFF",
+      "light" : "#6A2FB0FF"
+    },
+    "comment" : {
+      "dark" : "#78907BFF",
+      "light" : "#6A7A67FF"
+    },
+    "keyword" : {
+      "dark" : "#88F2DDFF",
+      "light" : "#007768FF"
+    },
+    "string" : {
+      "dark" : "#A8E882FF",
+      "light" : "#2F7A1FFF"
+    },
+    "variable" : {
+      "dark" : "#F5C467FF",
+      "light" : "#A75A0BFF"
+    }
+  }
+}
