@@ -123,7 +123,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func configureLayout(isWordWrapEnabled: Bool) {
-            guard let textView, let textContainer = textView.textContainer else { return }
+            guard let textView, let textContainer = unsafe textView.textContainer else { return }
 
             if isWordWrapEnabled {
                 textView.isHorizontallyResizable = false
@@ -155,7 +155,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func applyHighlighting() {
-            guard let textView, let textStorage = textView.textStorage else { return }
+            guard let textView, let textStorage = unsafe textView.textStorage else { return }
             if isApplyingHighlighting { return }
 
             isApplyingHighlighting = true
@@ -214,8 +214,8 @@ final class GutterView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let textView,
-              let layoutManager = textView.layoutManager,
-              let textContainer = textView.textContainer,
+              let layoutManager = unsafe textView.layoutManager,
+              let textContainer = unsafe textView.textContainer,
               let scrollView = textView.enclosingScrollView else {
             return
         }
@@ -241,7 +241,7 @@ final class GutterView: NSView {
 
         while glyphIndex < NSMaxRange(visibleGlyphRange), glyphIndex < layoutManager.numberOfGlyphs {
             var lineGlyphRange = NSRange()
-            let lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineGlyphRange)
+            let lineRect = unsafe layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineGlyphRange)
             let characterIndex = layoutManager.characterIndexForGlyph(at: lineGlyphRange.location)
             let lineRange = text.lineRange(for: NSRange(location: characterIndex, length: 0))
             let y = lineRect.minY - clipOrigin.y + textView.textContainerInset.height

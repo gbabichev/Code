@@ -161,9 +161,7 @@ extension NSColor {
     convenience init?(hex: String) {
         let cleaned = hex.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "#", with: "")
         guard cleaned.count == 6 || cleaned.count == 8 else { return nil }
-
-        var value: UInt64 = 0
-        guard Scanner(string: cleaned).scanHexInt64(&value) else { return nil }
+        guard let value = UInt64(cleaned, radix: 16) else { return nil }
 
         let hasAlpha = cleaned.count == 8
         let red = CGFloat((value >> (hasAlpha ? 24 : 16)) & 0xFF) / 255
