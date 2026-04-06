@@ -175,6 +175,7 @@ struct ContentView: View {
                         isWordWrapEnabled: preferences.isWordWrapEnabled,
                         skin: preferences.selectedSkin,
                         language: selectedTab.language,
+                        indentWidth: preferences.indentWidth,
                         editorFont: preferences.editorFont,
                         editorSemiboldFont: preferences.editorSemiboldFont
                     )
@@ -652,6 +653,20 @@ private struct SettingsPopoverView: View {
                         "",
                         value: $preferences.editorFontSize,
                         in: AppPreferences.minEditorFontSize...AppPreferences.maxEditorFontSize,
+                        step: 1
+                    )
+                    .labelsHidden()
+                }
+
+                HStack {
+                    Text("Indent Width")
+                    Spacer()
+                    Text("\(preferences.indentWidth) spaces")
+                        .foregroundStyle(.secondary)
+                    Stepper(
+                        "",
+                        value: $preferences.indentWidth,
+                        in: AppPreferences.minIndentWidth...AppPreferences.maxIndentWidth,
                         step: 1
                     )
                     .labelsHidden()

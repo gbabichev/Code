@@ -391,11 +391,19 @@ struct CodeEditorView: NSViewRepresentable {
     let isWordWrapEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
+    let indentWidth: Int
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(textBinding: $text, language: language, skin: skin, editorFont: editorFont, editorSemiboldFont: editorSemiboldFont)
+        Coordinator(
+            textBinding: $text,
+            language: language,
+            skin: skin,
+            indentWidth: indentWidth,
+            editorFont: editorFont,
+            editorSemiboldFont: editorSemiboldFont
+        )
     }
 
     func makeNSView(context: Context) -> EditorContainerView {
@@ -453,9 +461,9 @@ struct CodeEditorView: NSViewRepresentable {
             || context.coordinator.editorFont.pointSize != editorFont.pointSize
             || context.coordinator.editorSemiboldFont.fontName != editorSemiboldFont.fontName
             || context.coordinator.editorSemiboldFont.pointSize != editorSemiboldFont.pointSize
-
         context.coordinator.language = language
         context.coordinator.skin = skin
+        context.coordinator.indentWidth = indentWidth
         context.coordinator.textBinding = $text
         context.coordinator.editorFont = editorFont
         context.coordinator.editorSemiboldFont = editorSemiboldFont
@@ -478,6 +486,7 @@ struct CodeEditorView: NSViewRepresentable {
         var textBinding: Binding<String>
         var language: EditorLanguage
         var skin: SkinDefinition
+        var indentWidth: Int
         var editorFont: NSFont
         var editorSemiboldFont: NSFont
         weak var textView: NSTextView?
@@ -493,10 +502,11 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingRefreshWorkItem: DispatchWorkItem?
         private var pendingFoldRefresh = false
 
-        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, editorFont: NSFont, editorSemiboldFont: NSFont) {
+        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, editorFont: NSFont, editorSemiboldFont: NSFont) {
             self.textBinding = textBinding
             self.language = language
             self.skin = skin
+            self.indentWidth = indentWidth
             self.editorFont = editorFont
             self.editorSemiboldFont = editorSemiboldFont
             self.sourceText = textBinding.wrappedValue
@@ -516,6 +526,7 @@ struct CodeEditorView: NSViewRepresentable {
                     self?.expandAllFoldsIfNeeded()
                 }
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
+                lineClickableTextView.indentWidth = indentWidth
             }
 
             NotificationCenter.default.addObserver(
@@ -607,6 +618,7 @@ struct CodeEditorView: NSViewRepresentable {
             if let lineClickableTextView = textView as? LineClickableTextView {
                 lineClickableTextView.currentLineHighlightColor = theme.currentLineColor
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
+                lineClickableTextView.indentWidth = indentWidth
             }
             scrollView?.backgroundColor = theme.editorBackgroundColor
             gutterView.theme = theme
@@ -799,6 +811,7 @@ final class LineClickableTextView: NSTextView {
     }
     var beforeEditingHandler: (() -> Void)?
     var lineCommentPrefix: String?
+    var indentWidth = 4
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -901,7 +914,7 @@ final class LineClickableTextView: NSTextView {
         let lineCount = originalHasTrailingNewline ? max(lines.count - 1, 0) : lines.count
         guard lineCount > 0 else { return }
 
-        let indentUnit = "    "
+        let indentUnit = String(repeating: " ", count: max(indentWidth, 1))
         let updatedActiveLines = lines.prefix(lineCount).map { line in
             if outdent {
                 if line.hasPrefix(indentUnit) {

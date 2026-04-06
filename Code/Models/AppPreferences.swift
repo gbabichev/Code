@@ -17,6 +17,9 @@ final class AppPreferences: ObservableObject {
     static let defaultEditorFontFamilyName = "Menlo"
     static let minEditorFontSize: Double = 10
     static let maxEditorFontSize: Double = 28
+    static let defaultIndentWidth = 4
+    static let minIndentWidth = 1
+    static let maxIndentWidth = 8
 
     @Published var isWordWrapEnabled: Bool {
         didSet {
@@ -63,6 +66,17 @@ final class AppPreferences: ObservableObject {
     @Published var isSidebarVisible: Bool {
         didSet {
             userDefaults.set(isSidebarVisible, forKey: Keys.isSidebarVisible)
+        }
+    }
+
+    @Published var indentWidth: Int {
+        didSet {
+            let clampedWidth = min(max(indentWidth, Self.minIndentWidth), Self.maxIndentWidth)
+            if clampedWidth != indentWidth {
+                indentWidth = clampedWidth
+                return
+            }
+            userDefaults.set(indentWidth, forKey: Keys.indentWidth)
         }
     }
 
@@ -116,6 +130,12 @@ final class AppPreferences: ObservableObject {
             isSidebarVisible = true
         }
 
+        if userDefaults.object(forKey: Keys.indentWidth) != nil {
+            indentWidth = userDefaults.integer(forKey: Keys.indentWidth)
+        } else {
+            indentWidth = Self.defaultIndentWidth
+        }
+
         reloadEditorFonts()
         reloadSkins()
 
@@ -126,6 +146,7 @@ final class AppPreferences: ObservableObject {
         userDefaults.set(editorFontName, forKey: Keys.editorFontName)
         userDefaults.set(editorFontSize, forKey: Keys.editorFontSize)
         userDefaults.set(isSidebarVisible, forKey: Keys.isSidebarVisible)
+        userDefaults.set(indentWidth, forKey: Keys.indentWidth)
     }
 
     var selectedSkin: SkinDefinition {
@@ -268,4 +289,5 @@ private enum Keys {
     static let editorFontName = "preferences.editorFontName"
     static let editorFontSize = "preferences.editorFontSize"
     static let isSidebarVisible = "preferences.isSidebarVisible"
+    static let indentWidth = "preferences.indentWidth"
 }
