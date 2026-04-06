@@ -468,6 +468,13 @@ final class LineClickableTextView: NSTextView {
         super.insertText(insertString, replacementRange: replacementRange)
     }
 
+    override func insertNewline(_ sender: Any?) {
+        let indentation = currentLineLeadingWhitespaceForInsertion()
+        super.insertNewline(sender)
+        guard !indentation.isEmpty else { return }
+        super.insertText(indentation, replacementRange: selectedRange())
+    }
+
     override func paste(_ sender: Any?) {
         super.paste(sender)
     }
@@ -482,6 +489,19 @@ final class LineClickableTextView: NSTextView {
 
     override func deleteForward(_ sender: Any?) {
         super.deleteForward(sender)
+    }
+
+    private func currentLineLeadingWhitespaceForInsertion() -> String {
+        let nsText = string as NSString
+        let selection = selectedRange()
+        guard selection.location != NSNotFound else { return "" }
+
+        let location = min(selection.location, nsText.length)
+        let lineRange = nsText.lineRange(for: NSRange(location: location, length: 0))
+        guard lineRange.location != NSNotFound, lineRange.length > 0 else { return "" }
+
+        let line = nsText.substring(with: lineRange)
+        return String(line.prefix { $0 == " " || $0 == "\t" })
     }
 
     @discardableResult
