@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var isShowingSettingsPopover = false
     @State private var isTargetingTabDrop = false
     @State private var cachedSearchMatches: [NSRange] = []
+    @State private var toastMessage: String?
     @FocusState private var focusedSearchField: SearchField?
 
     enum SearchField: Hashable {
@@ -177,6 +178,18 @@ struct ContentView: View {
                 fileInfoBar(for: selectedTab)
             }
         }
+        .overlay(alignment: .bottomTrailing) {
+            if let toastMessage {
+                Text(toastMessage)
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 44)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .onChange(of: searchController.eventID) { _, _ in
             handleSearchCommand()
         }
@@ -207,6 +220,27 @@ struct ContentView: View {
                 .truncationMode(.middle)
 
             Spacer(minLength: 0)
+
+            if tab.fileURL != nil {
+                Button {
+                    openParentFolder(for: tab)
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .buttonStyle(.borderless)
+                .help("Open Parent Folder in Finder")
+
+                Button {
+                    copyFileURL(for: tab)
+                } label: {
+                    Image(systemName: "link")
+                }
+                .buttonStyle(.borderless)
+                .help("Copy File URL")
+
+                Divider()
+                    .frame(height: 12)
+            }
 
             Text("\(lineCount(for: tab)) lines")
 
@@ -482,6 +516,31 @@ struct ContentView: View {
         }
 
         return true
+    }
+
+    private func openParentFolder(for tab: EditorTab) {
+        guard let parentURL = tab.fileURL?.deletingLastPathComponent() else { return }
+        NSWorkspace.shared.open(parentURL)
+    }
+
+    private func copyFileURL(for tab: EditorTab) {
+        guard let fileURL = tab.fileURL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(fileURL.absoluteString, forType: .string)
+        showToast("File URL Copied")
+    }
+
+    private func showToast(_ message: String) {
+        withAnimation(.easeOut(duration: 0.16)) {
+            toastMessage = message
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            guard toastMessage == message else { return }
+            withAnimation(.easeIn(duration: 0.16)) {
+                toastMessage = nil
+            }
+        }
     }
 
     private var pendingTabCloseBinding: Binding<Bool> {
