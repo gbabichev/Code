@@ -6,11 +6,13 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var workspace: EditorWorkspace
     @State private var isShowingSettingsPopover = false
+    @State private var isTargetingTabDrop = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: Binding(
@@ -122,8 +124,14 @@ struct ContentView: View {
                 TabBarView(
                     tabs: workspace.openTabs,
                     selectedTabID: workspace.selectedTabID,
+                    isDropTargeted: isTargetingTabDrop,
                     onSelect: { workspace.selectedTabID = $0 },
                     onClose: requestCloseTab
+                )
+                .onDrop(
+                    of: [UTType.fileURL.identifier],
+                    isTargeted: $isTargetingTabDrop,
+                    perform: handleDroppedItems
                 )
 
                 Divider()
@@ -232,6 +240,27 @@ struct ContentView: View {
 
     private func requestCloseTab(_ id: EditorTab.ID) {
         workspace.requestCloseTab(id)
+    }
+
+    private func handleDroppedItems(_ providers: [NSItemProvider]) -> Bool {
+        let fileURLProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !fileURLProviders.isEmpty else { return false }
+
+        for provider in fileURLProviders {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                guard let data,
+                      let url = URL(dataRepresentation: data, relativeTo: nil),
+                      !url.hasDirectoryPath else {
+                    return
+                }
+
+                Task { @MainActor in
+                    workspace.openFile(url)
+                }
+            }
+        }
+
+        return true
     }
 
     private var pendingTabCloseBinding: Binding<Bool> {

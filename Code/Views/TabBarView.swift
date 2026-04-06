@@ -10,6 +10,7 @@ import SwiftUI
 struct TabBarView: View {
     let tabs: [EditorTab]
     let selectedTabID: EditorTab.ID?
+    let isDropTargeted: Bool
     let onSelect: (EditorTab.ID) -> Void
     let onClose: (EditorTab.ID) -> Void
 
@@ -29,6 +30,11 @@ struct TabBarView: View {
             .padding(.vertical, 8)
         }
         .background(Color(nsColor: .controlBackgroundColor))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.accentColor.opacity(isDropTargeted ? 0.9 : 0), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                .padding(4)
+        }
     }
 }
 
