@@ -129,34 +129,84 @@ struct ContentView: View {
                 Divider()
 
                 if let selectedTab = workspace.selectedTab {
-                    VStack(spacing: 0) {
-                        HStack {
-                            Text(selectedTab.fileURL?.path(percentEncoded: false) ?? "Unsaved file")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                            Spacer()
-                            Text(selectedTab.language.rawValue.uppercased())
-                                .font(.caption.monospaced())
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-
-                        Divider()
-
-                        CodeEditorView(
-                            text: selectedTabBinding(selectedTab),
-                            isWordWrapEnabled: preferences.isWordWrapEnabled,
-                            skin: preferences.selectedSkin,
-                            language: selectedTab.language,
-                            editorFont: preferences.editorFont,
-                            editorSemiboldFont: preferences.editorSemiboldFont
-                        )
-                    }
+                    CodeEditorView(
+                        text: selectedTabBinding(selectedTab),
+                        isWordWrapEnabled: preferences.isWordWrapEnabled,
+                        skin: preferences.selectedSkin,
+                        language: selectedTab.language,
+                        editorFont: preferences.editorFont,
+                        editorSemiboldFont: preferences.editorSemiboldFont
+                    )
                 }
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let selectedTab = workspace.selectedTab {
+                fileInfoBar(for: selectedTab)
+            }
+        }
+    }
+
+    private func fileInfoBar(for tab: EditorTab) -> some View {
+        HStack(spacing: 12) {
+            Text(tab.fileURL?.path(percentEncoded: false) ?? "Unsaved file")
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 0)
+
+            Text("\(lineCount(for: tab)) lines")
+
+            Divider()
+                .frame(height: 12)
+
+            Text(tab.encodingDisplayName)
+
+            Divider()
+                .frame(height: 12)
+
+            Text(lineEndingDisplayName(for: tab))
+
+            Divider()
+                .frame(height: 12)
+
+            Text(tab.language.rawValue.uppercased())
+                .font(.caption.monospaced())
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    private func lineCount(for tab: EditorTab) -> Int {
+        guard !tab.content.isEmpty else { return 1 }
+
+        var count = 1
+        var index = tab.content.startIndex
+        while index < tab.content.endIndex {
+            if tab.content[index] == "\n" {
+                count += 1
+            }
+            index = tab.content.index(after: index)
+        }
+        return count
+    }
+
+    private func lineEndingDisplayName(for tab: EditorTab) -> String {
+        if tab.content.contains("\r\n") {
+            return "CRLF"
+        }
+
+        if tab.content.contains("\r") {
+            return "CR"
+        }
+
+        return "LF"
     }
 
     private func selectedTabBinding(_ tab: EditorTab) -> Binding<String> {

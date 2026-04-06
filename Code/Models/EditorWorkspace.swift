@@ -125,7 +125,13 @@ final class EditorWorkspace: ObservableObject {
 
         do {
             let content = try String(contentsOf: url, encoding: .utf8)
-            let tab = EditorTab(fileURL: url, content: content, lastSavedContent: content, isDirty: false)
+            let tab = EditorTab(
+                fileURL: url,
+                stringEncoding: .utf8,
+                content: content,
+                lastSavedContent: content,
+                isDirty: false
+            )
             attachObserver(to: tab)
             openTabs.append(tab)
             selectedTabID = tab.id
@@ -274,6 +280,7 @@ final class EditorWorkspace: ObservableObject {
                 let tab = EditorTab(
                     id: item.id ?? url.path(percentEncoded: false),
                     fileURL: url,
+                    stringEncoding: .utf8,
                     content: item.content,
                     lastSavedContent: item.isDirty ? diskContent : item.content,
                     isDirty: item.isDirty

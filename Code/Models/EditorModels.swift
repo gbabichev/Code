@@ -270,6 +270,7 @@ struct EditorSessionSnapshot: Codable {
 @MainActor
 final class EditorTab: ObservableObject, Identifiable {
     let id: String
+    let stringEncoding: String.Encoding
     @Published var fileURL: URL?
     @Published var customTitle: String?
 
@@ -280,6 +281,7 @@ final class EditorTab: ObservableObject, Identifiable {
     init(
         id: String = UUID().uuidString,
         fileURL: URL?,
+        stringEncoding: String.Encoding = .utf8,
         customTitle: String? = nil,
         content: String,
         lastSavedContent: String,
@@ -287,6 +289,7 @@ final class EditorTab: ObservableObject, Identifiable {
     ) {
         self.id = id
         self.fileURL = fileURL
+        self.stringEncoding = stringEncoding
         self.customTitle = customTitle
         self.content = content
         self.lastSavedContent = lastSavedContent
@@ -304,5 +307,22 @@ final class EditorTab: ObservableObject, Identifiable {
         }
 
         return customTitle ?? "Untitled"
+    }
+
+    var encodingDisplayName: String {
+        switch stringEncoding {
+        case .utf8:
+            "UTF-8"
+        case .utf16:
+            "UTF-16"
+        case .utf16LittleEndian:
+            "UTF-16 LE"
+        case .utf16BigEndian:
+            "UTF-16 BE"
+        case .utf32:
+            "UTF-32"
+        default:
+            "Text"
+        }
     }
 }
