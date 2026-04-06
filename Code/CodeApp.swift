@@ -27,6 +27,7 @@ struct CodeApp: App {
                 searchController: searchController
             )
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
             EditorCommands(
                 preferences: preferences,

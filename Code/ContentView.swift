@@ -46,6 +46,12 @@ struct ContentView: View {
                         .environmentObject(workspace)
                 }
             }
+            //Spacer()
+            ToolbarItem(placement: .status) {
+                Button("Code") {
+                }
+                .buttonStyle(.glass)
+            }
         }
         .preferredColorScheme(preferredColorScheme)
         .alert("Save Changes?", isPresented: pendingTabCloseBinding, presenting: workspace.pendingTabClose) { pending in
@@ -125,6 +131,7 @@ struct ContentView: View {
                     isDropTargeted: isTargetingTabDrop,
                     onSelect: { workspace.selectedTabID = $0 },
                     onClose: requestCloseTab,
+                    onCreate: workspace.createUntitledTab,
                     onMove: workspace.moveTab,
                     onMoveToEnd: workspace.moveTabToEnd
                 )

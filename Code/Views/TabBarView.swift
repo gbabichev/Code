@@ -14,6 +14,7 @@ struct TabBarView: View {
     let isDropTargeted: Bool
     let onSelect: (EditorTab.ID) -> Void
     let onClose: (EditorTab.ID) -> Void
+    let onCreate: () -> Void
     let onMove: (EditorTab.ID, EditorTab.ID) -> Void
     let onMoveToEnd: (EditorTab.ID) -> Void
     @State private var draggedTabID: EditorTab.ID?
@@ -44,6 +45,10 @@ struct TabBarView: View {
             .padding(.vertical, 8)
         }
         .background(Color(nsColor: .controlBackgroundColor))
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            onCreate()
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color.accentColor.opacity(isDropTargeted ? 0.9 : 0), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
