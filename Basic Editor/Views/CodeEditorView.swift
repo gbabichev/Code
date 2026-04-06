@@ -125,17 +125,31 @@ struct CodeEditorView: NSViewRepresentable {
         func configureLayout(isWordWrapEnabled: Bool) {
             guard let textView, let textContainer = unsafe textView.textContainer else { return }
 
+            textContainer.heightTracksTextView = false
+
             if isWordWrapEnabled {
                 textView.isHorizontallyResizable = false
+                textView.autoresizingMask = [.width]
+                textView.minSize = NSSize(width: 0, height: 0)
+                textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = true
-                textContainer.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+                let availableWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
+                textContainer.containerSize = NSSize(width: availableWidth, height: CGFloat.greatestFiniteMagnitude)
+                textView.frame.size.width = availableWidth
                 scrollView?.hasHorizontalScroller = false
             } else {
                 textView.isHorizontallyResizable = true
+                textView.autoresizingMask = []
+                textView.minSize = NSSize(width: 0, height: 0)
+                textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = false
                 textContainer.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 scrollView?.hasHorizontalScroller = true
             }
+
+            unsafe textView.layoutManager?.ensureLayout(for: textContainer)
+            textView.sizeToFit()
+            textView.needsDisplay = true
         }
 
         func applyTheme(_ theme: SkinTheme) {
