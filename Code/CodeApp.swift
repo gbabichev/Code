@@ -10,6 +10,7 @@ import SwiftUI
 
 @main
 struct CodeApp: App {
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var preferences = AppPreferences()
     @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
 
@@ -21,7 +22,10 @@ struct CodeApp: App {
             )
         }
         .commands {
-            EditorCommands(preferences: preferences)
+            EditorCommands(
+                preferences: preferences,
+                openNewWindow: { openWindow(id: "workspace") }
+            )
         }
     }
 }
@@ -76,15 +80,30 @@ private struct WorkspaceContentView: View {
             .environmentObject(workspace)
             .focusedSceneValue(\.activeEditorWorkspace, workspace)
             .background(WindowDirtyStateView(isDocumentEdited: workspace.hasDirtyTabs))
+            .background(WindowCloseInterceptorView(workspace: workspace))
     }
 }
 
 private struct EditorCommands: Commands {
     @FocusedValue(\.activeEditorWorkspace) private var workspace
     @ObservedObject var preferences: AppPreferences
+    let openNewWindow: () -> Void
 
     var body: some Commands {
-        CommandGroup(after: .newItem) {
+        CommandGroup(replacing: .newItem) {
+            Button("New Tab") {
+                workspace?.createUntitledTab()
+            }
+            .keyboardShortcut("n", modifiers: [.command])
+            .disabled(workspace == nil)
+
+            Button("New Window") {
+                openNewWindow()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+
+            Divider()
+
             Button("Open File...") {
                 workspace?.chooseFile()
             }
@@ -161,9 +180,76 @@ private final class DirtyStateObserverView: NSView {
     }
 
     func applyDirtyStateIfPossible() {
-        guard let window else { return }
+        guard let window = unsafe self.window else { return }
         if window.isDocumentEdited != isDocumentEdited {
             window.isDocumentEdited = isDocumentEdited
         }
+    }
+}
+
+private struct WindowCloseInterceptorView: NSViewRepresentable {
+    @ObservedObject var workspace: EditorWorkspace
+
+    func makeNSView(context: Context) -> WindowCloseInterceptingView {
+        let view = WindowCloseInterceptingView()
+        view.workspace = workspace
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowCloseInterceptingView, context: Context) {
+        nsView.workspace = workspace
+        nsView.attachIfNeeded()
+    }
+}
+
+private final class WindowCloseInterceptingView: NSView {
+    weak var workspace: EditorWorkspace?
+    private let delegateProxy = WindowCloseDelegateProxy()
+    private weak var observedWindow: NSWindow?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        attachIfNeeded()
+    }
+
+    func attachIfNeeded() {
+        guard let window = unsafe self.window else { return }
+        guard observedWindow !== window else { return }
+
+        observedWindow = window
+        delegateProxy.originalDelegate = window.delegate
+        delegateProxy.shouldAllowWindowClose = { [weak self] in
+            guard let self, let workspace = self.workspace else { return true }
+            guard workspace.selectedTab != nil else { return true }
+
+            workspace.requestCloseSelectedTab()
+            return false
+        }
+        window.delegate = delegateProxy
+    }
+}
+
+private final class WindowCloseDelegateProxy: NSObject, NSWindowDelegate {
+    nonisolated(unsafe) weak var originalDelegate: (NSObjectProtocol & NSWindowDelegate)?
+    var shouldAllowWindowClose: (() -> Bool)?
+
+    nonisolated override func responds(to aSelector: Selector!) -> Bool {
+        super.responds(to: aSelector) || (originalDelegate?.responds(to: aSelector) ?? false)
+    }
+
+    nonisolated override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        if originalDelegate?.responds(to: aSelector) == true {
+            return originalDelegate
+        }
+
+        return super.forwardingTarget(for: aSelector)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard shouldAllowWindowClose?() ?? true else {
+            return false
+        }
+
+        return originalDelegate?.windowShouldClose?(sender) ?? true
     }
 }

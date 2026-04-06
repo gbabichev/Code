@@ -18,6 +18,7 @@ final class EditorWorkspace: ObservableObject {
     @Published var selectedTabID: EditorTab.ID?
     @Published var selectedFileID: FileNode.ID?
     @Published var errorMessage: String?
+    @Published var pendingTabClose: PendingTabClose?
 
     private let fileManager: FileManager
     private let sessionStore: SessionStore
@@ -30,6 +31,10 @@ final class EditorWorkspace: ObservableObject {
         self.fileManager = fileManager
         self.sessionStore = sessionStore
         restoreSession()
+
+        if openTabs.isEmpty {
+            createUntitledTab()
+        }
     }
 
     var selectedTab: EditorTab? {
@@ -47,6 +52,25 @@ final class EditorWorkspace: ObservableObject {
 
     func isFileDirty(_ url: URL) -> Bool {
         openTabs.contains { $0.fileURL == url && $0.isDirty }
+    }
+
+    func createUntitledTab() {
+        let untitledIndex = openTabs
+            .filter { $0.fileURL == nil }
+            .count + 1
+        let title = untitledIndex == 1 ? "Untitled" : "Untitled \(untitledIndex)"
+        let tab = EditorTab(
+            fileURL: nil,
+            customTitle: title,
+            content: "",
+            lastSavedContent: "",
+            isDirty: false
+        )
+        attachObserver(to: tab)
+        openTabs.append(tab)
+        selectedTabID = tab.id
+        selectedFileID = nil
+        persistSession()
     }
 
     func chooseRootFolder() {
@@ -122,6 +146,40 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
+    func requestCloseTab(_ id: EditorTab.ID) {
+        guard let tab = tab(withID: id) else { return }
+
+        if tab.isDirty {
+            pendingTabClose = PendingTabClose(id: id, fileName: tab.title)
+        } else {
+            closeTab(id)
+        }
+    }
+
+    func requestCloseSelectedTab() {
+        guard let selectedTabID else { return }
+        requestCloseTab(selectedTabID)
+    }
+
+    func confirmPendingTabCloseSave() {
+        guard let pendingTabClose else { return }
+        saveTab(id: pendingTabClose.id)
+        if errorMessage == nil {
+            closeTab(pendingTabClose.id)
+        }
+        self.pendingTabClose = nil
+    }
+
+    func confirmPendingTabCloseDiscard() {
+        guard let pendingTabClose else { return }
+        closeTab(pendingTabClose.id)
+        self.pendingTabClose = nil
+    }
+
+    func cancelPendingTabClose() {
+        pendingTabClose = nil
+    }
+
     func updateSelectedTabContent(_ content: String) {
         guard let tab = selectedTab else { return }
         updateContent(content, for: tab.id)
@@ -144,13 +202,35 @@ final class EditorWorkspace: ObservableObject {
     func saveTab(id: EditorTab.ID) {
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
 
+        let destinationURL: URL
+        if let fileURL = tab.fileURL {
+            destinationURL = fileURL
+        } else {
+            let panel = NSSavePanel()
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = tab.title
+
+            guard panel.runModal() == .OK, let url = panel.url else {
+                return
+            }
+
+            destinationURL = url
+        }
+
         do {
-            try tab.content.write(to: tab.fileURL, atomically: true, encoding: .utf8)
+            try tab.content.write(to: destinationURL, atomically: true, encoding: .utf8)
+            tab.fileURL = destinationURL
+            tab.customTitle = nil
             tab.lastSavedContent = tab.content
             tab.isDirty = false
+            selectedFileID = destinationURL.path(percentEncoded: false)
+            if let rootFolderURL,
+               destinationURL.path(percentEncoded: false).hasPrefix(rootFolderURL.path(percentEncoded: false)) {
+                reloadFileTree()
+            }
             persistSession()
         } catch {
-            errorMessage = "Failed to save \(tab.fileURL.lastPathComponent): \(error.localizedDescription)"
+            errorMessage = "Failed to save \(destinationURL.lastPathComponent): \(error.localizedDescription)"
         }
     }
 
@@ -161,7 +241,9 @@ final class EditorWorkspace: ObservableObject {
             selectedTabPath: selectedTabID,
             tabs: openTabs.map {
                 EditorTabSnapshot(
-                    filePath: $0.fileURL.path(percentEncoded: false),
+                    id: $0.id,
+                    filePath: $0.fileURL?.path(percentEncoded: false),
+                    title: $0.fileURL == nil ? $0.title : nil,
                     content: $0.content,
                     isDirty: $0.isDirty
                 )
@@ -182,16 +264,30 @@ final class EditorWorkspace: ObservableObject {
         }
 
         let restoredTabs = snapshot.tabs.compactMap { item -> EditorTab? in
-            let url = URL(fileURLWithPath: item.filePath)
-            guard fileManager.fileExists(atPath: url.path(percentEncoded: false)) else {
-                return nil
+            if let filePath = item.filePath {
+                let url = URL(fileURLWithPath: filePath)
+                guard fileManager.fileExists(atPath: url.path(percentEncoded: false)) else {
+                    return nil
+                }
+
+                let diskContent = (try? String(contentsOf: url, encoding: .utf8)) ?? item.content
+                let tab = EditorTab(
+                    id: item.id ?? url.path(percentEncoded: false),
+                    fileURL: url,
+                    content: item.content,
+                    lastSavedContent: item.isDirty ? diskContent : item.content,
+                    isDirty: item.isDirty
+                )
+                attachObserver(to: tab)
+                return tab
             }
 
-            let diskContent = (try? String(contentsOf: url, encoding: .utf8)) ?? item.content
             let tab = EditorTab(
-                fileURL: url,
+                id: item.id ?? UUID().uuidString,
+                fileURL: nil,
+                customTitle: item.title,
                 content: item.content,
-                lastSavedContent: item.isDirty ? diskContent : item.content,
+                lastSavedContent: item.content,
                 isDirty: item.isDirty
             )
             attachObserver(to: tab)

@@ -11,7 +11,6 @@ struct ContentView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var workspace: EditorWorkspace
     @State private var isShowingSettingsPopover = false
-    @State private var pendingTabClose: PendingTabClose?
 
     var body: some View {
         NavigationSplitView(columnVisibility: Binding(
@@ -48,20 +47,15 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(preferredColorScheme)
-        .alert("Save Changes?", isPresented: pendingTabCloseBinding, presenting: pendingTabClose) { pending in
+        .alert("Save Changes?", isPresented: pendingTabCloseBinding, presenting: workspace.pendingTabClose) { pending in
             Button("Save") {
-                workspace.saveTab(id: pending.id)
-                if workspace.errorMessage == nil {
-                    workspace.closeTab(pending.id)
-                }
-                pendingTabClose = nil
+                workspace.confirmPendingTabCloseSave()
             }
             Button("Discard", role: .destructive) {
-                workspace.closeTab(pending.id)
-                pendingTabClose = nil
+                workspace.confirmPendingTabCloseDiscard()
             }
             Button("Cancel", role: .cancel) {
-                pendingTabClose = nil
+                workspace.cancelPendingTabClose()
             }
         } message: { pending in
             Text("Do you want to save the changes you made to \(pending.fileName)?")
@@ -137,7 +131,7 @@ struct ContentView: View {
                 if let selectedTab = workspace.selectedTab {
                     VStack(spacing: 0) {
                         HStack {
-                            Text(selectedTab.fileURL.path(percentEncoded: false))
+                            Text(selectedTab.fileURL?.path(percentEncoded: false) ?? "Unsaved file")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -173,21 +167,15 @@ struct ContentView: View {
     }
 
     private func requestCloseTab(_ id: EditorTab.ID) {
-        guard let tab = workspace.tab(withID: id) else { return }
-
-        if tab.isDirty {
-            pendingTabClose = PendingTabClose(id: id, fileName: tab.title)
-        } else {
-            workspace.closeTab(id)
-        }
+        workspace.requestCloseTab(id)
     }
 
     private var pendingTabCloseBinding: Binding<Bool> {
         Binding(
-            get: { pendingTabClose != nil },
+            get: { workspace.pendingTabClose != nil },
             set: { newValue in
                 if !newValue {
-                    pendingTabClose = nil
+                    workspace.cancelPendingTabClose()
                 }
             }
         )
@@ -219,11 +207,6 @@ struct ContentView: View {
             .dark
         }
     }
-}
-
-private struct PendingTabClose: Identifiable {
-    let id: EditorTab.ID
-    let fileName: String
 }
 
 private struct SettingsPopoverView: View {

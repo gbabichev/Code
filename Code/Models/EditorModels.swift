@@ -192,9 +192,30 @@ struct FileNode: Identifiable, Hashable {
 }
 
 struct EditorTabSnapshot: Codable {
-    let filePath: String
+    let id: String?
+    let filePath: String?
+    let title: String?
     let content: String
     let isDirty: Bool
+
+    init(
+        id: String? = nil,
+        filePath: String?,
+        title: String? = nil,
+        content: String,
+        isDirty: Bool
+    ) {
+        self.id = id
+        self.filePath = filePath
+        self.title = title
+        self.content = content
+        self.isDirty = isDirty
+    }
+}
+
+struct PendingTabClose: Identifiable, Equatable {
+    let id: EditorTab.ID
+    let fileName: String
 }
 
 struct EditorSessionSnapshot: Codable {
@@ -248,21 +269,40 @@ struct EditorSessionSnapshot: Codable {
 
 @MainActor
 final class EditorTab: ObservableObject, Identifiable {
-    let fileURL: URL
-    let language: EditorLanguage
+    let id: String
+    @Published var fileURL: URL?
+    @Published var customTitle: String?
 
     @Published var content: String
     @Published var isDirty: Bool
     var lastSavedContent: String
 
-    init(fileURL: URL, content: String, lastSavedContent: String, isDirty: Bool) {
+    init(
+        id: String = UUID().uuidString,
+        fileURL: URL?,
+        customTitle: String? = nil,
+        content: String,
+        lastSavedContent: String,
+        isDirty: Bool
+    ) {
+        self.id = id
         self.fileURL = fileURL
-        self.language = EditorLanguage.infer(from: fileURL)
+        self.customTitle = customTitle
         self.content = content
         self.lastSavedContent = lastSavedContent
         self.isDirty = isDirty
     }
 
-    var id: String { fileURL.path(percentEncoded: false) }
-    var title: String { fileURL.lastPathComponent }
+    var language: EditorLanguage {
+        guard let fileURL else { return .plainText }
+        return EditorLanguage.infer(from: fileURL)
+    }
+
+    var title: String {
+        if let fileURL {
+            return fileURL.lastPathComponent
+        }
+
+        return customTitle ?? "Untitled"
+    }
 }
