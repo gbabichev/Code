@@ -13,6 +13,10 @@ import UniformTypeIdentifiers
 @MainActor
 final class AppPreferences: ObservableObject {
     static let defaultSkinID = "classic"
+    static let defaultFontSize: Double = 13
+    static let defaultEditorFontFamilyName = "Menlo"
+    static let minEditorFontSize: Double = 10
+    static let maxEditorFontSize: Double = 28
 
     @Published var isWordWrapEnabled: Bool {
         didSet {
@@ -35,7 +39,29 @@ final class AppPreferences: ObservableObject {
         }
     }
 
+    @Published var editorFontName: String {
+        didSet {
+            if !availableEditorFonts.contains(editorFontName) {
+                editorFontName = availableEditorFonts.first ?? Self.defaultEditorFontFamilyName
+                return
+            }
+            userDefaults.set(editorFontName, forKey: Keys.editorFontName)
+        }
+    }
+
+    @Published var editorFontSize: Double {
+        didSet {
+            let clampedSize = min(max(editorFontSize, Self.minEditorFontSize), Self.maxEditorFontSize)
+            if clampedSize != editorFontSize {
+                editorFontSize = clampedSize
+                return
+            }
+            userDefaults.set(editorFontSize, forKey: Keys.editorFontSize)
+        }
+    }
+
     @Published private(set) var availableSkins: [SkinDefinition] = []
+    @Published private(set) var availableEditorFonts: [String] = []
     @Published var errorMessage: String?
 
     private let userDefaults: UserDefaults
@@ -70,12 +96,23 @@ final class AppPreferences: ObservableObject {
             ?? legacySnapshot?.selectedSkinID
             ?? Self.defaultSkinID
 
+        editorFontName = userDefaults.string(forKey: Keys.editorFontName) ?? Self.defaultEditorFontFamilyName
+
+        if userDefaults.object(forKey: Keys.editorFontSize) != nil {
+            editorFontSize = userDefaults.double(forKey: Keys.editorFontSize)
+        } else {
+            editorFontSize = Self.defaultFontSize
+        }
+
+        reloadEditorFonts()
         reloadSkins()
 
         // Persist migrated values so future launches no longer depend on the legacy session file.
         userDefaults.set(isWordWrapEnabled, forKey: Keys.isWordWrapEnabled)
         userDefaults.set(appTheme.rawValue, forKey: Keys.appTheme)
         userDefaults.set(selectedSkinID, forKey: Keys.selectedSkinID)
+        userDefaults.set(editorFontName, forKey: Keys.editorFontName)
+        userDefaults.set(editorFontSize, forKey: Keys.editorFontSize)
     }
 
     var selectedSkin: SkinDefinition {
@@ -99,6 +136,36 @@ final class AppPreferences: ObservableObject {
                 ),
                 languageOverrides: [:]
             )
+    }
+
+    var editorFont: NSFont {
+        font(forFamilyName: editorFontName, size: CGFloat(editorFontSize))
+            ?? NSFont(name: "Menlo-Regular", size: CGFloat(editorFontSize))
+            ?? NSFont.userFixedPitchFont(ofSize: CGFloat(editorFontSize))
+            ?? NSFont.monospacedSystemFont(ofSize: CGFloat(editorFontSize), weight: .regular)
+    }
+
+    var editorSemiboldFont: NSFont {
+        if let semiboldFont = NSFontManager.shared.font(
+            withFamily: editorFontName,
+            traits: .boldFontMask,
+            weight: 7,
+            size: CGFloat(editorFontSize)
+        ) {
+            return semiboldFont
+        }
+
+        if let familyName = editorFont.familyName,
+           let semiboldFont = NSFontManager.shared.font(
+            withFamily: familyName,
+            traits: .boldFontMask,
+            weight: 7,
+            size: CGFloat(editorFontSize)
+           ) {
+            return semiboldFont
+        }
+
+        return NSFont.monospacedSystemFont(ofSize: CGFloat(editorFontSize), weight: .semibold)
     }
 
     func importSkin() {
@@ -142,10 +209,49 @@ final class AppPreferences: ObservableObject {
             selectedSkinID = availableSkins.first?.id ?? Self.defaultSkinID
         }
     }
+
+    func increaseEditorFontSize() {
+        editorFontSize += 1
+    }
+
+    func decreaseEditorFontSize() {
+        editorFontSize -= 1
+    }
+
+    private func reloadEditorFonts() {
+        availableEditorFonts = NSFontManager.shared.availableFontFamilies
+            .filter { familyName in
+                let members = NSFontManager.shared.availableMembers(ofFontFamily: familyName) ?? []
+                return members.contains { member in
+                    guard let postScriptName = member.first as? String else { return false }
+                    guard let font = NSFont(name: postScriptName, size: CGFloat(Self.defaultFontSize)) else { return false }
+                    return font.isFixedPitch
+                }
+            }
+            .sorted(using: KeyPathComparator(\.self, comparator: .localizedStandard))
+
+        if !availableEditorFonts.contains(editorFontName) {
+            editorFontName = availableEditorFonts.first(where: { $0 == Self.defaultEditorFontFamilyName })
+                ?? availableEditorFonts.first
+                ?? Self.defaultEditorFontFamilyName
+        }
+    }
+
+    private func font(forFamilyName familyName: String, size: CGFloat) -> NSFont? {
+        NSFontManager.shared.font(withFamily: familyName, traits: [], weight: 5, size: size)
+            ?? (NSFontManager.shared.availableMembers(ofFontFamily: familyName) ?? [])
+                .compactMap { member -> NSFont? in
+                    guard let postScriptName = member.first as? String else { return nil }
+                    return NSFont(name: postScriptName, size: size)
+                }
+                .first
+    }
 }
 
 private enum Keys {
     static let isWordWrapEnabled = "preferences.isWordWrapEnabled"
     static let appTheme = "preferences.appTheme"
     static let selectedSkinID = "preferences.selectedSkinID"
+    static let editorFontName = "preferences.editorFontName"
+    static let editorFontSize = "preferences.editorFontSize"
 }

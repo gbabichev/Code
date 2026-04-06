@@ -96,6 +96,18 @@ private struct EditorCommands: Commands {
             .disabled(workspace?.selectedTab == nil)
         }
 
+        CommandGroup(after: .textFormatting) {
+            Button("Increase Font Size") {
+                preferences.increaseEditorFontSize()
+            }
+            .keyboardShortcut("=", modifiers: [.command])
+
+            Button("Decrease Font Size") {
+                preferences.decreaseEditorFontSize()
+            }
+            .keyboardShortcut("-", modifiers: [.command])
+        }
+
         CommandGroup(after: .sidebar) {
             Toggle("Word Wrap", isOn: Binding(
                 get: { preferences.isWordWrapEnabled },

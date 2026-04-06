@@ -74,8 +74,8 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
 }
 
 enum SyntaxHighlighterFactory {
-    static func makeHighlighter(for language: EditorLanguage, skin: SkinDefinition) -> SyntaxHighlighting {
-        let theme = skin.makeTheme(for: language)
+    static func makeHighlighter(for language: EditorLanguage, skin: SkinDefinition, editorFont: NSFont, semiboldFont: NSFont) -> SyntaxHighlighting {
+        let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: semiboldFont)
 
         switch language {
         case .shell:
@@ -87,8 +87,6 @@ enum SyntaxHighlighterFactory {
 }
 
 struct SkinTheme {
-    static let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-    static let semiboldFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold)
     static let fallback = SkinDefinition(
         schemaVersion: 1,
         id: "classic",
@@ -106,8 +104,14 @@ struct SkinTheme {
             command: .init(light: "#AF52DE", dark: "#D69CFF")
         ),
         languageOverrides: [:]
-    ).makeTheme(for: .plainText)
+    ).makeTheme(
+        for: .plainText,
+        editorFont: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular),
+        semiboldFont: NSFont.monospacedSystemFont(ofSize: 13, weight: .semibold)
+    )
 
+    let font: NSFont
+    let semiboldFont: NSFont
     let editorBackgroundColor: NSColor
     let baseColor: NSColor
     let keywordColor: NSColor
@@ -126,49 +130,49 @@ struct SkinTheme {
 
     var baseAttributes: [NSAttributedString.Key: Any] {
         [
-            .font: Self.font,
+            .font: font,
             .foregroundColor: baseColor
         ]
     }
 
     var keywordAttributes: [NSAttributedString.Key: Any] {
         [
-            .font: Self.font,
+            .font: font,
             .foregroundColor: keywordColor
         ]
     }
 
     var builtinAttributes: [NSAttributedString.Key: Any] {
         [
-            .font: Self.font,
+            .font: font,
             .foregroundColor: builtinColor
         ]
     }
 
     var variableAttributes: [NSAttributedString.Key: Any] {
         [
-            .font: Self.font,
+            .font: font,
             .foregroundColor: variableColor
         ]
     }
 
     var stringAttributes: [NSAttributedString.Key: Any] {
         [
-            .font: Self.font,
+            .font: font,
             .foregroundColor: stringColor
         ]
     }
 
     var commentAttributes: [NSAttributedString.Key: Any] {
         [
-            .font: Self.font,
+            .font: font,
             .foregroundColor: commentColor
         ]
     }
 
     var commandAttributes: [NSAttributedString.Key: Any] {
         [
-            .font: Self.semiboldFont,
+            .font: semiboldFont,
             .foregroundColor: commandColor
         ]
     }

@@ -152,7 +152,9 @@ struct ContentView: View {
                             text: selectedTabBinding(selectedTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
                             skin: preferences.selectedSkin,
-                            language: selectedTab.language
+                            language: selectedTab.language,
+                            editorFont: preferences.editorFont,
+                            editorSemiboldFont: preferences.editorSemiboldFont
                         )
                     }
                 }
@@ -236,6 +238,32 @@ private struct SettingsPopoverView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Editor Font")
+                    .font(.headline)
+
+                Picker("Editor Font", selection: $preferences.editorFontName) {
+                    ForEach(preferences.availableEditorFonts, id: \.self) { fontName in
+                        Text(fontName).tag(fontName)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                HStack {
+                    Text("Size")
+                    Spacer()
+                    Text("\(Int(preferences.editorFontSize)) pt")
+                        .foregroundStyle(.secondary)
+                    Stepper(
+                        "",
+                        value: $preferences.editorFontSize,
+                        in: AppPreferences.minEditorFontSize...AppPreferences.maxEditorFontSize,
+                        step: 1
+                    )
+                    .labelsHidden()
+                }
             }
 
             VStack(alignment: .leading, spacing: 8) {

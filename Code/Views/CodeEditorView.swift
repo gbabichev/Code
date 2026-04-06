@@ -13,13 +13,15 @@ struct CodeEditorView: NSViewRepresentable {
     let isWordWrapEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
+    let editorFont: NSFont
+    let editorSemiboldFont: NSFont
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(textBinding: $text, language: language, skin: skin)
+        Coordinator(textBinding: $text, language: language, skin: skin, editorFont: editorFont, editorSemiboldFont: editorSemiboldFont)
     }
 
     func makeNSView(context: Context) -> EditorContainerView {
-        let theme = skin.makeTheme(for: language)
+        let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
         let container = EditorContainerView()
         let textView = NSTextView()
 
@@ -28,7 +30,7 @@ struct CodeEditorView: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticDataDetectionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
-        textView.font = SkinTheme.font
+        textView.font = editorFont
         textView.textColor = theme.baseColor
         textView.backgroundColor = theme.editorBackgroundColor
         textView.insertionPointColor = theme.baseColor
@@ -65,8 +67,10 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.language = language
         context.coordinator.skin = skin
         context.coordinator.textBinding = $text
+        context.coordinator.editorFont = editorFont
+        context.coordinator.editorSemiboldFont = editorSemiboldFont
 
-        let theme = skin.makeTheme(for: language)
+        let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
         context.coordinator.applyTheme(theme)
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
 
@@ -82,15 +86,19 @@ struct CodeEditorView: NSViewRepresentable {
         var textBinding: Binding<String>
         var language: EditorLanguage
         var skin: SkinDefinition
+        var editorFont: NSFont
+        var editorSemiboldFont: NSFont
         weak var textView: NSTextView?
         weak var scrollView: NSScrollView?
         let gutterView = GutterView(frame: .zero)
         private var isApplyingHighlighting = false
 
-        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition) {
+        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, editorFont: NSFont, editorSemiboldFont: NSFont) {
             self.textBinding = textBinding
             self.language = language
             self.skin = skin
+            self.editorFont = editorFont
+            self.editorSemiboldFont = editorSemiboldFont
         }
 
         func attach(textView: NSTextView, scrollView: NSScrollView) {
@@ -155,7 +163,7 @@ struct CodeEditorView: NSViewRepresentable {
         func applyTheme(_ theme: SkinTheme) {
             guard let textView else { return }
 
-            textView.font = SkinTheme.font
+            textView.font = editorFont
             textView.textColor = theme.baseColor
             textView.backgroundColor = theme.editorBackgroundColor
             textView.insertionPointColor = theme.baseColor
@@ -175,7 +183,12 @@ struct CodeEditorView: NSViewRepresentable {
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
             textStorage.beginEditing()
-            SyntaxHighlighterFactory.makeHighlighter(for: language, skin: skin)
+            SyntaxHighlighterFactory.makeHighlighter(
+                for: language,
+                skin: skin,
+                editorFont: editorFont,
+                semiboldFont: editorSemiboldFont
+            )
                 .apply(to: textStorage, text: textView.string)
             textStorage.endEditing()
             textView.selectedRanges = selectedRanges
@@ -259,7 +272,7 @@ final class GutterView: NSView {
             let characterIndex = layoutManager.characterIndexForGlyph(at: lineGlyphRange.location)
             let lineRange = text.lineRange(for: NSRange(location: characterIndex, length: 0))
             let y = lineRect.minY - clipOrigin.y + textView.textContainerInset.height
-            let height = max(lineRect.height, layoutManager.defaultLineHeight(for: textView.font ?? SkinTheme.font))
+            let height = max(lineRect.height, layoutManager.defaultLineHeight(for: textView.font ?? theme.font))
 
             if lineNumber == selectedLine {
                 theme.gutterCurrentLineColor.setFill()
@@ -267,7 +280,7 @@ final class GutterView: NSView {
             }
 
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: SkinTheme.font,
+                .font: theme.font,
                 .foregroundColor: lineNumber == selectedLine ? theme.gutterCurrentLineNumberColor : theme.gutterTextColor,
                 .paragraphStyle: paragraph
             ]

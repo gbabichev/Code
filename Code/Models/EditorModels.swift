@@ -57,11 +57,13 @@ struct SkinDefinition: Codable, Identifiable, Hashable {
     let tokens: SkinTokenPalette
     let languageOverrides: [String: SkinTokenPalette]
 
-    func makeTheme(for language: EditorLanguage) -> SkinTheme {
+    func makeTheme(for language: EditorLanguage, editorFont: NSFont, semiboldFont: NSFont) -> SkinTheme {
         let palette = languageOverrides[language.rawValue] ?? tokens
         let backgroundColor = editor.background.resolveColor()
         let foregroundColor = editor.foreground.resolveColor()
         return SkinTheme(
+            font: editorFont,
+            semiboldFont: semiboldFont,
             editorBackgroundColor: backgroundColor,
             baseColor: foregroundColor,
             keywordColor: palette.keyword.resolveColor(),
