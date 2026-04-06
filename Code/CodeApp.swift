@@ -184,6 +184,14 @@ private struct EditorCommands: Commands {
             }
             .keyboardShortcut("o", modifiers: [.command, .shift])
             .disabled(workspace == nil)
+
+            Button {
+                workspace?.closeFolder()
+            } label: {
+                Label("Close Folder", systemImage: "folder.badge.minus")
+            }
+            .keyboardShortcut("w", modifiers: [.command, .shift])
+            .disabled(workspace?.rootFolderURL == nil)
         }
 
         CommandGroup(after: .saveItem) {

@@ -103,6 +103,18 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
+    func closeFolder() {
+        rootFolderURL = nil
+        fileTree = []
+        openTabs.removeAll()
+        tabObservers.removeAll()
+        selectedTabID = nil
+        selectedFileID = nil
+        pendingTabClose = nil
+        errorMessage = nil
+        createUntitledTab()
+    }
+
     func reloadFileTree() {
         guard let rootFolderURL else {
             fileTree = []

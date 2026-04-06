@@ -73,28 +73,6 @@ struct ContentView: View {
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(workspace.rootFolderURL?.lastPathComponent ?? "No Folder")
-                        .font(.headline)
-                    Text(workspace.rootFolderURL?.path(percentEncoded: false) ?? "Choose a folder to browse")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                Spacer()
-                Button {
-                    workspace.reloadFileTree()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .disabled(workspace.rootFolderURL == nil)
-            }
-            .padding(12)
-
-            Divider()
-
             if workspace.rootFolderURL == nil {
                 ContentUnavailableView(
                     "Open a Folder",
@@ -102,6 +80,27 @@ struct ContentView: View {
                     description: Text("Pick a root folder to browse files in the sidebar.")
                 )
             } else {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(workspace.rootFolderURL?.lastPathComponent ?? "")
+                            .font(.headline)
+                        Text(workspace.rootFolderURL?.path(percentEncoded: false) ?? "")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    Button {
+                        workspace.reloadFileTree()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .padding(12)
+
+                Divider()
+
                 FileTreeView(
                     nodes: workspace.fileTree,
                     selectedFileID: workspace.selectedFileID,
