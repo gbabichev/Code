@@ -23,7 +23,7 @@ struct CodeEditorView: NSViewRepresentable {
     func makeNSView(context: Context) -> EditorContainerView {
         let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
         let container = EditorContainerView()
-        let textView = NSTextView()
+        let textView = LineClickableTextView()
 
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -46,11 +46,13 @@ struct CodeEditorView: NSViewRepresentable {
         textView.string = text
 
         let scrollView = NSScrollView()
+        let clipView = EditorClipView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = !isWordWrapEnabled
         scrollView.borderType = .noBorder
         scrollView.backgroundColor = theme.editorBackgroundColor
         scrollView.drawsBackground = true
+        scrollView.contentView = clipView
         scrollView.documentView = textView
         scrollView.contentView.postsBoundsChangedNotifications = true
 
@@ -147,7 +149,7 @@ struct CodeEditorView: NSViewRepresentable {
                 scrollView?.hasHorizontalScroller = false
             } else {
                 textView.isHorizontallyResizable = true
-                textView.autoresizingMask = []
+                textView.autoresizingMask = [.width]
                 textView.minSize = NSSize(width: 0, height: 0)
                 textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = false
@@ -157,6 +159,10 @@ struct CodeEditorView: NSViewRepresentable {
 
             unsafe textView.layoutManager?.ensureLayout(for: textContainer)
             textView.sizeToFit()
+            let minimumWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
+            if textView.frame.width < minimumWidth {
+                textView.frame.size.width = minimumWidth
+            }
             textView.needsDisplay = true
         }
 
@@ -201,6 +207,155 @@ struct CodeEditorView: NSViewRepresentable {
         private func handleBoundsDidChange() {
             gutterView.needsDisplay = true
         }
+    }
+}
+
+final class LineClickableTextView: NSTextView {
+    override func mouseDown(with event: NSEvent) {
+        if event.type == .leftMouseDown,
+           event.clickCount == 1,
+           moveInsertionPointToClickedLineIfNeeded(event: event) {
+            return
+        }
+
+        super.mouseDown(with: event)
+    }
+
+    @discardableResult
+    func moveInsertionPointToClosestLine(for pointInSelf: NSPoint) -> Bool {
+        guard let layoutManager = unsafe layoutManager,
+              let textContainer = unsafe textContainer else {
+            return false
+        }
+
+        let containerPoint = NSPoint(
+            x: pointInSelf.x - textContainerInset.width,
+            y: pointInSelf.y - textContainerInset.height
+        )
+
+        guard let selectionIndex = insertionIndexForTrailingLineClick(
+            point: pointInSelf,
+            containerPoint: containerPoint,
+            layoutManager: layoutManager,
+            textContainer: textContainer
+        ) else {
+            return false
+        }
+
+        unsafe window?.makeFirstResponder(self)
+        setSelectedRange(NSRange(location: selectionIndex, length: 0))
+        return true
+    }
+
+    @discardableResult
+    private func moveInsertionPointToClickedLineIfNeeded(event: NSEvent) -> Bool {
+        guard let layoutManager = unsafe layoutManager,
+              let textContainer = unsafe textContainer else {
+            return false
+        }
+
+        let point = convert(event.locationInWindow, from: nil)
+        guard moveInsertionPointToClosestLine(for: point) else {
+            return false
+        }
+        return true
+    }
+
+    private func insertionIndexForExtraLineClick(
+        point: NSPoint,
+        containerPoint: NSPoint,
+        layoutManager: NSLayoutManager
+    ) -> Int? {
+        let extraLineRect = layoutManager.extraLineFragmentRect
+        guard !extraLineRect.isEmpty else { return nil }
+        guard containerPoint.y >= extraLineRect.minY, containerPoint.y <= extraLineRect.maxY else { return nil }
+
+        let usedRect = layoutManager.extraLineFragmentUsedRect
+        let visualMaxX = textContainerInset.width + max(usedRect.maxX, 0)
+        guard point.x >= visualMaxX else { return nil }
+
+        return string.count
+    }
+
+    private func insertionIndexForTrailingLineClick(
+        point: NSPoint,
+        containerPoint: NSPoint,
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    ) -> Int? {
+        if let extraLineSelection = insertionIndexForExtraLineClick(
+            point: point,
+            containerPoint: containerPoint,
+            layoutManager: layoutManager
+        ) {
+            return extraLineSelection
+        }
+
+        guard let lineHit = lineHitTest(at: containerPoint, layoutManager: layoutManager, textContainer: textContainer) else {
+            return nil
+        }
+
+        let visualMaxX = textContainerInset.width + lineHit.usedRect.maxX
+        guard point.x >= visualMaxX else { return nil }
+
+        var insertionIndex = NSMaxRange(lineHit.characterRange)
+        let text = string as NSString
+        if insertionIndex > 0,
+           insertionIndex <= text.length,
+           text.character(at: insertionIndex - 1) == 10 {
+            insertionIndex -= 1
+        }
+
+        return insertionIndex
+    }
+
+    private func lineHitTest(
+        at containerPoint: NSPoint,
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    ) -> (usedRect: NSRect, characterRange: NSRange)? {
+        guard layoutManager.numberOfGlyphs > 0 else { return nil }
+
+        var glyphIndex = 0
+        while glyphIndex < layoutManager.numberOfGlyphs {
+            var lineGlyphRange = NSRange()
+            let lineRect = unsafe layoutManager.lineFragmentRect(
+                forGlyphAt: glyphIndex,
+                effectiveRange: &lineGlyphRange,
+                withoutAdditionalLayout: true
+            )
+
+            if containerPoint.y >= lineRect.minY, containerPoint.y <= lineRect.maxY {
+                let usedRect = unsafe layoutManager.lineFragmentUsedRect(
+                    forGlyphAt: glyphIndex,
+                    effectiveRange: nil,
+                    withoutAdditionalLayout: true
+                )
+                let characterRange = unsafe layoutManager.characterRange(forGlyphRange: lineGlyphRange, actualGlyphRange: nil)
+                return (usedRect, characterRange)
+            }
+
+            glyphIndex = NSMaxRange(lineGlyphRange)
+        }
+
+        return nil
+    }
+}
+
+final class EditorClipView: NSClipView {
+    override func mouseDown(with event: NSEvent) {
+        guard let textView = documentView as? LineClickableTextView else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        let clipPoint = convert(event.locationInWindow, from: nil)
+        let textPoint = convert(clipPoint, to: textView)
+        if textView.moveInsertionPointToClosestLine(for: textPoint) {
+            return
+        }
+
+        super.mouseDown(with: event)
     }
 }
 
