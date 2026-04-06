@@ -53,6 +53,18 @@ final class EditorWorkspace: ObservableObject {
         }
     }
 
+    func chooseFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Open File"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            openFile(url)
+        }
+    }
+
     func setRootFolder(_ url: URL) {
         rootFolderURL = url
         reloadFileTree()

@@ -53,6 +53,12 @@ private struct EditorCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
+            Button("Open File...") {
+                workspace?.chooseFile()
+            }
+            .keyboardShortcut("o", modifiers: [.command])
+            .disabled(workspace == nil)
+
             Button("Open Folder...") {
                 workspace?.chooseRootFolder()
             }
