@@ -290,6 +290,13 @@ final class GutterView: NSView {
             glyphIndex = NSMaxRange(lineGlyphRange)
             lineNumber += lineCount(in: lineRange, text: text)
         }
+
+        drawExtraLineFragmentIfNeeded(
+            layoutManager: layoutManager,
+            clipOrigin: clipOrigin,
+            selectedLine: selectedLine,
+            lineNumber: lineNumber
+        )
     }
 
     private func selectedLineNumber(in textView: NSTextView) -> Int {
@@ -325,5 +332,35 @@ final class GutterView: NSView {
             }
         }
         return max(newlineCount, 1)
+    }
+
+    private func drawExtraLineFragmentIfNeeded(
+        layoutManager: NSLayoutManager,
+        clipOrigin: NSPoint,
+        selectedLine: Int,
+        lineNumber: Int
+    ) {
+        let extraLineRect = layoutManager.extraLineFragmentRect
+        guard !extraLineRect.isEmpty else { return }
+
+        let y = extraLineRect.minY - clipOrigin.y + (textView?.textContainerInset.height ?? 0)
+        let height = extraLineRect.height
+        guard y + height >= 0, y <= bounds.height else { return }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .right
+
+        if lineNumber == selectedLine {
+            theme.gutterCurrentLineColor.setFill()
+            NSRect(x: 0, y: y, width: bounds.width - 1, height: height).fill()
+        }
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: theme.font,
+            .foregroundColor: lineNumber == selectedLine ? theme.gutterCurrentLineNumberColor : theme.gutterTextColor,
+            .paragraphStyle: paragraph
+        ]
+        let label = NSAttributedString(string: "\(lineNumber)", attributes: attributes)
+        label.draw(in: NSRect(x: 0, y: y + 1, width: bounds.width - 8, height: height))
     }
 }
