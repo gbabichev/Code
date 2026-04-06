@@ -9,8 +9,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct TabBarView: View {
-    private static let tabDragType = UTType.plainText
-
     let tabs: [EditorTab]
     let selectedTabID: EditorTab.ID?
     let isDropTargeted: Bool
@@ -64,13 +62,26 @@ private struct TabItemView: View {
     let onClose: (EditorTab.ID) -> Void
     let onMove: (EditorTab.ID, EditorTab.ID) -> Void
 
+    private var selectedBackground: Color {
+        Color.accentColor.opacity(0.16)
+    }
+
+    private var selectedBorder: Color {
+        Color.accentColor.opacity(0.55)
+    }
+
+    private var unselectedBackground: Color {
+        Color(nsColor: .windowBackgroundColor).opacity(0.01)
+    }
+
     var body: some View {
         HStack(spacing: 8) {
             Text(tab.title)
                 .lineLimit(1)
+                .fontWeight(isSelected ? .semibold : .regular)
             if tab.isDirty {
                 Circle()
-                    .fill(Color.orange)
+                    .fill(isSelected ? Color.accentColor : Color.orange)
                     .frame(width: 8, height: 8)
             }
             Button {
@@ -81,15 +92,17 @@ private struct TabItemView: View {
             }
             .buttonStyle(.plain)
         }
+        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .frame(height: 34)
-        .background(isSelected ? Color(nsColor: .windowBackgroundColor) : Color.clear)
+        .background(isSelected ? selectedBackground : unselectedBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.primary.opacity(isSelected ? 0.12 : 0.05), lineWidth: 1)
+                .strokeBorder(isSelected ? selectedBorder : Color.primary.opacity(0.05), lineWidth: 1)
         }
+        .shadow(color: isSelected ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
         .contentShape(Rectangle())
         .onTapGesture {
             onSelect(tab.id)
