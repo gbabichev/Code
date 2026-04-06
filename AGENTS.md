@@ -9,15 +9,15 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 - `Code/CodeApp.swift`
   App entry point, scene wiring, focused-window command routing, and menu commands.
 - `Code/ContentView.swift`
-  Main `NavigationSplitView`, toolbar, settings popover, sidebar, tab strip, editor composition, and bottom status bar.
+  Main `NavigationSplitView`, toolbar, redesigned settings popover, sidebar, tab strip, editor composition, search bar, and bottom status bar.
 - `Code/Models/AppPreferences.swift`
   Global app preferences shared across windows, including theme, skin, word wrap, sidebar visibility, and editor font settings.
 - `Code/Models/EditorWorkspace.swift`
-  Per-window workspace state: root folder, file tree, open tabs, selected tab, session persistence, and dirty-state helpers used by the sidebar.
+  Per-window workspace state: root folder, file tree, open tabs, selected tab, session persistence, dirty-state helpers used by the sidebar, and window-local reset actions like `Close Folder`.
 - `Code/Models/EditorModels.swift`
-  Core models, editor session snapshot, tab metadata, skin schema models, theme derivation, and language inference.
+  Core models, editor session snapshot, tab metadata, manual language overrides, skin schema models, theme derivation, and language inference.
 - `Code/Views/CodeEditorView.swift`
-  `NSTextView` bridge for editing, wrapping, syntax highlighting, and the custom gutter container.
+  `NSTextView` bridge for editing, wrapping, syntax highlighting, identifier autocomplete, and the custom gutter container.
 - `Code/Views/FileTreeView.swift`
   Sidebar filesystem tree with live dirty indicators on files and folders.
 - `Code/Views/TabBarView.swift`
@@ -48,9 +48,12 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 - Word wrap is controlled in `CodeEditorView.Coordinator.configureLayout(isWordWrapEnabled:)`. Wrap mode must change both scroller visibility and text-container sizing; hiding the horizontal scroller alone is not enough.
 - The gutter highlights the current line and shows line numbers, including the trailing empty line via `extraLineFragmentRect`. The code area itself currently does not paint a current-line background because earlier approaches interfered with skin rendering.
 - Sidebar dirty dots are recursive: file rows are dirty when the matching open tab is dirty, and folder rows are dirty when any descendant file is dirty.
-- The bottom status bar is document-scoped. Line count, encoding, and line-ending controls reflect the selected tab, and encoding/line-ending changes should update save behavior for that tab.
+- The bottom status bar is document-scoped. Line count, encoding, line-ending, and language controls reflect the selected tab. Encoding and line-ending changes should update save behavior for that tab, while language selection is a per-tab editor override used for syntax highlighting.
+- The status bar also contains file actions for opening the parent folder in Finder and copying the file URL. The language menu should keep `Auto Detect` as the default path and layer explicit overrides on top.
 - Closing a dirty tab or intercepting `Cmd+W`/the red stoplight should prompt to save or discard the file. `Cmd+Q` should preserve the workspace session without prompting so the window can be restored as-is on next launch.
+- `File > Close Folder` is a per-window reset action. It should clear the current workspace state, remove the root folder and open file tabs for that window, and return the window to a fresh untitled tab without touching global app preferences.
 - `EditorWorkspace.attachObserver(to:)` forwards nested `EditorTab.objectWillChange` events through `workspace.objectWillChange.send()`. That is what keeps sidebar and other workspace-driven views live when tab dirty state changes.
+- Autocomplete is currently buffer-local and identifier-based through `NSTextView` completion hooks. Keep it focused on variables/functions/symbols already present in the document unless there is a deliberate decision to widen the scope.
 
 ## Follow-up Guidance
 
@@ -65,5 +68,5 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 ## Known Rough Edges
 
 - Syntax highlighting is currently shell-focused; other languages still need actual tokenizers/highlighters.
-- The settings popover is functional but intentionally minimal.
+- The settings popover is now more presentation-focused, with grouped card-style sections and a live font preview, but it is still backed by the same `AppPreferences` model.
 - Current-line emphasis is gutter-only. If full-width current-line highlighting is reintroduced, do it with a dedicated layout/background approach that does not wash out the selected skin.

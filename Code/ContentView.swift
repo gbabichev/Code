@@ -731,8 +731,6 @@ private struct SettingsPopoverView: View {
                 caption: "Window-wide presentation and theme behavior"
             ) {
                 VStack(alignment: .leading, spacing: 12) {
-                    settingLabel("Theme", detail: preferences.appTheme.title)
-
                     Picker("Theme", selection: $preferences.appTheme) {
                         ForEach(AppTheme.allCases) { theme in
                             Text(theme.title).tag(theme)
@@ -759,8 +757,6 @@ private struct SettingsPopoverView: View {
                 caption: "Typeface and editing defaults"
             ) {
                 VStack(alignment: .leading, spacing: 14) {
-                    settingLabel("Font", detail: preferences.editorFontName)
-
                     Picker("Editor Font", selection: $preferences.editorFontName) {
                         ForEach(preferences.availableEditorFonts, id: \.self) { fontName in
                             Text(fontName).tag(fontName)
@@ -801,8 +797,6 @@ private struct SettingsPopoverView: View {
                 caption: "Color theme used for token highlighting"
             ) {
                 VStack(alignment: .leading, spacing: 14) {
-                    settingLabel("Active Skin", detail: preferences.selectedSkin.name)
-
                     Picker("Syntax Highlighting Skin", selection: $preferences.selectedSkinID) {
                         ForEach(preferences.availableSkins) { skin in
                             Text(skin.name).tag(skin.id)
