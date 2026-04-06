@@ -217,7 +217,7 @@ private final class WindowCloseInterceptingView: NSView {
         guard observedWindow !== window else { return }
 
         observedWindow = window
-        delegateProxy.originalDelegate = window.delegate
+        unsafe delegateProxy.originalDelegate = window.delegate
         delegateProxy.shouldAllowWindowClose = { [weak self] in
             guard let self, let workspace = self.workspace else { return true }
             guard workspace.selectedTab != nil else { return true }
@@ -234,12 +234,12 @@ private final class WindowCloseDelegateProxy: NSObject, NSWindowDelegate {
     var shouldAllowWindowClose: (() -> Bool)?
 
     nonisolated override func responds(to aSelector: Selector!) -> Bool {
-        super.responds(to: aSelector) || (originalDelegate?.responds(to: aSelector) ?? false)
+        super.responds(to: aSelector) || (unsafe originalDelegate?.responds(to: aSelector) ?? false)
     }
 
     nonisolated override func forwardingTarget(for aSelector: Selector!) -> Any? {
-        if originalDelegate?.responds(to: aSelector) == true {
-            return originalDelegate
+        if unsafe originalDelegate?.responds(to: aSelector) == true {
+            return unsafe originalDelegate
         }
 
         return super.forwardingTarget(for: aSelector)
@@ -250,6 +250,6 @@ private final class WindowCloseDelegateProxy: NSObject, NSWindowDelegate {
             return false
         }
 
-        return originalDelegate?.windowShouldClose?(sender) ?? true
+        return unsafe originalDelegate?.windowShouldClose?(sender) ?? true
     }
 }
