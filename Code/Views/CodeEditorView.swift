@@ -128,6 +128,8 @@ struct CodeEditorView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
+        private static let identifierPattern = try! NSRegularExpression(pattern: #"\b[A-Za-z_][A-Za-z0-9_]*\b"#)
+
         var textBinding: Binding<String>
         var language: EditorLanguage
         var skin: SkinDefinition
@@ -180,12 +182,40 @@ struct CodeEditorView: NSViewRepresentable {
             sourceText = textView.string
             textBinding.wrappedValue = sourceText
             applyHighlighting(in: editedRange)
+            (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
             textView.needsDisplay = true
             gutterView.needsDisplay = true
         }
 
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            (textView as? LineClickableTextView)?.notePendingCompletionTrigger(
+                replacementString: replacementString,
+                affectedRange: affectedCharRange
+            )
             return true
+        }
+
+        func textView(
+            _ textView: NSTextView,
+            completions words: [String],
+            forPartialWordRange charRange: NSRange,
+            indexOfSelectedItem index: UnsafeMutablePointer<Int>?
+        ) -> [String] {
+            let source = textView.string as NSString
+            guard charRange.location != NSNotFound,
+                  NSMaxRange(charRange) <= source.length,
+                  charRange.length > 0 else {
+                return []
+            }
+
+            let partial = source.substring(with: charRange)
+            guard partial.count >= 2 else { return [] }
+
+            let reservedWords = reservedIdentifiers(for: language)
+            let suggestions = completionCandidates(in: textView.string, partial: partial, excluding: reservedWords)
+            guard !suggestions.isEmpty else { return [] }
+
+            return suggestions
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -289,6 +319,57 @@ struct CodeEditorView: NSViewRepresentable {
         private func handleBoundsDidChange() {
             gutterView.needsDisplay = true
         }
+
+        private func completionCandidates(in text: String, partial: String, excluding reservedWords: Set<String>) -> [String] {
+            let nsText = text as NSString
+            let partialLowercased = partial.lowercased()
+            var seen = Set<String>()
+            var prefixMatches: [String] = []
+
+            let matches = Self.identifierPattern.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+            for match in matches {
+                let candidate = nsText.substring(with: match.range)
+                guard candidate.count >= 2 else { continue }
+                guard candidate != partial else { continue }
+                guard !reservedWords.contains(candidate) else { continue }
+
+                let candidateLowercased = candidate.lowercased()
+                guard candidateLowercased.hasPrefix(partialLowercased) else { continue }
+                guard seen.insert(candidate).inserted else { continue }
+
+                prefixMatches.append(candidate)
+            }
+
+            return prefixMatches.sorted(using: KeyPathComparator(\.self, comparator: .localizedStandard))
+        }
+
+        private func reservedIdentifiers(for language: EditorLanguage) -> Set<String> {
+            switch language {
+            case .plainText:
+                return []
+            case .shell:
+                return [
+                    "if", "then", "else", "elif", "fi", "for", "do", "done", "while", "until",
+                    "case", "esac", "in", "function", "select", "time", "coproc", "return",
+                    "break", "continue", "exit", "local", "readonly", "declare", "typeset"
+                ]
+            case .dotenv:
+                return []
+            case .python:
+                return [
+                    "False", "None", "True", "and", "as", "assert", "async", "await", "break",
+                    "class", "continue", "def", "del", "elif", "else", "except", "finally",
+                    "for", "from", "global", "if", "import", "in", "is", "lambda", "nonlocal",
+                    "not", "or", "pass", "raise", "return", "try", "while", "with", "yield"
+                ]
+            case .powerShell:
+                return [
+                    "if", "else", "elseif", "switch", "foreach", "for", "while", "do", "until",
+                    "break", "continue", "return", "function", "filter", "param", "begin",
+                    "process", "end", "trap", "throw", "try", "catch", "finally", "class"
+                ]
+            }
+        }
     }
 }
 
@@ -298,6 +379,8 @@ final class LineClickableTextView: NSTextView {
     }
     var lineCommentPrefix: String?
     var indentWidth = 4
+    private var shouldTriggerAutomaticCompletion = false
+    private var isApplyingAcceptedCompletion = false
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -468,6 +551,18 @@ final class LineClickableTextView: NSTextView {
         super.insertText(insertString, replacementRange: replacementRange)
     }
 
+    override func insertCompletion(_ word: String, forPartialWordRange charRange: NSRange, movement: Int, isFinal flag: Bool) {
+        isApplyingAcceptedCompletion = true
+        super.insertCompletion(word, forPartialWordRange: charRange, movement: movement, isFinal: flag)
+        if flag {
+            DispatchQueue.main.async { [weak self] in
+                self?.isApplyingAcceptedCompletion = false
+            }
+        } else {
+            isApplyingAcceptedCompletion = false
+        }
+    }
+
     override func insertNewline(_ sender: Any?) {
         let indentation = currentLineLeadingWhitespaceForInsertion()
         super.insertNewline(sender)
@@ -491,6 +586,44 @@ final class LineClickableTextView: NSTextView {
         super.deleteForward(sender)
     }
 
+    func notePendingCompletionTrigger(replacementString: String?, affectedRange: NSRange) {
+        guard !isApplyingAcceptedCompletion else {
+            shouldTriggerAutomaticCompletion = false
+            return
+        }
+
+        guard affectedRange.length == 0,
+              let replacementString,
+              replacementString.count == 1,
+              let scalar = replacementString.unicodeScalars.first else {
+            shouldTriggerAutomaticCompletion = false
+            return
+        }
+
+        shouldTriggerAutomaticCompletion = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_")).contains(scalar)
+    }
+
+    func performAutomaticCompletionIfNeeded() {
+        guard shouldTriggerAutomaticCompletion else { return }
+        shouldTriggerAutomaticCompletion = false
+
+        guard !isApplyingAcceptedCompletion,
+              selectedRange().length == 0,
+              currentPartialWordRange()?.length ?? 0 >= 2 else {
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  unsafe self.window?.firstResponder === self,
+                  !self.isApplyingAcceptedCompletion,
+                  self.currentPartialWordRange()?.length ?? 0 >= 2 else {
+                return
+            }
+            self.complete(nil)
+        }
+    }
+
     private func currentLineLeadingWhitespaceForInsertion() -> String {
         let nsText = string as NSString
         let selection = selectedRange()
@@ -502,6 +635,28 @@ final class LineClickableTextView: NSTextView {
 
         let line = nsText.substring(with: lineRange)
         return String(line.prefix { $0 == " " || $0 == "\t" })
+    }
+
+    private func currentPartialWordRange() -> NSRange? {
+        let nsText = string as NSString
+        let selection = selectedRange()
+        guard selection.length == 0,
+              selection.location != NSNotFound,
+              selection.location <= nsText.length else {
+            return nil
+        }
+
+        let identifierSet = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_"))
+        var start = selection.location
+        while start > 0 {
+            let scalar = nsText.substring(with: NSRange(location: start - 1, length: 1)).unicodeScalars.first
+            guard let scalar, identifierSet.contains(scalar) else { break }
+            start -= 1
+        }
+
+        let length = selection.location - start
+        guard length > 0 else { return nil }
+        return NSRange(location: start, length: length)
     }
 
     @discardableResult
