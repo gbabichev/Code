@@ -152,109 +152,143 @@ private struct EditorCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Tab") {
+            Button {
                 workspace?.createUntitledTab()
+            } label: {
+                Label("New Tab", systemImage: "plus.square.on.square")
             }
             .keyboardShortcut("n", modifiers: [.command])
             .disabled(workspace == nil)
 
-            Button("New Window") {
+            Button {
                 openNewWindow()
+            } label: {
+                Label("New Window", systemImage: "macwindow.badge.plus")
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
 
             Divider()
 
-            Button("Open File...") {
+            Button {
                 workspace?.chooseFile()
+            } label: {
+                Label("Open File...", systemImage: "doc")
             }
             .keyboardShortcut("o", modifiers: [.command])
             .disabled(workspace == nil)
 
-            Button("Open Folder...") {
+            Button {
                 workspace?.chooseRootFolder()
+            } label: {
+                Label("Open Folder...", systemImage: "folder")
             }
             .keyboardShortcut("o", modifiers: [.command, .shift])
             .disabled(workspace == nil)
         }
 
         CommandGroup(after: .saveItem) {
-            Button("Save") {
+            Button {
                 workspace?.saveSelectedTab()
+            } label: {
+                Label("Save", systemImage: "square.and.arrow.down")
             }
             .keyboardShortcut("s", modifiers: [.command])
             .disabled(workspace?.selectedTab == nil)
+        }
 
-            Button("Toggle Line Comment") {
+        CommandGroup(after: .pasteboard) {
+            Button {
                 ActiveEditorTextViewRegistry.shared.toggleLineComment()
+            } label: {
+                Label("Toggle Line Comment", systemImage: "text.append")
             }
             .keyboardShortcut("/", modifiers: [.command])
             .disabled(workspace?.selectedTab == nil)
 
-            Button("Indent") {
+            Button {
                 ActiveEditorTextViewRegistry.shared.indentSelection()
+            } label: {
+                Label("Indent", systemImage: "increase.indent")
             }
             .keyboardShortcut("]", modifiers: [.command])
             .disabled(workspace?.selectedTab == nil)
 
-            Button("Outdent") {
+            Button {
                 ActiveEditorTextViewRegistry.shared.outdentSelection()
+            } label: {
+                Label("Outdent", systemImage: "decrease.indent")
             }
             .keyboardShortcut("[", modifiers: [.command])
             .disabled(workspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .textFormatting) {
-            Button("Increase Font Size") {
+            Button {
                 preferences.increaseEditorFontSize()
+            } label: {
+                Label("Increase Font Size", systemImage: "textformat.size.larger")
             }
             .keyboardShortcut("=", modifiers: [.command])
 
-            Button("Decrease Font Size") {
+            Button {
                 preferences.decreaseEditorFontSize()
+            } label: {
+                Label("Decrease Font Size", systemImage: "textformat.size.smaller")
             }
             .keyboardShortcut("-", modifiers: [.command])
         }
 
         CommandMenu("Find") {
-            Button("Find...") {
+            Button {
                 searchController.showFind()
+            } label: {
+                Label("Find...", systemImage: "magnifyingglass")
             }
             .keyboardShortcut("f", modifiers: [.command])
 
-            Button("Replace...") {
+            Button {
                 searchController.showReplace()
+            } label: {
+                Label("Replace...", systemImage: "rectangle.and.pencil.and.ellipsis")
             }
             .keyboardShortcut("f", modifiers: [.command, .option])
 
             Divider()
 
-            Button("Find Next") {
+            Button {
                 searchController.findNext()
+            } label: {
+                Label("Find Next", systemImage: "chevron.down")
             }
             .keyboardShortcut("g", modifiers: [.command])
             .disabled(workspace?.selectedTab == nil)
 
-            Button("Find Previous") {
+            Button {
                 searchController.findPrevious()
+            } label: {
+                Label("Find Previous", systemImage: "chevron.up")
             }
             .keyboardShortcut("g", modifiers: [.command, .shift])
             .disabled(workspace?.selectedTab == nil)
 
             Divider()
 
-            Button("Use Selection for Find") {
+            Button {
                 searchController.useSelectionForFind()
+            } label: {
+                Label("Use Selection for Find", systemImage: "selection.pin.in.out")
             }
             .keyboardShortcut("e", modifiers: [.command])
             .disabled(workspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .sidebar) {
-            Toggle("Word Wrap", isOn: Binding(
+            Toggle(isOn: Binding(
                 get: { preferences.isWordWrapEnabled },
                 set: { preferences.isWordWrapEnabled = $0 }
-            ))
+            )) {
+                Label("Word Wrap", systemImage: "text.justify.left")
+            }
             .keyboardShortcut("z", modifiers: [.option, .command])
         }
     }

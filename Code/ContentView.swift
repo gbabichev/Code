@@ -669,81 +669,201 @@ private struct SettingsPopoverView: View {
     @EnvironmentObject private var preferences: AppPreferences
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Theme")
-                    .font(.headline)
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(
+                            LinearGradient(
+                                colors: [Color.accentColor.opacity(0.95), Color.accentColor.opacity(0.7)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        )
 
-                Picker("Theme", selection: $preferences.appTheme) {
-                    ForEach(AppTheme.allCases) { theme in
-                        Text(theme.title).tag(theme)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Editor Settings")
+                            .font(.title3.weight(.semibold))
+                        Text("Global preferences for every window")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
-                .pickerStyle(.segmented)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Editor Font")
-                    .font(.headline)
+            settingsSection(
+                title: "Appearance",
+                caption: "Window-wide presentation and theme behavior"
+            ) {
+                VStack(alignment: .leading, spacing: 12) {
+                    settingLabel("Theme", detail: preferences.appTheme.title)
 
-                Picker("Editor Font", selection: $preferences.editorFontName) {
-                    ForEach(preferences.availableEditorFonts, id: \.self) { fontName in
-                        Text(fontName).tag(fontName)
+                    Picker("Theme", selection: $preferences.appTheme) {
+                        ForEach(AppTheme.allCases) { theme in
+                            Text(theme.title).tag(theme)
+                        }
                     }
-                }
-                .pickerStyle(.menu)
+                    .pickerStyle(.segmented)
 
-                HStack {
-                    Text("Size")
-                    Spacer()
-                    Text("\(Int(preferences.editorFontSize)) pt")
-                        .foregroundStyle(.secondary)
-                    Stepper(
-                        "",
+                    Divider()
+
+                    Toggle(isOn: $preferences.isWordWrapEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Word Wrap")
+                            Text("Wrap long lines inside the editor")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                }
+            }
+
+            settingsSection(
+                title: "Editor",
+                caption: "Typeface and editing defaults"
+            ) {
+                VStack(alignment: .leading, spacing: 14) {
+                    settingLabel("Font", detail: preferences.editorFontName)
+
+                    Picker("Editor Font", selection: $preferences.editorFontName) {
+                        ForEach(preferences.availableEditorFonts, id: \.self) { fontName in
+                            Text(fontName).tag(fontName)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Text("The quick brown fox jumps over the lazy dog")
+                        .font(.custom(preferences.editorFont.fontName, size: preferences.editorFont.pointSize))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                    settingStepperRow(
+                        title: "Font Size",
+                        detail: "\(Int(preferences.editorFontSize)) pt",
                         value: $preferences.editorFontSize,
-                        in: AppPreferences.minEditorFontSize...AppPreferences.maxEditorFontSize,
-                        step: 1
+                        range: AppPreferences.minEditorFontSize...AppPreferences.maxEditorFontSize
                     )
-                    .labelsHidden()
-                }
 
-                HStack {
-                    Text("Indent Width")
-                    Spacer()
-                    Text("\(preferences.indentWidth) spaces")
-                        .foregroundStyle(.secondary)
-                    Stepper(
-                        "",
-                        value: $preferences.indentWidth,
-                        in: AppPreferences.minIndentWidth...AppPreferences.maxIndentWidth,
-                        step: 1
+                    settingStepperRow(
+                        title: "Indent Width",
+                        detail: "\(preferences.indentWidth) spaces",
+                        value: Binding(
+                            get: { Double(preferences.indentWidth) },
+                            set: { preferences.indentWidth = Int($0) }
+                        ),
+                        range: Double(AppPreferences.minIndentWidth)...Double(AppPreferences.maxIndentWidth)
                     )
-                    .labelsHidden()
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Syntax Highlighting Skin")
-                    .font(.headline)
+            settingsSection(
+                title: "Syntax Skin",
+                caption: "Color theme used for token highlighting"
+            ) {
+                VStack(alignment: .leading, spacing: 14) {
+                    settingLabel("Active Skin", detail: preferences.selectedSkin.name)
 
-                Picker("Syntax Highlighting Skin", selection: $preferences.selectedSkinID) {
-                    ForEach(preferences.availableSkins) { skin in
-                        Text(skin.name).tag(skin.id)
+                    Picker("Syntax Highlighting Skin", selection: $preferences.selectedSkinID) {
+                        ForEach(preferences.availableSkins) { skin in
+                            Text(skin.name).tag(skin.id)
+                        }
                     }
-                }
-                .pickerStyle(.menu)
+                    .pickerStyle(.menu)
 
-                HStack {
-                    Button("Import…") {
-                        preferences.importSkin()
-                    }
-                    Button("Export Current…") {
-                        preferences.exportSelectedSkin()
+                    HStack(spacing: 8) {
+                        Button("Import…") {
+                            preferences.importSkin()
+                        }
+
+                        Button("Export Current…") {
+                            preferences.exportSelectedSkin()
+                        }
                     }
                 }
             }
         }
-        .padding(16)
-        .frame(width: 360)
+        .padding(18)
+        .frame(width: 400)
+        .background(
+            LinearGradient(
+                colors: [
+                    Color.primary.opacity(0.035),
+                    Color.clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+    }
+
+    @ViewBuilder
+    private func settingsSection<Content: View>(
+        title: String,
+        caption: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                Text(caption)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            content()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.primary.opacity(0.045))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08))
+        }
+    }
+
+    private func settingLabel(_ title: String, detail: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+            Spacer()
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func settingStepperRow(
+        title: String,
+        detail: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>
+    ) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.medium))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Stepper("", value: value, in: range, step: 1)
+                .labelsHidden()
+        }
     }
 }
