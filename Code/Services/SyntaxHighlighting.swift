@@ -73,6 +73,117 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
     }
 }
 
+struct PythonSyntaxHighlighter: SyntaxHighlighting {
+    let theme: SkinTheme
+
+    private let commentRegex = try! NSRegularExpression(
+        pattern: #"(?m)#.*$"#
+    )
+    private let stringRegex = try! NSRegularExpression(
+        pattern: #"(?s)(\"\"\".*?\"\"\"|'''.*?'''|f\"([^\"\\]|\\.)*\"|f'([^'\\]|\\.)*'|r\"([^\"\\]|\\.)*\"|r'([^'\\]|\\.)*'|b\"([^\"\\]|\\.)*\"|b'([^'\\]|\\.)*'|u\"([^\"\\]|\\.)*\"|u'([^'\\]|\\.)*'|\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*')"#
+    )
+    private let keywordRegex = try! NSRegularExpression(
+        pattern: #"(?m)\b(False|None|True|and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|match|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b"#
+    )
+    private let builtInRegex = try! NSRegularExpression(
+        pattern: #"(?m)\b(abs|all|any|bool|breakpoint|bytearray|bytes|callable|chr|classmethod|compile|dict|dir|enumerate|filter|float|format|frozenset|getattr|hasattr|hash|hex|input|int|isinstance|issubclass|iter|len|list|map|max|min|next|object|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|vars|zip)\b"#
+    )
+    private let variableRegex = try! NSRegularExpression(
+        pattern: #"(?m)\b(self|cls)\b"#
+    )
+    private let decoratorRegex = try! NSRegularExpression(
+        pattern: #"(?m)^\s*@[A-Za-z_][A-Za-z0-9_\.]*"#
+    )
+
+    func apply(to textStorage: NSTextStorage, text: String) {
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.setAttributes(theme.baseAttributes, range: fullRange)
+
+        for match in commentRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.commentAttributes, range: match.range)
+        }
+
+        for match in stringRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.stringAttributes, range: match.range)
+        }
+
+        for match in decoratorRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.commandAttributes, range: match.range)
+        }
+
+        for match in variableRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.variableAttributes, range: match.range)
+        }
+
+        for match in keywordRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.keywordAttributes, range: match.range)
+        }
+
+        for match in builtInRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+        }
+    }
+}
+
+struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
+    let theme: SkinTheme
+
+    private let blockCommentRegex = try! NSRegularExpression(
+        pattern: #"(?s)<#.*?#>"#
+    )
+    private let lineCommentRegex = try! NSRegularExpression(
+        pattern: #"(?m)#.*$"#
+    )
+    private let stringRegex = try! NSRegularExpression(
+        pattern: #"(?s)@\".*?\"@|@'.*?'@|\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*'"#
+    )
+    private let variableRegex = try! NSRegularExpression(
+        pattern: #"\$[A-Za-z_][A-Za-z0-9_:]*|\$\{[^}]+\}"#
+    )
+    private let keywordRegex = try! NSRegularExpression(
+        pattern: #"(?mi)\b(begin|break|catch|class|continue|data|default|do|dynamicparam|else|elseif|end|enum|exit|filter|finally|for|foreach|from|function|if|in|param|process|return|switch|throw|trap|try|until|using|while|workflow)\b"#
+    )
+    private let builtInRegex = try! NSRegularExpression(
+        pattern: #"(?mi)\b(Write-Host|Write-Output|Write-Error|Write-Warning|Write-Verbose|Write-Debug|Write-Information|Read-Host|ForEach-Object|Where-Object|Select-Object|Sort-Object|Group-Object|Measure-Object|Get-Item|Set-Item|New-Item|Remove-Item|Copy-Item|Move-Item|Test-Path|Join-Path|Split-Path|Resolve-Path|Import-Module|Export-ModuleMember|Invoke-Expression|Start-Process|Stop-Process|Get-Process|Get-Service|Start-Service|Stop-Service|Set-Location|Get-Location|Clear-Host|Out-File|Set-Content|Add-Content|Get-Content)\b"#
+    )
+    private let commandRegex = try! NSRegularExpression(
+        pattern: #"(?mi)\b[A-Z][A-Za-z0-9]*-[A-Z][A-Za-z0-9]*(?:-[A-Z][A-Za-z0-9]*)*\b"#
+    )
+
+    func apply(to textStorage: NSTextStorage, text: String) {
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.setAttributes(theme.baseAttributes, range: fullRange)
+
+        for match in blockCommentRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.commentAttributes, range: match.range)
+        }
+
+        for match in lineCommentRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.commentAttributes, range: match.range)
+        }
+
+        for match in stringRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.stringAttributes, range: match.range)
+        }
+
+        for match in variableRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.variableAttributes, range: match.range)
+        }
+
+        for match in keywordRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.keywordAttributes, range: match.range)
+        }
+
+        for match in builtInRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+        }
+
+        for match in commandRegex.matches(in: text, range: fullRange) {
+            textStorage.addAttributes(theme.commandAttributes, range: match.range)
+        }
+    }
+}
+
 enum SyntaxHighlighterFactory {
     static func makeHighlighter(for language: EditorLanguage, skin: SkinDefinition, editorFont: NSFont, semiboldFont: NSFont) -> SyntaxHighlighting {
         let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: semiboldFont)
@@ -80,6 +191,10 @@ enum SyntaxHighlighterFactory {
         switch language {
         case .shell:
             return ShellSyntaxHighlighter(theme: theme)
+        case .python:
+            return PythonSyntaxHighlighter(theme: theme)
+        case .powerShell:
+            return PowerShellSyntaxHighlighter(theme: theme)
         case .plainText:
             return PlainTextHighlighter(theme: theme)
         }

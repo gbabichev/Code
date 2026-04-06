@@ -28,6 +28,8 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable {
 enum EditorLanguage: String, Codable {
     case plainText
     case shell
+    case python
+    case powerShell
 
     static func infer(from url: URL) -> EditorLanguage {
         let shellExtensions = ["sh", "bash", "zsh", "ksh", "command"]
@@ -41,8 +43,12 @@ enum EditorLanguage: String, Codable {
             return .shell
         }
 
-        if ["py", "pyw"].contains(url.pathExtension.lowercased()) {
-            return .plainText
+        if ["py", "pyw", "pyi"].contains(url.pathExtension.lowercased()) {
+            return .python
+        }
+
+        if ["ps1", "psm1", "psd1"].contains(url.pathExtension.lowercased()) {
+            return .powerShell
         }
 
         return .plainText
