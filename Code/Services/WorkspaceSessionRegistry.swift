@@ -23,7 +23,14 @@ final class WorkspaceSessionRegistry: ObservableObject {
     }
 
     func makeSceneBootstrapSessionID() -> String {
-        resolveSessionID(storedSessionID: nil)
+        if !didConsumeLaunchRestore,
+           let lastSessionID = userDefaults.string(forKey: Keys.lastFocusedSessionID),
+           SessionStore(sessionID: lastSessionID, fileManager: fileManager).hasSavedSession {
+            didConsumeLaunchRestore = true
+            return lastSessionID
+        }
+
+        return UUID().uuidString
     }
 
     func resolveSessionID(storedSessionID: String?) -> String {
