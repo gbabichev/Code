@@ -6,19 +6,23 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 
 @main
 struct CodeApp: App {
     @Environment(\.openWindow) private var openWindow
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var preferences = AppPreferences()
     @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
+    @StateObject private var externalFileRouter = ExternalFileRouter.shared
 
     var body: some Scene {
         WindowGroup(id: "workspace") {
             WorkspaceSceneView(
                 preferences: preferences,
-                sessionRegistry: sessionRegistry
+                sessionRegistry: sessionRegistry,
+                externalFileRouter: externalFileRouter
             )
         }
         .commands {
@@ -33,16 +37,19 @@ struct CodeApp: App {
 private struct WorkspaceSceneView: View {
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var sessionRegistry: WorkspaceSessionRegistry
+    @ObservedObject var externalFileRouter: ExternalFileRouter
     @Environment(\.scenePhase) private var scenePhase
     @SceneStorage("workspaceSessionID") private var workspaceSessionID = ""
     @State private var bootstrapSessionID: String
 
     init(
         preferences: AppPreferences,
-        sessionRegistry: WorkspaceSessionRegistry
+        sessionRegistry: WorkspaceSessionRegistry,
+        externalFileRouter: ExternalFileRouter
     ) {
         self.preferences = preferences
         self.sessionRegistry = sessionRegistry
+        self.externalFileRouter = externalFileRouter
         _bootstrapSessionID = State(initialValue: sessionRegistry.makeSceneBootstrapSessionID())
     }
 
@@ -52,6 +59,7 @@ private struct WorkspaceSceneView: View {
         WorkspaceContentView(sessionID: effectiveSessionID)
             .id(effectiveSessionID)
             .environmentObject(preferences)
+            .environmentObject(externalFileRouter)
             .onAppear {
                 if workspaceSessionID.isEmpty {
                     workspaceSessionID = effectiveSessionID
@@ -69,6 +77,7 @@ private struct WorkspaceSceneView: View {
 private struct WorkspaceContentView: View {
     let sessionID: String
     @StateObject private var workspace: EditorWorkspace
+    @EnvironmentObject private var externalFileRouter: ExternalFileRouter
 
     init(sessionID: String) {
         self.sessionID = sessionID
@@ -81,6 +90,50 @@ private struct WorkspaceContentView: View {
             .focusedSceneValue(\.activeEditorWorkspace, workspace)
             .background(WindowDirtyStateView(isDocumentEdited: workspace.hasDirtyTabs))
             .background(WindowCloseInterceptorView(workspace: workspace))
+            .onAppear {
+                openPendingExternalFiles()
+            }
+            .onChange(of: externalFileRouter.pendingRequestID) { _, _ in
+                openPendingExternalFiles()
+            }
+    }
+
+    private func openPendingExternalFiles() {
+        let urls = externalFileRouter.consumePendingFiles()
+        guard !urls.isEmpty else { return }
+
+        for url in urls {
+            workspace.openFile(url)
+        }
+    }
+}
+
+@MainActor
+private final class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        ExternalFileRouter.shared.enqueue(urls: urls)
+    }
+}
+
+@MainActor
+final class ExternalFileRouter: ObservableObject {
+    static let shared = ExternalFileRouter()
+
+    @Published private(set) var pendingRequestID = UUID()
+    private var pendingFiles: [URL] = []
+
+    func enqueue(urls: [URL]) {
+        let fileURLs = urls.filter { $0.isFileURL && !$0.hasDirectoryPath }
+        guard !fileURLs.isEmpty else { return }
+
+        pendingFiles.append(contentsOf: fileURLs)
+        pendingRequestID = UUID()
+    }
+
+    func consumePendingFiles() -> [URL] {
+        let files = pendingFiles
+        pendingFiles.removeAll()
+        return files
     }
 }
 
