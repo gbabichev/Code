@@ -251,8 +251,7 @@ final class EditorTab: ObservableObject, Identifiable {
 
     @Published var content: String
     @Published var isDirty: Bool
-
-    let lastSavedContent: String
+    var lastSavedContent: String
 
     init(fileURL: URL, content: String, lastSavedContent: String, isDirty: Bool) {
         self.fileURL = fileURL

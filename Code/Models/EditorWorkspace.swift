@@ -37,6 +37,10 @@ final class EditorWorkspace: ObservableObject {
         return openTabs.first(where: { $0.id == selectedTabID })
     }
 
+    func tab(withID id: EditorTab.ID) -> EditorTab? {
+        openTabs.first(where: { $0.id == id })
+    }
+
     func isFileDirty(_ url: URL) -> Bool {
         openTabs.contains { $0.fileURL == url && $0.isDirty }
     }
@@ -138,7 +142,8 @@ final class EditorWorkspace: ObservableObject {
 
         do {
             try tab.content.write(to: tab.fileURL, atomically: true, encoding: .utf8)
-            replaceTab(tab, withContent: tab.content, lastSavedContent: tab.content, isDirty: false)
+            tab.lastSavedContent = tab.content
+            tab.isDirty = false
             persistSession()
         } catch {
             errorMessage = "Failed to save \(tab.fileURL.lastPathComponent): \(error.localizedDescription)"
@@ -193,24 +198,6 @@ final class EditorWorkspace: ObservableObject {
         selectedFileID = snapshot.selectedFilePath
         selectedTabID = snapshot.selectedTabPath ?? restoredTabs.first?.id
     }
-
-    private func replaceTab(_ oldTab: EditorTab, withContent content: String, lastSavedContent: String, isDirty: Bool) {
-        guard let index = openTabs.firstIndex(where: { $0.id == oldTab.id }) else { return }
-
-        let updated = EditorTab(
-            fileURL: oldTab.fileURL,
-            content: content,
-            lastSavedContent: lastSavedContent,
-            isDirty: isDirty
-        )
-
-        attachObserver(to: updated)
-        openTabs[index] = updated
-        if selectedTabID == oldTab.id {
-            selectedTabID = updated.id
-        }
-    }
-
     private func attachObserver(to tab: EditorTab) {
         tabObservers[tab.id] = tab.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()

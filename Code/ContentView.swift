@@ -11,6 +11,7 @@ struct ContentView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var workspace: EditorWorkspace
     @State private var isShowingSettingsPopover = false
+    @State private var pendingTabClose: PendingTabClose?
 
     var body: some View {
         NavigationSplitView {
@@ -44,6 +45,24 @@ struct ContentView: View {
             }
         }
         .preferredColorScheme(preferredColorScheme)
+        .alert("Save Changes?", isPresented: pendingTabCloseBinding, presenting: pendingTabClose) { pending in
+            Button("Save") {
+                workspace.saveTab(id: pending.id)
+                if workspace.errorMessage == nil {
+                    workspace.closeTab(pending.id)
+                }
+                pendingTabClose = nil
+            }
+            Button("Discard", role: .destructive) {
+                workspace.closeTab(pending.id)
+                pendingTabClose = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingTabClose = nil
+            }
+        } message: { pending in
+            Text("Do you want to save the changes you made to \(pending.fileName)?")
+        }
         .alert("Editor Error", isPresented: errorBinding) {
             Button("OK") {
                 workspace.errorMessage = nil
@@ -107,7 +126,7 @@ struct ContentView: View {
                     tabs: workspace.openTabs,
                     selectedTabID: workspace.selectedTabID,
                     onSelect: { workspace.selectedTabID = $0 },
-                    onClose: workspace.closeTab
+                    onClose: requestCloseTab
                 )
 
                 Divider()
@@ -148,6 +167,27 @@ struct ContentView: View {
         )
     }
 
+    private func requestCloseTab(_ id: EditorTab.ID) {
+        guard let tab = workspace.tab(withID: id) else { return }
+
+        if tab.isDirty {
+            pendingTabClose = PendingTabClose(id: id, fileName: tab.title)
+        } else {
+            workspace.closeTab(id)
+        }
+    }
+
+    private var pendingTabCloseBinding: Binding<Bool> {
+        Binding(
+            get: { pendingTabClose != nil },
+            set: { newValue in
+                if !newValue {
+                    pendingTabClose = nil
+                }
+            }
+        )
+    }
+
     private var errorBinding: Binding<Bool> {
         Binding(
             get: { workspace.errorMessage != nil || preferences.errorMessage != nil },
@@ -174,6 +214,11 @@ struct ContentView: View {
             .dark
         }
     }
+}
+
+private struct PendingTabClose: Identifiable {
+    let id: EditorTab.ID
+    let fileName: String
 }
 
 private struct SettingsPopoverView: View {
