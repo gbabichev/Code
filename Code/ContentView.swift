@@ -8,6 +8,7 @@
 import SwiftUI
 
 struct ContentView: View {
+    @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var workspace: EditorWorkspace
     @State private var isShowingSettingsPopover = false
 
@@ -37,23 +38,19 @@ struct ContentView: View {
                 }
                 .popover(isPresented: $isShowingSettingsPopover, arrowEdge: .bottom) {
                     SettingsPopoverView()
+                        .environmentObject(preferences)
                         .environmentObject(workspace)
                 }
             }
         }
         .preferredColorScheme(preferredColorScheme)
-        .onChange(of: workspace.appTheme) { _, _ in
-            workspace.persistSession()
-        }
-        .onChange(of: workspace.selectedSkinID) { _, _ in
-            workspace.persistSession()
-        }
         .alert("Editor Error", isPresented: errorBinding) {
             Button("OK") {
                 workspace.errorMessage = nil
+                preferences.errorMessage = nil
             }
         } message: {
-            Text(workspace.errorMessage ?? "")
+            Text(activeErrorMessage)
         }
     }
 
@@ -134,8 +131,8 @@ struct ContentView: View {
 
                         CodeEditorView(
                             text: selectedTabBinding(selectedTab),
-                            isWordWrapEnabled: workspace.isWordWrapEnabled,
-                            skin: workspace.selectedSkin,
+                            isWordWrapEnabled: preferences.isWordWrapEnabled,
+                            skin: preferences.selectedSkin,
                             language: selectedTab.language
                         )
                     }
@@ -153,17 +150,22 @@ struct ContentView: View {
 
     private var errorBinding: Binding<Bool> {
         Binding(
-            get: { workspace.errorMessage != nil },
+            get: { workspace.errorMessage != nil || preferences.errorMessage != nil },
             set: { newValue in
                 if !newValue {
                     workspace.errorMessage = nil
+                    preferences.errorMessage = nil
                 }
             }
         )
     }
 
+    private var activeErrorMessage: String {
+        workspace.errorMessage ?? preferences.errorMessage ?? ""
+    }
+
     private var preferredColorScheme: ColorScheme? {
-        switch workspace.appTheme {
+        switch preferences.appTheme {
         case .system:
             nil
         case .light:
@@ -175,7 +177,7 @@ struct ContentView: View {
 }
 
 private struct SettingsPopoverView: View {
-    @EnvironmentObject private var workspace: EditorWorkspace
+    @EnvironmentObject private var preferences: AppPreferences
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -183,7 +185,7 @@ private struct SettingsPopoverView: View {
                 Text("Theme")
                     .font(.headline)
 
-                Picker("Theme", selection: $workspace.appTheme) {
+                Picker("Theme", selection: $preferences.appTheme) {
                     ForEach(AppTheme.allCases) { theme in
                         Text(theme.title).tag(theme)
                     }
@@ -195,8 +197,8 @@ private struct SettingsPopoverView: View {
                 Text("Syntax Highlighting Skin")
                     .font(.headline)
 
-                Picker("Syntax Highlighting Skin", selection: $workspace.selectedSkinID) {
-                    ForEach(workspace.availableSkins) { skin in
+                Picker("Syntax Highlighting Skin", selection: $preferences.selectedSkinID) {
+                    ForEach(preferences.availableSkins) { skin in
                         Text(skin.name).tag(skin.id)
                     }
                 }
@@ -204,10 +206,10 @@ private struct SettingsPopoverView: View {
 
                 HStack {
                     Button("Import…") {
-                        workspace.importSkin()
+                        preferences.importSkin()
                     }
                     Button("Export Current…") {
-                        workspace.exportSelectedSkin()
+                        preferences.exportSelectedSkin()
                     }
                 }
             }

@@ -10,7 +10,7 @@ import Foundation
 struct SessionStore {
     private let sessionURL: URL
 
-    init(fileManager: FileManager = .default) {
+    init(sessionID: String? = nil, fileManager: FileManager = .default) {
         let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let directoryURL = appSupportURL.appendingPathComponent("Basic Editor", isDirectory: true)
 
@@ -18,7 +18,15 @@ struct SessionStore {
             try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
         }
 
-        self.sessionURL = directoryURL.appendingPathComponent("Session.json")
+        if let sessionID {
+            let sessionsDirectoryURL = directoryURL.appendingPathComponent("Sessions", isDirectory: true)
+            if !fileManager.fileExists(atPath: sessionsDirectoryURL.path(percentEncoded: false)) {
+                try? fileManager.createDirectory(at: sessionsDirectoryURL, withIntermediateDirectories: true)
+            }
+            self.sessionURL = sessionsDirectoryURL.appendingPathComponent("\(sessionID).json")
+        } else {
+            self.sessionURL = directoryURL.appendingPathComponent("Session.json")
+        }
     }
 
     func load() -> EditorSessionSnapshot? {

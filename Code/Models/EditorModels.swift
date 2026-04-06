@@ -199,18 +199,18 @@ struct EditorSessionSnapshot: Codable {
     let rootFolderPath: String?
     let selectedFilePath: String?
     let selectedTabPath: String?
-    let isWordWrapEnabled: Bool
-    let appTheme: AppTheme
-    let selectedSkinID: String
+    let isWordWrapEnabled: Bool?
+    let appTheme: AppTheme?
+    let selectedSkinID: String?
     let tabs: [EditorTabSnapshot]
 
     init(
         rootFolderPath: String?,
         selectedFilePath: String?,
         selectedTabPath: String?,
-        isWordWrapEnabled: Bool,
-        appTheme: AppTheme,
-        selectedSkinID: String,
+        isWordWrapEnabled: Bool? = nil,
+        appTheme: AppTheme? = nil,
+        selectedSkinID: String? = nil,
         tabs: [EditorTabSnapshot]
     ) {
         self.rootFolderPath = rootFolderPath
@@ -237,9 +237,9 @@ struct EditorSessionSnapshot: Codable {
         rootFolderPath = try container.decodeIfPresent(String.self, forKey: .rootFolderPath)
         selectedFilePath = try container.decodeIfPresent(String.self, forKey: .selectedFilePath)
         selectedTabPath = try container.decodeIfPresent(String.self, forKey: .selectedTabPath)
-        isWordWrapEnabled = try container.decodeIfPresent(Bool.self, forKey: .isWordWrapEnabled) ?? false
-        appTheme = try container.decodeIfPresent(AppTheme.self, forKey: .appTheme) ?? .system
-        selectedSkinID = try container.decodeIfPresent(String.self, forKey: .selectedSkinID) ?? "classic"
+        isWordWrapEnabled = try container.decodeIfPresent(Bool.self, forKey: .isWordWrapEnabled)
+        appTheme = try container.decodeIfPresent(AppTheme.self, forKey: .appTheme)
+        selectedSkinID = try container.decodeIfPresent(String.self, forKey: .selectedSkinID)
         tabs = try container.decode([EditorTabSnapshot].self, forKey: .tabs)
     }
 }
