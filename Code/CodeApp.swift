@@ -10,11 +10,13 @@ import SwiftUI
 @main
 struct CodeApp: App {
     @StateObject private var preferences = AppPreferences()
+    @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
 
     var body: some Scene {
         WindowGroup {
             WorkspaceSceneView()
                 .environmentObject(preferences)
+                .environmentObject(sessionRegistry)
         }
         .commands {
             EditorCommands(preferences: preferences)
@@ -24,12 +26,32 @@ struct CodeApp: App {
 
 private struct WorkspaceSceneView: View {
     @EnvironmentObject private var preferences: AppPreferences
-    @SceneStorage("workspaceSessionID") private var workspaceSessionID = UUID().uuidString
+    @EnvironmentObject private var sessionRegistry: WorkspaceSessionRegistry
+    @Environment(\.scenePhase) private var scenePhase
+    @SceneStorage("workspaceSessionID") private var workspaceSessionID = ""
 
     var body: some View {
-        WorkspaceContentView(sessionID: workspaceSessionID)
-            .id(workspaceSessionID)
-            .environmentObject(preferences)
+        Group {
+            if workspaceSessionID.isEmpty {
+                Color.clear
+                    .task {
+                        guard workspaceSessionID.isEmpty else { return }
+                        workspaceSessionID = sessionRegistry.resolveSessionID(storedSessionID: nil)
+                    }
+            } else {
+                WorkspaceContentView(sessionID: workspaceSessionID)
+                    .id(workspaceSessionID)
+                    .environmentObject(preferences)
+                    .onAppear {
+                        sessionRegistry.markFocused(sessionID: workspaceSessionID)
+                    }
+                    .onChange(of: scenePhase) { _, newPhase in
+                        if newPhase == .active {
+                            sessionRegistry.markFocused(sessionID: workspaceSessionID)
+                        }
+                    }
+            }
+        }
     }
 }
 

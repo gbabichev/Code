@@ -8,9 +8,11 @@
 import Foundation
 
 struct SessionStore {
+    private let fileManager: FileManager
     private let sessionURL: URL
 
     init(sessionID: String? = nil, fileManager: FileManager = .default) {
+        self.fileManager = fileManager
         let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let directoryURL = appSupportURL.appendingPathComponent("Basic Editor", isDirectory: true)
 
@@ -35,6 +37,10 @@ struct SessionStore {
         }
 
         return try? JSONDecoder().decode(EditorSessionSnapshot.self, from: data)
+    }
+
+    var hasSavedSession: Bool {
+        fileManager.fileExists(atPath: sessionURL.path(percentEncoded: false))
     }
 
     func save(_ snapshot: EditorSessionSnapshot) {
