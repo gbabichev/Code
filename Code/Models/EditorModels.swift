@@ -59,6 +59,15 @@ enum EditorLanguage: String, Codable {
 
         return .plainText
     }
+
+    var lineCommentPrefix: String? {
+        switch self {
+        case .shell, .dotenv, .python, .powerShell:
+            return "#"
+        case .plainText:
+            return nil
+        }
+    }
 }
 
 enum EditorTextEncoding: String, Codable, CaseIterable, Identifiable {

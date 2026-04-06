@@ -184,6 +184,12 @@ private struct EditorCommands: Commands {
             }
             .keyboardShortcut("s", modifiers: [.command])
             .disabled(workspace?.selectedTab == nil)
+
+            Button("Toggle Line Comment") {
+                ActiveEditorTextViewRegistry.shared.toggleLineComment()
+            }
+            .keyboardShortcut("/", modifiers: [.command])
+            .disabled(workspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .textFormatting) {

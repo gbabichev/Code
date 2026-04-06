@@ -17,6 +17,10 @@ final class ActiveEditorTextViewRegistry {
     func register(_ textView: NSTextView) {
         self.textView = textView
     }
+
+    func toggleLineComment() {
+        (textView as? LineClickableTextView)?.toggleLineComment()
+    }
 }
 
 private struct SourceLine {
@@ -503,6 +507,7 @@ struct CodeEditorView: NSViewRepresentable {
                 lineClickableTextView.beforeEditingHandler = { [weak self] in
                     self?.expandAllFoldsIfNeeded()
                 }
+                lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
             }
 
             NotificationCenter.default.addObserver(
@@ -593,6 +598,7 @@ struct CodeEditorView: NSViewRepresentable {
             ]
             if let lineClickableTextView = textView as? LineClickableTextView {
                 lineClickableTextView.currentLineHighlightColor = theme.currentLineColor
+                lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
             }
             scrollView?.backgroundColor = theme.editorBackgroundColor
             gutterView.theme = theme
@@ -784,6 +790,7 @@ final class LineClickableTextView: NSTextView {
         didSet { needsDisplay = true }
     }
     var beforeEditingHandler: (() -> Void)?
+    var lineCommentPrefix: String?
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -804,10 +811,89 @@ final class LineClickableTextView: NSTextView {
 
     override func keyDown(with event: NSEvent) {
         ActiveEditorTextViewRegistry.shared.register(self)
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers == [.command], event.charactersIgnoringModifiers == "/" {
+            toggleLineComment()
+            return
+        }
         if !event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
             beforeEditingHandler?()
         }
         super.keyDown(with: event)
+    }
+
+    func toggleLineComment() {
+        guard let lineCommentPrefix else { return }
+        beforeEditingHandler?()
+
+        let nsText = string as NSString
+        let selectedRange = selectedRange()
+        let lineRange = nsText.lineRange(for: selectedRange)
+        let block = nsText.substring(with: lineRange)
+        let originalHasTrailingNewline = block.hasSuffix("\n")
+        let lines = block.components(separatedBy: "\n")
+        let lineCount = originalHasTrailingNewline ? max(lines.count - 1, 0) : lines.count
+        guard lineCount > 0 else { return }
+
+        let activeLines = Array(lines.prefix(lineCount))
+        let shouldUncomment = activeLines.contains(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
+            && activeLines.allSatisfy { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { return true }
+                return lineHasCommentPrefix(line, prefix: lineCommentPrefix)
+            }
+
+        let updatedActiveLines = activeLines.map { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { return line }
+            return shouldUncomment
+                ? uncommentedLine(from: line, prefix: lineCommentPrefix)
+                : commentedLine(from: line, prefix: lineCommentPrefix)
+        }
+
+        var updatedLines = updatedActiveLines
+        if originalHasTrailingNewline {
+            updatedLines.append("")
+        }
+        let replacement = updatedLines.joined(separator: "\n")
+
+        guard shouldChangeText(in: lineRange, replacementString: replacement) else { return }
+        unsafe textStorage?.beginEditing()
+        unsafe textStorage?.replaceCharacters(in: lineRange, with: replacement)
+        unsafe textStorage?.endEditing()
+        didChangeText()
+        setSelectedRange(NSRange(location: lineRange.location, length: (replacement as NSString).length))
+    }
+
+    private func lineHasCommentPrefix(_ line: String, prefix: String) -> Bool {
+        let indentationEnd = line.firstIndex { $0 != " " && $0 != "\t" } ?? line.endIndex
+        return line[indentationEnd...].hasPrefix(prefix)
+    }
+
+    private func commentedLine(from line: String, prefix: String) -> String {
+        let indentationEnd = line.firstIndex { $0 != " " && $0 != "\t" } ?? line.endIndex
+        var updated = String(line[..<indentationEnd])
+        updated += prefix
+        if indentationEnd != line.endIndex {
+            updated += " "
+            updated += line[indentationEnd...]
+        }
+        return updated
+    }
+
+    private func uncommentedLine(from line: String, prefix: String) -> String {
+        let indentationEnd = line.firstIndex { $0 != " " && $0 != "\t" } ?? line.endIndex
+        var updated = String(line[..<indentationEnd])
+        let remainder = line[indentationEnd...]
+        guard remainder.hasPrefix(prefix) else { return line }
+
+        var dropCount = prefix.count
+        let afterPrefixIndex = remainder.index(remainder.startIndex, offsetBy: prefix.count)
+        if afterPrefixIndex < remainder.endIndex, remainder[afterPrefixIndex] == " " {
+            dropCount += 1
+        }
+        updated += remainder.dropFirst(dropCount)
+        return updated
     }
 
     override func becomeFirstResponder() -> Bool {
