@@ -37,6 +37,10 @@ final class EditorWorkspace: ObservableObject {
         return openTabs.first(where: { $0.id == selectedTabID })
     }
 
+    var hasDirtyTabs: Bool {
+        openTabs.contains(where: \.isDirty)
+    }
+
     func tab(withID id: EditorTab.ID) -> EditorTab? {
         openTabs.first(where: { $0.id == id })
     }

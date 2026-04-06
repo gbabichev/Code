@@ -5,6 +5,7 @@
 //  Created by George Babichev on 4/5/26.
 //
 
+import AppKit
 import SwiftUI
 
 @main
@@ -74,6 +75,7 @@ private struct WorkspaceContentView: View {
         ContentView()
             .environmentObject(workspace)
             .focusedSceneValue(\.activeEditorWorkspace, workspace)
+            .background(WindowDirtyStateView(isDocumentEdited: workspace.hasDirtyTabs))
     }
 }
 
@@ -134,5 +136,34 @@ private extension FocusedValues {
     var activeEditorWorkspace: EditorWorkspace? {
         get { self[ActiveEditorWorkspaceKey.self] }
         set { self[ActiveEditorWorkspaceKey.self] = newValue }
+    }
+}
+
+private struct WindowDirtyStateView: NSViewRepresentable {
+    let isDocumentEdited: Bool
+
+    func makeNSView(context: Context) -> DirtyStateObserverView {
+        DirtyStateObserverView()
+    }
+
+    func updateNSView(_ nsView: DirtyStateObserverView, context: Context) {
+        nsView.isDocumentEdited = isDocumentEdited
+        nsView.applyDirtyStateIfPossible()
+    }
+}
+
+private final class DirtyStateObserverView: NSView {
+    var isDocumentEdited = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyDirtyStateIfPossible()
+    }
+
+    func applyDirtyStateIfPossible() {
+        guard let window else { return }
+        if window.isDocumentEdited != isDocumentEdited {
+            window.isDocumentEdited = isDocumentEdited
+        }
     }
 }
