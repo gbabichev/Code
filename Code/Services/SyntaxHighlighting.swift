@@ -9,7 +9,7 @@ import AppKit
 import Foundation
 
 protocol SyntaxHighlighting {
-    func apply(to textStorage: NSTextStorage, text: String)
+    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?)
 }
 
 private func isLocation(_ location: Int, containedIn ranges: [NSRange]) -> Bool {
@@ -23,8 +23,9 @@ private func intersects(_ range: NSRange, with ranges: [NSRange]) -> Bool {
 struct PlainTextHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
-    func apply(to textStorage: NSTextStorage, text: String) {
-        let range = NSRange(location: 0, length: textStorage.length)
+    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        let range = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
         textStorage.setAttributes(theme.baseAttributes, range: range)
     }
 }
@@ -45,32 +46,33 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
         pattern: #"(?m)^\s*([A-Za-z_./-][A-Za-z0-9_./-]*)"#
     )
 
-    func apply(to textStorage: NSTextStorage, text: String) {
+    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
-        textStorage.setAttributes(theme.baseAttributes, range: fullRange)
+        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        let (stringRanges, commentRanges) = shellStringAndCommentRanges(in: text as NSString)
+        let (stringRanges, commentRanges) = shellStringAndCommentRanges(in: text as NSString, within: highlightRange)
 
         for range in stringRanges {
             textStorage.addAttributes(theme.stringAttributes, range: range)
         }
 
-        for match in variableRegex.matches(in: text, range: fullRange)
+        for match in variableRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
-        for match in keywordRegex.matches(in: text, range: fullRange)
+        for match in keywordRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
-        for match in builtInRegex.matches(in: text, range: fullRange)
+        for match in builtInRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
-        for match in commandRegex.matches(in: text, range: fullRange)
+        for match in commandRegex.matches(in: text, range: highlightRange)
         where match.numberOfRanges > 1 && !intersects(match.range(at: 1), with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.commandAttributes, range: match.range(at: 1))
         }
@@ -80,15 +82,15 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
         }
     }
 
-    private func shellStringAndCommentRanges(in text: NSString) -> ([NSRange], [NSRange]) {
+    private func shellStringAndCommentRanges(in text: NSString, within range: NSRange) -> ([NSRange], [NSRange]) {
         var stringRanges: [NSRange] = []
         var commentRanges: [NSRange] = []
-        var index = 0
+        var index = range.location
         var activeQuote: unichar?
         var quoteStart: Int?
         var isEscaped = false
 
-        while index < text.length {
+        while index < NSMaxRange(range) {
             let character = text.character(at: index)
 
             if let activeQuoteValue = activeQuote {
@@ -141,7 +143,7 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
         }
 
         if let quoteStart {
-            stringRanges.append(NSRange(location: quoteStart, length: text.length - quoteStart))
+            stringRanges.append(NSRange(location: quoteStart, length: NSMaxRange(range) - quoteStart))
         }
 
         return (stringRanges, commentRanges)
@@ -170,18 +172,19 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
 struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
-    func apply(to textStorage: NSTextStorage, text: String) {
+    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
-        textStorage.setAttributes(theme.baseAttributes, range: fullRange)
+        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        let lines = text.components(separatedBy: "\n")
-        var location = 0
-
-        for line in lines {
-            let lineLength = (line as NSString).length
-            let lineRange = NSRange(location: location, length: lineLength)
-            highlightLine(line, in: textStorage, lineRange: lineRange)
-            location += lineLength + 1
+        let nsText = text as NSString
+        unsafe nsText.enumerateSubstrings(in: highlightRange, options: [.byLines, .substringNotRequired]) { _, substringRange, enclosingRange, _ in
+            let line = nsText.substring(with: substringRange)
+            self.highlightLine(line, in: textStorage, lineRange: substringRange)
+            if enclosingRange.length > substringRange.length {
+                let newlineRange = NSRange(location: NSMaxRange(substringRange), length: enclosingRange.length - substringRange.length)
+                textStorage.setAttributes(self.theme.baseAttributes, range: newlineRange)
+            }
         }
     }
 
@@ -210,7 +213,7 @@ struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
         let commentOffset = inlineCommentOffset(in: valueString)
 
         if let commentOffset {
-            let commentRange = NSRange(location: lineRange.location + valueStart + commentOffset, length: valueString.count - commentOffset)
+            let commentRange = NSRange(location: lineRange.location + valueStart + commentOffset, length: nsLine.length - valueStart - commentOffset)
             textStorage.addAttributes(theme.commentAttributes, range: commentRange)
 
             if commentOffset > 0 {
@@ -266,14 +269,15 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
         pattern: #"(?m)^\s*@[A-Za-z_][A-Za-z0-9_\.]*"#
     )
 
-    func apply(to textStorage: NSTextStorage, text: String) {
+    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
-        textStorage.setAttributes(theme.baseAttributes, range: fullRange)
+        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        let stringRanges = stringRegex.matches(in: text, range: fullRange).map(\.range)
+        let stringRanges = stringRegex.matches(in: text, range: highlightRange).map(\.range)
         let commentRanges = commentRegex.matches(in: text, range: fullRange)
             .map(\.range)
-            .filter { !isLocation($0.location, containedIn: stringRanges) }
+            .filter { NSIntersectionRange($0, highlightRange).length > 0 && !isLocation($0.location, containedIn: stringRanges) }
 
         for range in stringRanges {
             textStorage.addAttributes(theme.stringAttributes, range: range)
@@ -283,22 +287,22 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
             textStorage.addAttributes(theme.commentAttributes, range: range)
         }
 
-        for match in decoratorRegex.matches(in: text, range: fullRange)
+        for match in decoratorRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.commandAttributes, range: match.range)
         }
 
-        for match in variableRegex.matches(in: text, range: fullRange)
+        for match in variableRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
-        for match in keywordRegex.matches(in: text, range: fullRange)
+        for match in keywordRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
-        for match in builtInRegex.matches(in: text, range: fullRange)
+        for match in builtInRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.builtinAttributes, range: match.range)
         }
@@ -330,38 +334,41 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
         pattern: #"(?mi)\b[A-Z][A-Za-z0-9]*-[A-Z][A-Za-z0-9]*(?:-[A-Z][A-Za-z0-9]*)*\b"#
     )
 
-    func apply(to textStorage: NSTextStorage, text: String) {
+    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
-        textStorage.setAttributes(theme.baseAttributes, range: fullRange)
+        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        let blockCommentRanges = blockCommentRegex.matches(in: text, range: fullRange).map(\.range)
+        let blockCommentRanges = blockCommentRegex.matches(in: text, range: fullRange)
+            .map(\.range)
+            .filter { NSIntersectionRange($0, highlightRange).length > 0 }
         let stringRanges = stringRegex.matches(in: text, range: fullRange)
             .map(\.range)
-            .filter { !isLocation($0.location, containedIn: blockCommentRanges) }
+            .filter { NSIntersectionRange($0, highlightRange).length > 0 && !isLocation($0.location, containedIn: blockCommentRanges) }
         let commentRanges = blockCommentRanges + lineCommentRegex.matches(in: text, range: fullRange)
             .map(\.range)
-            .filter { !isLocation($0.location, containedIn: stringRanges + blockCommentRanges) }
+            .filter { NSIntersectionRange($0, highlightRange).length > 0 && !isLocation($0.location, containedIn: stringRanges + blockCommentRanges) }
 
         for range in stringRanges {
             textStorage.addAttributes(theme.stringAttributes, range: range)
         }
 
-        for match in variableRegex.matches(in: text, range: fullRange)
+        for match in variableRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
-        for match in keywordRegex.matches(in: text, range: fullRange)
+        for match in keywordRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
-        for match in builtInRegex.matches(in: text, range: fullRange)
+        for match in builtInRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
-        for match in commandRegex.matches(in: text, range: fullRange)
+        for match in commandRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.commandAttributes, range: match.range)
         }
@@ -370,6 +377,50 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
             textStorage.addAttributes(theme.commentAttributes, range: range)
         }
     }
+}
+
+private func highlightedRange(for editedRange: NSRange?, in text: NSString, fallback: NSRange) -> NSRange {
+    guard let editedRange,
+          editedRange.location != NSNotFound,
+          editedRange.location <= text.length else {
+        return fallback
+    }
+
+    let clampedLength = min(editedRange.length, text.length - editedRange.location)
+    let clampedRange = NSRange(location: editedRange.location, length: clampedLength)
+    return expandedLineRange(for: clampedRange, in: text)
+}
+
+private func expandedLineRange(for range: NSRange, in text: NSString) -> NSRange {
+    guard text.length > 0 else { return NSRange(location: 0, length: 0) }
+
+    let startLineStart = lineStart(in: text, at: range.location)
+    let endLocation = min(NSMaxRange(range), text.length)
+    let endLineEnd = lineEnd(in: text, at: endLocation)
+    return NSRange(location: startLineStart, length: endLineEnd - startLineStart)
+}
+
+private func lineStart(in text: NSString, at location: Int) -> Int {
+    guard text.length > 0 else { return 0 }
+    var index = min(max(location, 0), text.length)
+    if index == text.length, index > 0 {
+        index -= 1
+    }
+    while index > 0, text.character(at: index - 1) != 10 {
+        index -= 1
+    }
+    return index
+}
+
+private func lineEnd(in text: NSString, at location: Int) -> Int {
+    var index = min(max(location, 0), text.length)
+    while index < text.length, text.character(at: index) != 10 {
+        index += 1
+    }
+    if index < text.length {
+        index += 1
+    }
+    return index
 }
 
 enum SyntaxHighlighterFactory {

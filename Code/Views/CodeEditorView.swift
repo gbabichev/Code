@@ -478,6 +478,8 @@ struct CodeEditorView: NSViewRepresentable {
         private var projectedFoldRegions: [ProjectedFoldRegion] = []
         private var collapsedRegionIDs: Set<String> = []
         private(set) var requiresHighlightRefresh = true
+        private var pendingRefreshWorkItem: DispatchWorkItem?
+        private var pendingFoldRefresh = false
 
         init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, editorFont: NSFont, editorSemiboldFont: NSFont) {
             self.textBinding = textBinding
@@ -517,12 +519,25 @@ struct CodeEditorView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView, !isApplyingProjection else { return }
+            let editedRange = unsafe textView.textStorage?.editedRange
             sourceText = textView.string
             textBinding.wrappedValue = sourceText
-            _ = recalculateFolds()
-            applyHighlighting(force: true)
+            applyHighlighting(in: editedRange)
             textView.needsDisplay = true
             gutterView.needsDisplay = true
+            if pendingFoldRefresh {
+                pendingFoldRefresh = false
+                scheduleDeferredEditorRefresh()
+            }
+        }
+
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            pendingFoldRefresh = pendingFoldRefresh || editRequiresFoldRefresh(
+                in: textView.string,
+                affectedCharRange: affectedCharRange,
+                replacementString: replacementString
+            )
+            return true
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -591,10 +606,10 @@ struct CodeEditorView: NSViewRepresentable {
             return recalculateFolds()
         }
 
-        func applyHighlighting(force: Bool = false) {
+        func applyHighlighting(force: Bool = false, in editedRange: NSRange? = nil) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
             if isApplyingHighlighting { return }
-            if !force, textView.string == textBinding.wrappedValue { return }
+            if !force, editedRange == nil, textView.string == textBinding.wrappedValue { return }
 
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
@@ -605,7 +620,7 @@ struct CodeEditorView: NSViewRepresentable {
                 editorFont: editorFont,
                 semiboldFont: editorSemiboldFont
             )
-            .apply(to: textStorage, text: textView.string)
+            .apply(to: textStorage, text: textView.string, in: force ? nil : editedRange)
             textStorage.endEditing()
             textView.selectedRanges = selectedRanges
             textView.needsDisplay = true
@@ -647,6 +662,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func toggleFold(regionID: String) {
+            cancelDeferredEditorRefresh()
             if collapsedRegionIDs.contains(regionID) {
                 collapsedRegionIDs.remove(regionID)
             } else {
@@ -661,9 +677,99 @@ struct CodeEditorView: NSViewRepresentable {
 
         private func expandAllFoldsIfNeeded() {
             guard !collapsedRegionIDs.isEmpty else { return }
+            cancelDeferredEditorRefresh()
             collapsedRegionIDs.removeAll()
             _ = recalculateFolds()
             applyHighlighting(force: true)
+        }
+
+        private func scheduleDeferredEditorRefresh() {
+            pendingRefreshWorkItem?.cancel()
+
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.pendingRefreshWorkItem = nil
+                let didChangeProjection = self.recalculateFolds()
+                if didChangeProjection || self.requiresHighlightRefresh {
+                    self.applyHighlighting(force: true)
+                }
+            }
+
+            pendingRefreshWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+        }
+
+        private func cancelDeferredEditorRefresh() {
+            pendingRefreshWorkItem?.cancel()
+            pendingRefreshWorkItem = nil
+        }
+
+        private func editRequiresFoldRefresh(in currentText: String, affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard language != .plainText, language != .dotenv else { return false }
+            guard let replacementString else { return true }
+
+            let nsText = currentText as NSString
+            let safeLocation = min(max(affectedCharRange.location, 0), nsText.length)
+            let safeLength = min(max(affectedCharRange.length, 0), nsText.length - safeLocation)
+            let safeRange = NSRange(location: safeLocation, length: safeLength)
+            let removedText = safeRange.length > 0 ? nsText.substring(with: safeRange) : ""
+
+            if containsFoldStructuralToken(replacementString) || containsFoldStructuralToken(removedText) {
+                return true
+            }
+
+            if language == .python, editTouchesPythonIndentation(in: nsText, affectedCharRange: safeRange) {
+                return true
+            }
+
+            return false
+        }
+
+        private func containsFoldStructuralToken(_ text: String) -> Bool {
+            switch language {
+            case .python:
+                return text.contains("\n") || text.contains(":")
+            case .shell, .powerShell:
+                return text.contains("\n") || text.contains("{") || text.contains("}")
+            case .plainText, .dotenv:
+                return false
+            }
+        }
+
+        private func editTouchesPythonIndentation(in text: NSString, affectedCharRange: NSRange) -> Bool {
+            let lineStart = lineStartIndex(in: text, for: affectedCharRange.location)
+            let lineEnd = lineEndIndex(in: text, from: lineStart)
+
+            var firstNonWhitespace = lineStart
+            while firstNonWhitespace < lineEnd {
+                let character = text.character(at: firstNonWhitespace)
+                if character != 32 && character != 9 {
+                    break
+                }
+                firstNonWhitespace += 1
+            }
+
+            return affectedCharRange.location <= firstNonWhitespace
+        }
+
+        private func lineStartIndex(in text: NSString, for location: Int) -> Int {
+            guard text.length > 0 else { return 0 }
+            var index = min(max(location, 0), text.length)
+            if index == text.length, index > 0 {
+                index -= 1
+            }
+            while index > 0, text.character(at: index - 1) != 10 {
+                index -= 1
+            }
+            return index
+        }
+
+        private func lineEndIndex(in text: NSString, from location: Int) -> Int {
+            var index = min(max(location, 0), text.length)
+            while index < text.length, text.character(at: index) != 10 {
+                index += 1
+            }
+            return index
         }
 
         @objc
