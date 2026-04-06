@@ -124,12 +124,13 @@ final class EditorWorkspace: ObservableObject {
         }
 
         do {
-            let content = try String(contentsOf: url, encoding: .utf8)
+            let fileContents = try readTextFile(at: url)
             let tab = EditorTab(
                 fileURL: url,
-                stringEncoding: .utf8,
-                content: content,
-                lastSavedContent: content,
+                textEncoding: fileContents.encoding,
+                lineEnding: fileContents.lineEnding,
+                content: fileContents.content,
+                lastSavedContent: fileContents.content,
                 isDirty: false
             )
             attachObserver(to: tab)
@@ -196,7 +197,7 @@ final class EditorWorkspace: ObservableObject {
         if tab.content == content { return }
 
         tab.content = content
-        tab.isDirty = content != tab.lastSavedContent
+        tab.refreshDirtyState()
         persistSession()
     }
 
@@ -224,11 +225,19 @@ final class EditorWorkspace: ObservableObject {
         }
 
         do {
-            try tab.content.write(to: destinationURL, atomically: true, encoding: .utf8)
+            let output = contentWithPreferredLineEndings(for: tab)
+            guard let data = output.data(using: tab.textEncoding.stringEncoding) else {
+                errorMessage = "Failed to encode \(destinationURL.lastPathComponent) as \(tab.textEncoding.title)."
+                return
+            }
+
+            try data.write(to: destinationURL, options: .atomic)
             tab.fileURL = destinationURL
             tab.customTitle = nil
             tab.lastSavedContent = tab.content
-            tab.isDirty = false
+            tab.lastSavedEncoding = tab.textEncoding
+            tab.lastSavedLineEnding = tab.lineEnding
+            tab.refreshDirtyState()
             selectedFileID = destinationURL.path(percentEncoded: false)
             if let rootFolderURL,
                destinationURL.path(percentEncoded: false).hasPrefix(rootFolderURL.path(percentEncoded: false)) {
@@ -238,6 +247,22 @@ final class EditorWorkspace: ObservableObject {
         } catch {
             errorMessage = "Failed to save \(destinationURL.lastPathComponent): \(error.localizedDescription)"
         }
+    }
+
+    func updateSelectedTabEncoding(_ encoding: EditorTextEncoding) {
+        guard let selectedTab else { return }
+        if selectedTab.textEncoding == encoding { return }
+        selectedTab.textEncoding = encoding
+        selectedTab.refreshDirtyState()
+        persistSession()
+    }
+
+    func updateSelectedTabLineEnding(_ lineEnding: EditorLineEnding) {
+        guard let selectedTab else { return }
+        if selectedTab.lineEnding == lineEnding { return }
+        selectedTab.lineEnding = lineEnding
+        selectedTab.refreshDirtyState()
+        persistSession()
     }
 
     func persistSession() {
@@ -250,6 +275,10 @@ final class EditorWorkspace: ObservableObject {
                     id: $0.id,
                     filePath: $0.fileURL?.path(percentEncoded: false),
                     title: $0.fileURL == nil ? $0.title : nil,
+                    encoding: $0.textEncoding,
+                    lineEnding: $0.lineEnding,
+                    lastSavedEncoding: $0.lastSavedEncoding,
+                    lastSavedLineEnding: $0.lastSavedLineEnding,
                     content: $0.content,
                     isDirty: $0.isDirty
                 )
@@ -276,13 +305,22 @@ final class EditorWorkspace: ObservableObject {
                     return nil
                 }
 
-                let diskContent = (try? String(contentsOf: url, encoding: .utf8)) ?? item.content
+                let diskContents = (try? readTextFile(at: url)) ?? (
+                    content: normalizeLineEndings(in: item.content),
+                    encoding: item.lastSavedEncoding ?? item.encoding ?? .utf8,
+                    lineEnding: item.lastSavedLineEnding ?? item.lineEnding ?? .lf
+                )
+                let currentEncoding = item.encoding ?? diskContents.encoding
+                let currentLineEnding = item.lineEnding ?? diskContents.lineEnding
                 let tab = EditorTab(
                     id: item.id ?? url.path(percentEncoded: false),
                     fileURL: url,
-                    stringEncoding: .utf8,
+                    textEncoding: currentEncoding,
+                    lineEnding: currentLineEnding,
                     content: item.content,
-                    lastSavedContent: item.isDirty ? diskContent : item.content,
+                    lastSavedContent: item.isDirty ? diskContents.content : item.content,
+                    lastSavedEncoding: item.isDirty ? diskContents.encoding : currentEncoding,
+                    lastSavedLineEnding: item.isDirty ? diskContents.lineEnding : currentLineEnding,
                     isDirty: item.isDirty
                 )
                 attachObserver(to: tab)
@@ -292,9 +330,13 @@ final class EditorWorkspace: ObservableObject {
             let tab = EditorTab(
                 id: item.id ?? UUID().uuidString,
                 fileURL: nil,
+                textEncoding: item.encoding ?? .utf8,
+                lineEnding: item.lineEnding ?? .lf,
                 customTitle: item.title,
                 content: item.content,
                 lastSavedContent: item.content,
+                lastSavedEncoding: item.lastSavedEncoding ?? item.encoding ?? .utf8,
+                lastSavedLineEnding: item.lastSavedLineEnding ?? item.lineEnding ?? .lf,
                 isDirty: item.isDirty
             )
             attachObserver(to: tab)
@@ -344,5 +386,74 @@ final class EditorWorkspace: ObservableObject {
                     children: isDirectory ? loadChildren(of: item) : []
                 )
             }
+    }
+
+    private func normalizeLineEndings(in text: String) -> String {
+        text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+    }
+
+    private func detectedLineEnding(in text: String) -> EditorLineEnding {
+        if text.contains("\r\n") {
+            return .crlf
+        }
+
+        if text.contains("\r") {
+            return .cr
+        }
+
+        return .lf
+    }
+
+    private func contentWithPreferredLineEndings(for tab: EditorTab) -> String {
+        normalizeLineEndings(in: tab.content).replacingOccurrences(of: "\n", with: tab.lineEnding.sequence)
+    }
+
+    private func readTextFile(at url: URL) throws -> (content: String, encoding: EditorTextEncoding, lineEnding: EditorLineEnding) {
+        let data = try Data(contentsOf: url)
+        let decoded = try decodeTextData(data, fileName: url.lastPathComponent)
+        let string = decoded.string
+        let encoding = decoded.encoding
+        let normalizedContent = normalizeLineEndings(in: string)
+        return (
+            content: normalizedContent,
+            encoding: encoding,
+            lineEnding: detectedLineEnding(in: data, encoding: encoding) ?? detectedLineEnding(in: string)
+        )
+    }
+
+    private func detectedLineEnding(in data: Data, encoding: EditorTextEncoding) -> EditorLineEnding? {
+        if data.range(of: encodedData(for: "\r\n", encoding: encoding)) != nil {
+            return .crlf
+        }
+
+        if data.range(of: encodedData(for: "\r", encoding: encoding)) != nil {
+            return .cr
+        }
+
+        if data.range(of: encodedData(for: "\n", encoding: encoding)) != nil {
+            return .lf
+        }
+
+        return nil
+    }
+
+    private func encodedData(for string: String, encoding: EditorTextEncoding) -> Data {
+        string.data(using: encoding.stringEncoding) ?? Data()
+    }
+
+    private func decodeTextData(_ data: Data, fileName: String) throws -> (string: String, encoding: EditorTextEncoding) {
+        for encoding in EditorTextEncoding.allCases {
+            if let string = String(data: data, encoding: encoding.stringEncoding) {
+                return (string, encoding)
+            }
+        }
+
+        throw NSError(
+            domain: "Code.EditorWorkspace",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Unsupported text encoding for \(fileName)."]
+        )
     }
 }

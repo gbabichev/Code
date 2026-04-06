@@ -49,6 +49,95 @@ enum EditorLanguage: String, Codable {
     }
 }
 
+enum EditorTextEncoding: String, Codable, CaseIterable, Identifiable {
+    case utf8
+    case utf16
+    case utf16LittleEndian
+    case utf16BigEndian
+    case utf32
+
+    var id: String { rawValue }
+
+    var stringEncoding: String.Encoding {
+        switch self {
+        case .utf8:
+            .utf8
+        case .utf16:
+            .utf16
+        case .utf16LittleEndian:
+            .utf16LittleEndian
+        case .utf16BigEndian:
+            .utf16BigEndian
+        case .utf32:
+            .utf32
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .utf8:
+            "UTF-8"
+        case .utf16:
+            "UTF-16"
+        case .utf16LittleEndian:
+            "UTF-16 LE"
+        case .utf16BigEndian:
+            "UTF-16 BE"
+        case .utf32:
+            "UTF-32"
+        }
+    }
+
+    init?(stringEncodingRawValue: UInt) {
+        let encoding = String.Encoding(rawValue: stringEncodingRawValue)
+
+        switch encoding {
+        case .utf8:
+            self = .utf8
+        case .utf16:
+            self = .utf16
+        case .utf16LittleEndian:
+            self = .utf16LittleEndian
+        case .utf16BigEndian:
+            self = .utf16BigEndian
+        case .utf32:
+            self = .utf32
+        default:
+            return nil
+        }
+    }
+}
+
+enum EditorLineEnding: String, Codable, CaseIterable, Identifiable {
+    case lf
+    case crlf
+    case cr
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .lf:
+            "LF"
+        case .crlf:
+            "CRLF"
+        case .cr:
+            "CR"
+        }
+    }
+
+    var sequence: String {
+        switch self {
+        case .lf:
+            "\n"
+        case .crlf:
+            "\r\n"
+        case .cr:
+            "\r"
+        }
+    }
+}
+
 struct SkinDefinition: Codable, Identifiable, Hashable {
     let schemaVersion: Int
     let id: String
@@ -195,6 +284,10 @@ struct EditorTabSnapshot: Codable {
     let id: String?
     let filePath: String?
     let title: String?
+    let encoding: EditorTextEncoding?
+    let lineEnding: EditorLineEnding?
+    let lastSavedEncoding: EditorTextEncoding?
+    let lastSavedLineEnding: EditorLineEnding?
     let content: String
     let isDirty: Bool
 
@@ -202,12 +295,20 @@ struct EditorTabSnapshot: Codable {
         id: String? = nil,
         filePath: String?,
         title: String? = nil,
+        encoding: EditorTextEncoding? = nil,
+        lineEnding: EditorLineEnding? = nil,
+        lastSavedEncoding: EditorTextEncoding? = nil,
+        lastSavedLineEnding: EditorLineEnding? = nil,
         content: String,
         isDirty: Bool
     ) {
         self.id = id
         self.filePath = filePath
         self.title = title
+        self.encoding = encoding
+        self.lineEnding = lineEnding
+        self.lastSavedEncoding = lastSavedEncoding
+        self.lastSavedLineEnding = lastSavedLineEnding
         self.content = content
         self.isDirty = isDirty
     }
@@ -270,30 +371,45 @@ struct EditorSessionSnapshot: Codable {
 @MainActor
 final class EditorTab: ObservableObject, Identifiable {
     let id: String
-    let stringEncoding: String.Encoding
     @Published var fileURL: URL?
     @Published var customTitle: String?
+    @Published var textEncoding: EditorTextEncoding
+    @Published var lineEnding: EditorLineEnding
 
     @Published var content: String
     @Published var isDirty: Bool
     var lastSavedContent: String
+    var lastSavedEncoding: EditorTextEncoding
+    var lastSavedLineEnding: EditorLineEnding
 
     init(
         id: String = UUID().uuidString,
         fileURL: URL?,
-        stringEncoding: String.Encoding = .utf8,
+        textEncoding: EditorTextEncoding = .utf8,
+        lineEnding: EditorLineEnding = .lf,
         customTitle: String? = nil,
         content: String,
         lastSavedContent: String,
+        lastSavedEncoding: EditorTextEncoding? = nil,
+        lastSavedLineEnding: EditorLineEnding? = nil,
         isDirty: Bool
     ) {
         self.id = id
         self.fileURL = fileURL
-        self.stringEncoding = stringEncoding
+        self.textEncoding = textEncoding
+        self.lineEnding = lineEnding
         self.customTitle = customTitle
         self.content = content
         self.lastSavedContent = lastSavedContent
+        self.lastSavedEncoding = lastSavedEncoding ?? textEncoding
+        self.lastSavedLineEnding = lastSavedLineEnding ?? lineEnding
         self.isDirty = isDirty
+    }
+
+    func refreshDirtyState() {
+        isDirty = content != lastSavedContent
+            || textEncoding != lastSavedEncoding
+            || lineEnding != lastSavedLineEnding
     }
 
     var language: EditorLanguage {
@@ -307,22 +423,5 @@ final class EditorTab: ObservableObject, Identifiable {
         }
 
         return customTitle ?? "Untitled"
-    }
-
-    var encodingDisplayName: String {
-        switch stringEncoding {
-        case .utf8:
-            "UTF-8"
-        case .utf16:
-            "UTF-16"
-        case .utf16LittleEndian:
-            "UTF-16 LE"
-        case .utf16BigEndian:
-            "UTF-16 BE"
-        case .utf32:
-            "UTF-32"
-        default:
-            "Text"
-        }
     }
 }

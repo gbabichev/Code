@@ -7,13 +7,15 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 ## Current Architecture
 
 - `Code/CodeApp.swift`
-  App entry point and command wiring, including menu commands like `View > Word Wrap`.
+  App entry point, scene wiring, focused-window command routing, and menu commands.
 - `Code/ContentView.swift`
-  Main `NavigationSplitView`, toolbar, settings popover, sidebar, tab strip, and editor composition.
+  Main `NavigationSplitView`, toolbar, settings popover, sidebar, tab strip, editor composition, and bottom status bar.
+- `Code/Models/AppPreferences.swift`
+  Global app preferences shared across windows, including theme, skin, word wrap, sidebar visibility, and editor font settings.
 - `Code/Models/EditorWorkspace.swift`
-  App-level state: root folder, file tree, open tabs, selected tab, settings, persistence, skin import/export, and dirty-state helpers used by the sidebar.
+  Per-window workspace state: root folder, file tree, open tabs, selected tab, session persistence, and dirty-state helpers used by the sidebar.
 - `Code/Models/EditorModels.swift`
-  Core models, editor session snapshot, skin schema models, theme derivation, and language inference.
+  Core models, editor session snapshot, tab metadata, skin schema models, theme derivation, and language inference.
 - `Code/Views/CodeEditorView.swift`
   `NSTextView` bridge for editing, wrapping, syntax highlighting, and the custom gutter container.
 - `Code/Views/FileTreeView.swift`
@@ -21,9 +23,11 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 - `Code/Views/TabBarView.swift`
   Horizontal custom tab strip with live dirty indicators per tab.
 - `Code/Services/SessionStore.swift`
-  Session persistence to Application Support.
+  Per-window session persistence to Application Support.
 - `Code/Services/SkinStore.swift`
   Bundled and user-imported skin loading plus import/export helpers.
+- `Code/Services/WorkspaceSessionRegistry.swift`
+  Tracks persisted workspace session IDs so relaunch can restore the last window session without re-coupling window state.
 - `Code/Services/SyntaxHighlighting.swift`
   Semantic token theme application and language highlighter implementations.
 - `Code/Skins/*.json`
@@ -39,15 +43,19 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 
 ## Editor Behavior Notes
 
+- `EditorWorkspace` is window-local. Open folders, open tabs, selected files, and unsaved buffers should not leak across windows. Global presentation settings belong in `AppPreferences`.
 - The editor uses a custom `EditorContainerView` with two sibling views: a fixed-width `GutterView` on the left and the `NSScrollView`/`NSTextView` editor on the right. Do not reintroduce `NSRulerView` unless there is a specific reason; it previously caused layout and painting issues.
 - Word wrap is controlled in `CodeEditorView.Coordinator.configureLayout(isWordWrapEnabled:)`. Wrap mode must change both scroller visibility and text-container sizing; hiding the horizontal scroller alone is not enough.
-- The gutter highlights the current line and shows line numbers. The code area itself currently does not paint a current-line background because earlier approaches interfered with skin rendering.
+- The gutter highlights the current line and shows line numbers, including the trailing empty line via `extraLineFragmentRect`. The code area itself currently does not paint a current-line background because earlier approaches interfered with skin rendering.
 - Sidebar dirty dots are recursive: file rows are dirty when the matching open tab is dirty, and folder rows are dirty when any descendant file is dirty.
+- The bottom status bar is document-scoped. Line count, encoding, and line-ending controls reflect the selected tab, and encoding/line-ending changes should update save behavior for that tab.
+- Closing a dirty tab or intercepting `Cmd+W`/the red stoplight should prompt to save or discard the file. `Cmd+Q` should preserve the workspace session without prompting so the window can be restored as-is on next launch.
 - `EditorWorkspace.attachObserver(to:)` forwards nested `EditorTab.objectWillChange` events through `workspace.objectWillChange.send()`. That is what keeps sidebar and other workspace-driven views live when tab dirty state changes.
 
 ## Follow-up Guidance
 
 - The project folder is now `Code`, but some internal symbols and persistence locations still use the legacy `Basic Editor` name. Treat those as compatibility-sensitive until they are deliberately migrated.
+- Untitled tabs are a first-class flow. Avoid reintroducing assumptions that every tab has a file URL.
 - If adding Python or other languages, add new `EditorLanguage` cases and highlighters that map into the same semantic roles used by the JSON skin schema.
 - Keep settings persistence backward compatible when changing `EditorSessionSnapshot`.
 - Prefer bundled JSON examples over embedding default data in Swift, except for minimal fallback safety.

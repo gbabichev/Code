@@ -160,12 +160,38 @@ struct ContentView: View {
             Divider()
                 .frame(height: 12)
 
-            Text(tab.encodingDisplayName)
+            Menu(tab.textEncoding.title) {
+                ForEach(EditorTextEncoding.allCases) { encoding in
+                    Button {
+                        workspace.updateSelectedTabEncoding(encoding)
+                    } label: {
+                        if tab.textEncoding == encoding {
+                            Label(encoding.title, systemImage: "checkmark")
+                        } else {
+                            Text(encoding.title)
+                        }
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
 
             Divider()
                 .frame(height: 12)
 
-            Text(lineEndingDisplayName(for: tab))
+            Menu(tab.lineEnding.title) {
+                ForEach(EditorLineEnding.allCases) { lineEnding in
+                    Button {
+                        workspace.updateSelectedTabLineEnding(lineEnding)
+                    } label: {
+                        if tab.lineEnding == lineEnding {
+                            Label(lineEnding.title, systemImage: "checkmark")
+                        } else {
+                            Text(lineEnding.title)
+                        }
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
 
             Divider()
                 .frame(height: 12)
@@ -195,18 +221,6 @@ struct ContentView: View {
             index = tab.content.index(after: index)
         }
         return count
-    }
-
-    private func lineEndingDisplayName(for tab: EditorTab) -> String {
-        if tab.content.contains("\r\n") {
-            return "CRLF"
-        }
-
-        if tab.content.contains("\r") {
-            return "CR"
-        }
-
-        return "LF"
     }
 
     private func selectedTabBinding(_ tab: EditorTab) -> Binding<String> {
