@@ -70,6 +70,10 @@ final class EditorWorkspace: ObservableObject {
         )
     }
 
+    func isFileDirty(_ url: URL) -> Bool {
+        openTabs.contains { $0.fileURL == url && $0.isDirty }
+    }
+
     func chooseRootFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -288,6 +292,7 @@ final class EditorWorkspace: ObservableObject {
 
     private func attachObserver(to tab: EditorTab) {
         tabObservers[tab.id] = tab.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
             self?.persistSession()
         }
     }
