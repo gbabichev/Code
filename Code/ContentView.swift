@@ -14,6 +14,7 @@ struct ContentView: View {
     @EnvironmentObject private var searchController: EditorSearchController
     @State private var isShowingSettingsPopover = false
     @State private var isTargetingTabDrop = false
+    @State private var cachedSearchMatches: [NSRange] = []
     @FocusState private var focusedSearchField: SearchField?
 
     enum SearchField: Hashable {
@@ -146,13 +147,12 @@ struct ContentView: View {
                 Divider()
 
                 if searchController.isPresented, let selectedTab = workspace.selectedTab {
-                    let matches = findMatches(in: selectedTab)
                     EditorSearchBar(
                         query: $searchController.query,
                         replacement: $searchController.replacement,
                         isCaseSensitive: $searchController.isCaseSensitive,
                         isReplaceVisible: searchController.isReplaceVisible,
-                        matchSummary: matchSummary(for: matches, in: selectedTab),
+                        matchSummary: matchSummary(for: cachedSearchMatches, in: selectedTab),
                         focusedField: $focusedSearchField,
                         onClose: { searchController.hide() },
                         onFindNext: { findNext(in: selectedTab) },
@@ -188,6 +188,24 @@ struct ContentView: View {
         }
         .onChange(of: searchController.eventID) { _, _ in
             handleSearchCommand()
+        }
+        .onChange(of: searchController.query) { _, _ in
+            refreshSearchMatches()
+        }
+        .onChange(of: searchController.isCaseSensitive) { _, _ in
+            refreshSearchMatches()
+        }
+        .onChange(of: searchController.isPresented) { _, _ in
+            refreshSearchMatches()
+        }
+        .onChange(of: workspace.selectedTabID) { _, _ in
+            refreshSearchMatches()
+        }
+        .onChange(of: workspace.selectedTab?.content ?? "") { _, _ in
+            refreshSearchMatches()
+        }
+        .onAppear {
+            refreshSearchMatches()
         }
     }
 
@@ -393,6 +411,16 @@ struct ContentView: View {
         }
 
         return matches
+    }
+
+    private func refreshSearchMatches() {
+        guard searchController.isPresented,
+              let selectedTab = workspace.selectedTab else {
+            cachedSearchMatches = []
+            return
+        }
+
+        cachedSearchMatches = findMatches(in: selectedTab)
     }
 
     private func matchSummary(for matches: [NSRange], in tab: EditorTab) -> String {

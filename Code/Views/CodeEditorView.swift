@@ -428,27 +428,38 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.attach(textView: textView, scrollView: scrollView)
         context.coordinator.applyTheme(theme)
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
-        context.coordinator.syncWithBindingText(text)
-        context.coordinator.applyHighlighting()
+        _ = context.coordinator.syncWithBindingText(text)
+        context.coordinator.applyHighlighting(force: true)
 
         return container
     }
 
     func updateNSView(_ container: EditorContainerView, context: Context) {
+        let didLanguageChange = context.coordinator.language != language
+        let didSkinChange = context.coordinator.skin != skin
+        let didFontChange = context.coordinator.editorFont.fontName != editorFont.fontName
+            || context.coordinator.editorFont.pointSize != editorFont.pointSize
+            || context.coordinator.editorSemiboldFont.fontName != editorSemiboldFont.fontName
+            || context.coordinator.editorSemiboldFont.pointSize != editorSemiboldFont.pointSize
+
         context.coordinator.language = language
         context.coordinator.skin = skin
         context.coordinator.textBinding = $text
         context.coordinator.editorFont = editorFont
         context.coordinator.editorSemiboldFont = editorSemiboldFont
 
-        let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
-        context.coordinator.applyTheme(theme)
+        if didLanguageChange || didSkinChange || didFontChange {
+            let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
+            context.coordinator.applyTheme(theme)
+        }
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
 
         guard let textView = context.coordinator.textView else { return }
         ActiveEditorTextViewRegistry.shared.register(textView)
-        context.coordinator.syncWithBindingText(text)
-        context.coordinator.applyHighlighting()
+        let didTextChange = context.coordinator.syncWithBindingText(text)
+        if didLanguageChange || didSkinChange || didFontChange || didTextChange || context.coordinator.requiresHighlightRefresh {
+            context.coordinator.applyHighlighting(force: true)
+        }
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -466,6 +477,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var detectedFoldRegions: [CodeFoldRegion] = []
         private var projectedFoldRegions: [ProjectedFoldRegion] = []
         private var collapsedRegionIDs: Set<String> = []
+        private(set) var requiresHighlightRefresh = true
 
         init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, editorFont: NSFont, editorSemiboldFont: NSFont) {
             self.textBinding = textBinding
@@ -507,8 +519,8 @@ struct CodeEditorView: NSViewRepresentable {
             guard let textView, !isApplyingProjection else { return }
             sourceText = textView.string
             textBinding.wrappedValue = sourceText
-            recalculateFolds()
-            applyHighlighting()
+            _ = recalculateFolds()
+            applyHighlighting(force: true)
             textView.needsDisplay = true
             gutterView.needsDisplay = true
         }
@@ -572,16 +584,17 @@ struct CodeEditorView: NSViewRepresentable {
             gutterView.needsDisplay = true
         }
 
-        func syncWithBindingText(_ text: String) {
+        func syncWithBindingText(_ text: String) -> Bool {
             if sourceText != text {
                 sourceText = text
             }
-            recalculateFolds()
+            return recalculateFolds()
         }
 
-        func applyHighlighting() {
+        func applyHighlighting(force: Bool = false) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
             if isApplyingHighlighting { return }
+            if !force, textView.string == textBinding.wrappedValue { return }
 
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
@@ -598,10 +611,11 @@ struct CodeEditorView: NSViewRepresentable {
             textView.needsDisplay = true
             gutterView.needsDisplay = true
             isApplyingHighlighting = false
+            requiresHighlightRefresh = false
         }
 
-        private func recalculateFolds() {
-            guard let textView else { return }
+        private func recalculateFolds() -> Bool {
+            guard let textView else { return false }
 
             detectedFoldRegions = CodeFoldDetector.regions(in: sourceText, language: language)
             let validRegionIDs = Set(detectedFoldRegions.map(\.id))
@@ -615,16 +629,21 @@ struct CodeEditorView: NSViewRepresentable {
             projectedFoldRegions = projection.projectedRegions
             gutterView.projectedFoldRegions = projectedFoldRegions
 
+            var didChange = false
             if textView.string != projection.displayText {
                 isApplyingProjection = true
                 textView.string = projection.displayText
                 isApplyingProjection = false
+                didChange = true
+                requiresHighlightRefresh = true
             }
 
             if let layoutManager = unsafe textView.layoutManager,
                let textContainer = unsafe textView.textContainer {
                 layoutManager.ensureLayout(for: textContainer)
             }
+
+            return didChange
         }
 
         private func toggleFold(regionID: String) {
@@ -634,8 +653,8 @@ struct CodeEditorView: NSViewRepresentable {
                 collapsedRegionIDs.insert(regionID)
             }
 
-            recalculateFolds()
-            applyHighlighting()
+            _ = recalculateFolds()
+            applyHighlighting(force: true)
             textView?.needsDisplay = true
             gutterView.needsDisplay = true
         }
@@ -643,8 +662,8 @@ struct CodeEditorView: NSViewRepresentable {
         private func expandAllFoldsIfNeeded() {
             guard !collapsedRegionIDs.isEmpty else { return }
             collapsedRegionIDs.removeAll()
-            recalculateFolds()
-            applyHighlighting()
+            _ = recalculateFolds()
+            applyHighlighting(force: true)
         }
 
         @objc
