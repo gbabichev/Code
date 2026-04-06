@@ -124,11 +124,13 @@ struct CodeEditorView: NSViewRepresentable {
             guard let textView else { return }
             textBinding.wrappedValue = textView.string
             applyHighlighting()
+            textView.needsDisplay = true
             gutterView.needsDisplay = true
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             if isApplyingHighlighting { return }
+            textView?.needsDisplay = true
             gutterView.needsDisplay = true
         }
 
@@ -177,6 +179,9 @@ struct CodeEditorView: NSViewRepresentable {
                 .backgroundColor: theme.selectionColor,
                 .foregroundColor: theme.baseColor
             ]
+            if let lineClickableTextView = textView as? LineClickableTextView {
+                lineClickableTextView.currentLineHighlightColor = theme.currentLineColor
+            }
             scrollView?.backgroundColor = theme.editorBackgroundColor
             gutterView.theme = theme
             gutterView.needsDisplay = true
@@ -211,6 +216,15 @@ struct CodeEditorView: NSViewRepresentable {
 }
 
 final class LineClickableTextView: NSTextView {
+    var currentLineHighlightColor: NSColor = .clear {
+        didSet { needsDisplay = true }
+    }
+
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        drawCurrentLineHighlight(in: rect)
+    }
+
     override func mouseDown(with event: NSEvent) {
         if event.type == .leftMouseDown,
            event.clickCount == 1,
@@ -249,8 +263,8 @@ final class LineClickableTextView: NSTextView {
 
     @discardableResult
     private func moveInsertionPointToClickedLineIfNeeded(event: NSEvent) -> Bool {
-        guard let layoutManager = unsafe layoutManager,
-              let textContainer = unsafe textContainer else {
+        guard unsafe layoutManager != nil,
+              unsafe textContainer != nil else {
             return false
         }
 
@@ -339,6 +353,53 @@ final class LineClickableTextView: NSTextView {
         }
 
         return nil
+    }
+
+    private func drawCurrentLineHighlight(in dirtyRect: NSRect) {
+        guard currentLineHighlightColor.alphaComponent > 0,
+              let layoutManager = unsafe layoutManager,
+              let textContainer = unsafe textContainer else {
+            return
+        }
+
+        let highlightRect = currentLineHighlightRect(
+            layoutManager: layoutManager,
+            textContainer: textContainer
+        )
+        guard highlightRect.intersects(dirtyRect) else { return }
+
+        currentLineHighlightColor.setFill()
+        highlightRect.fill()
+    }
+
+    private func currentLineHighlightRect(
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    ) -> NSRect {
+        let insertionLocation = min(selectedRange().location, string.count)
+
+        if insertionLocation == string.count, !layoutManager.extraLineFragmentRect.isEmpty {
+            let extraRect = layoutManager.extraLineFragmentRect
+            return NSRect(
+                x: 0,
+                y: extraRect.minY + textContainerInset.height,
+                width: bounds.width,
+                height: extraRect.height
+            )
+        }
+
+        let glyphIndex = layoutManager.glyphIndexForCharacter(at: insertionLocation)
+        let lineRect = unsafe layoutManager.lineFragmentRect(
+            forGlyphAt: glyphIndex,
+            effectiveRange: nil,
+            withoutAdditionalLayout: true
+        )
+        return NSRect(
+            x: 0,
+            y: lineRect.minY + textContainerInset.height,
+            width: bounds.width,
+            height: lineRect.height
+        )
     }
 }
 
