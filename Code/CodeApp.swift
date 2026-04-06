@@ -14,9 +14,10 @@ struct CodeApp: App {
 
     var body: some Scene {
         WindowGroup(id: "workspace") {
-            WorkspaceSceneView()
-                .environmentObject(preferences)
-                .environmentObject(sessionRegistry)
+            WorkspaceSceneView(
+                preferences: preferences,
+                sessionRegistry: sessionRegistry
+            )
         }
         .commands {
             EditorCommands(preferences: preferences)
@@ -25,33 +26,38 @@ struct CodeApp: App {
 }
 
 private struct WorkspaceSceneView: View {
-    @EnvironmentObject private var preferences: AppPreferences
-    @EnvironmentObject private var sessionRegistry: WorkspaceSessionRegistry
+    @ObservedObject var preferences: AppPreferences
+    @ObservedObject var sessionRegistry: WorkspaceSessionRegistry
     @Environment(\.scenePhase) private var scenePhase
     @SceneStorage("workspaceSessionID") private var workspaceSessionID = ""
+    @State private var bootstrapSessionID: String
+
+    init(
+        preferences: AppPreferences,
+        sessionRegistry: WorkspaceSessionRegistry
+    ) {
+        self.preferences = preferences
+        self.sessionRegistry = sessionRegistry
+        _bootstrapSessionID = State(initialValue: sessionRegistry.makeSceneBootstrapSessionID())
+    }
 
     var body: some View {
-        Group {
-            if workspaceSessionID.isEmpty {
-                Color.clear
-                    .task {
-                        guard workspaceSessionID.isEmpty else { return }
-                        workspaceSessionID = sessionRegistry.resolveSessionID(storedSessionID: nil)
-                    }
-            } else {
-                WorkspaceContentView(sessionID: workspaceSessionID)
-                    .id(workspaceSessionID)
-                    .environmentObject(preferences)
-                    .onAppear {
-                        sessionRegistry.markFocused(sessionID: workspaceSessionID)
-                    }
-                    .onChange(of: scenePhase) { _, newPhase in
-                        if newPhase == .active {
-                            sessionRegistry.markFocused(sessionID: workspaceSessionID)
-                        }
-                    }
+        let effectiveSessionID = workspaceSessionID.isEmpty ? bootstrapSessionID : workspaceSessionID
+
+        WorkspaceContentView(sessionID: effectiveSessionID)
+            .id(effectiveSessionID)
+            .environmentObject(preferences)
+            .onAppear {
+                if workspaceSessionID.isEmpty {
+                    workspaceSessionID = effectiveSessionID
+                }
+                sessionRegistry.markFocused(sessionID: effectiveSessionID)
             }
-        }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active {
+                    sessionRegistry.markFocused(sessionID: effectiveSessionID)
+                }
+            }
     }
 }
 

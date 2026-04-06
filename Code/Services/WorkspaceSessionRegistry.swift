@@ -22,6 +22,10 @@ final class WorkspaceSessionRegistry: ObservableObject {
         self.fileManager = fileManager
     }
 
+    func makeSceneBootstrapSessionID() -> String {
+        resolveSessionID(storedSessionID: nil)
+    }
+
     func resolveSessionID(storedSessionID: String?) -> String {
         if let storedSessionID, !storedSessionID.isEmpty {
             register(sessionID: storedSessionID)
