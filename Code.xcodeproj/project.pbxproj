@@ -7,13 +7,13 @@
 	objects = {
 
 /* Begin PBXFileReference section */
-		FFDE5E2D2F82ADA3008C9D62 /* Basic Editor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Basic Editor.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		FFDE5E2D2F82ADA3008C9D62 /* Code.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Code.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		FFDE5E2F2F82ADA3008C9D62 /* Basic Editor */ = {
+		FFDE5E2F2F82ADA3008C9D62 /* Code */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = "Basic Editor";
+			path = Code;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -32,7 +32,7 @@
 		FFDE5E242F82ADA2008C9D62 = {
 			isa = PBXGroup;
 			children = (
-				FFDE5E2F2F82ADA3008C9D62 /* Basic Editor */,
+				FFDE5E2F2F82ADA3008C9D62 /* Code */,
 				FFDE5E2E2F82ADA3008C9D62 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -40,7 +40,7 @@
 		FFDE5E2E2F82ADA3008C9D62 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				FFDE5E2D2F82ADA3008C9D62 /* Basic Editor.app */,
+				FFDE5E2D2F82ADA3008C9D62 /* Code.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,9 +48,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		FFDE5E2C2F82ADA3008C9D62 /* Basic Editor */ = {
+		FFDE5E2C2F82ADA3008C9D62 /* Code */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = FFDE5E382F82ADA4008C9D62 /* Build configuration list for PBXNativeTarget "Basic Editor" */;
+			buildConfigurationList = FFDE5E382F82ADA4008C9D62 /* Build configuration list for PBXNativeTarget "Code" */;
 			buildPhases = (
 				FFDE5E292F82ADA3008C9D62 /* Sources */,
 				FFDE5E2A2F82ADA3008C9D62 /* Frameworks */,
@@ -61,13 +61,13 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				FFDE5E2F2F82ADA3008C9D62 /* Basic Editor */,
+				FFDE5E2F2F82ADA3008C9D62 /* Code */,
 			);
-			name = "Basic Editor";
+			name = Code;
 			packageProductDependencies = (
 			);
 			productName = "Basic Editor";
-			productReference = FFDE5E2D2F82ADA3008C9D62 /* Basic Editor.app */;
+			productReference = FFDE5E2D2F82ADA3008C9D62 /* Code.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -85,7 +85,7 @@
 					};
 				};
 			};
-			buildConfigurationList = FFDE5E282F82ADA2008C9D62 /* Build configuration list for PBXProject "Basic Editor" */;
+			buildConfigurationList = FFDE5E282F82ADA2008C9D62 /* Build configuration list for PBXProject "Code" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -99,7 +99,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				FFDE5E2C2F82ADA3008C9D62 /* Basic Editor */,
+				FFDE5E2C2F82ADA3008C9D62 /* Code */,
 			);
 		};
 /* End PBXProject section */
@@ -312,7 +312,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		FFDE5E282F82ADA2008C9D62 /* Build configuration list for PBXProject "Basic Editor" */ = {
+		FFDE5E282F82ADA2008C9D62 /* Build configuration list for PBXProject "Code" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				FFDE5E362F82ADA4008C9D62 /* Debug */,
@@ -321,7 +321,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		FFDE5E382F82ADA4008C9D62 /* Build configuration list for PBXNativeTarget "Basic Editor" */ = {
+		FFDE5E382F82ADA4008C9D62 /* Build configuration list for PBXNativeTarget "Code" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				FFDE5E392F82ADA4008C9D62 /* Debug */,
