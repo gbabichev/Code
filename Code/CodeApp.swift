@@ -16,18 +16,21 @@ struct CodeApp: App {
     @StateObject private var preferences = AppPreferences()
     @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
+    @StateObject private var searchController = EditorSearchController()
 
     var body: some Scene {
         WindowGroup(id: "workspace") {
             WorkspaceSceneView(
                 preferences: preferences,
                 sessionRegistry: sessionRegistry,
-                externalFileRouter: externalFileRouter
+                externalFileRouter: externalFileRouter,
+                searchController: searchController
             )
         }
         .commands {
             EditorCommands(
                 preferences: preferences,
+                searchController: searchController,
                 openNewWindow: { openWindow(id: "workspace") }
             )
         }
@@ -38,6 +41,7 @@ private struct WorkspaceSceneView: View {
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var sessionRegistry: WorkspaceSessionRegistry
     @ObservedObject var externalFileRouter: ExternalFileRouter
+    @ObservedObject var searchController: EditorSearchController
     @Environment(\.scenePhase) private var scenePhase
     @SceneStorage("workspaceSessionID") private var workspaceSessionID = ""
     @State private var bootstrapSessionID: String
@@ -45,11 +49,13 @@ private struct WorkspaceSceneView: View {
     init(
         preferences: AppPreferences,
         sessionRegistry: WorkspaceSessionRegistry,
-        externalFileRouter: ExternalFileRouter
+        externalFileRouter: ExternalFileRouter,
+        searchController: EditorSearchController
     ) {
         self.preferences = preferences
         self.sessionRegistry = sessionRegistry
         self.externalFileRouter = externalFileRouter
+        self.searchController = searchController
         _bootstrapSessionID = State(initialValue: sessionRegistry.makeSceneBootstrapSessionID())
     }
 
@@ -60,6 +66,7 @@ private struct WorkspaceSceneView: View {
             .id(effectiveSessionID)
             .environmentObject(preferences)
             .environmentObject(externalFileRouter)
+            .environmentObject(searchController)
             .onAppear {
                 if workspaceSessionID.isEmpty {
                     workspaceSessionID = effectiveSessionID
@@ -140,6 +147,7 @@ final class ExternalFileRouter: ObservableObject {
 private struct EditorCommands: Commands {
     @FocusedValue(\.activeEditorWorkspace) private var workspace
     @ObservedObject var preferences: AppPreferences
+    @ObservedObject var searchController: EditorSearchController
     let openNewWindow: () -> Void
 
     var body: some Commands {
@@ -188,6 +196,40 @@ private struct EditorCommands: Commands {
                 preferences.decreaseEditorFontSize()
             }
             .keyboardShortcut("-", modifiers: [.command])
+        }
+
+        CommandMenu("Find") {
+            Button("Find...") {
+                searchController.showFind()
+            }
+            .keyboardShortcut("f", modifiers: [.command])
+
+            Button("Replace...") {
+                searchController.showReplace()
+            }
+            .keyboardShortcut("f", modifiers: [.command, .option])
+
+            Divider()
+
+            Button("Find Next") {
+                searchController.findNext()
+            }
+            .keyboardShortcut("g", modifiers: [.command])
+            .disabled(workspace?.selectedTab == nil)
+
+            Button("Find Previous") {
+                searchController.findPrevious()
+            }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
+            .disabled(workspace?.selectedTab == nil)
+
+            Divider()
+
+            Button("Use Selection for Find") {
+                searchController.useSelectionForFind()
+            }
+            .keyboardShortcut("e", modifiers: [.command])
+            .disabled(workspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .sidebar) {
@@ -304,5 +346,73 @@ private final class WindowCloseDelegateProxy: NSObject, NSWindowDelegate {
         }
 
         return unsafe originalDelegate?.windowShouldClose?(sender) ?? true
+    }
+}
+
+@MainActor
+final class EditorSearchController: ObservableObject {
+    enum Command {
+        case showFind
+        case showReplace
+        case findNext
+        case findPrevious
+        case useSelectionForFind
+    }
+
+    @Published var isPresented = false
+    @Published var isReplaceVisible = false
+    @Published var query = ""
+    @Published var replacement = ""
+    @Published var isCaseSensitive = false
+    @Published private(set) var eventID = UUID()
+    private(set) var lastCommand: Command = .showFind
+
+    func showFind() {
+        isPresented = true
+        isReplaceVisible = false
+        lastCommand = .showFind
+        eventID = UUID()
+    }
+
+    func showReplace() {
+        isPresented = true
+        isReplaceVisible = true
+        lastCommand = .showReplace
+        eventID = UUID()
+    }
+
+    func hide() {
+        isPresented = false
+    }
+
+    func findNext() {
+        guard isPresented else {
+            showFind()
+            return
+        }
+        lastCommand = .findNext
+        eventID = UUID()
+    }
+
+    func findPrevious() {
+        guard isPresented else {
+            showFind()
+            return
+        }
+        lastCommand = .findPrevious
+        eventID = UUID()
+    }
+
+    func useSelectionForFind() {
+        guard let textView = ActiveEditorTextViewRegistry.shared.textView else { return }
+        let selectedRange = textView.selectedRange()
+        guard selectedRange.length > 0 else { return }
+        let text = textView.string as NSString
+        query = text.substring(with: selectedRange)
+        if !isPresented {
+            isPresented = true
+        }
+        lastCommand = .useSelectionForFind
+        eventID = UUID()
     }
 }

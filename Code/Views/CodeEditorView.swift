@@ -8,6 +8,17 @@
 import AppKit
 import SwiftUI
 
+@MainActor
+final class ActiveEditorTextViewRegistry {
+    static let shared = ActiveEditorTextViewRegistry()
+
+    weak var textView: NSTextView?
+
+    func register(_ textView: NSTextView) {
+        self.textView = textView
+    }
+}
+
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
     let isWordWrapEnabled: Bool
@@ -30,6 +41,8 @@ struct CodeEditorView: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticDataDetectionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
+        textView.usesFindBar = true
+        textView.isIncrementalSearchingEnabled = true
         textView.font = editorFont
         textView.textColor = theme.baseColor
         textView.backgroundColor = theme.editorBackgroundColor
@@ -77,6 +90,7 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
 
         guard let textView = context.coordinator.textView else { return }
+        ActiveEditorTextViewRegistry.shared.register(textView)
         if textView.string != text {
             textView.string = text
         }
@@ -107,6 +121,7 @@ struct CodeEditorView: NSViewRepresentable {
             self.textView = textView
             self.scrollView = scrollView
             gutterView.textView = textView
+            ActiveEditorTextViewRegistry.shared.register(textView)
 
             NotificationCenter.default.addObserver(
                 self,
@@ -226,6 +241,8 @@ final class LineClickableTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        ActiveEditorTextViewRegistry.shared.register(self)
+
         if event.type == .leftMouseDown,
            event.clickCount == 1,
            moveInsertionPointToClickedLineIfNeeded(event: event) {
@@ -233,6 +250,19 @@ final class LineClickableTextView: NSTextView {
         }
 
         super.mouseDown(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        ActiveEditorTextViewRegistry.shared.register(self)
+        super.keyDown(with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let didBecomeFirstResponder = super.becomeFirstResponder()
+        if didBecomeFirstResponder {
+            ActiveEditorTextViewRegistry.shared.register(self)
+        }
+        return didBecomeFirstResponder
     }
 
     @discardableResult

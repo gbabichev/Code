@@ -11,8 +11,15 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var workspace: EditorWorkspace
+    @EnvironmentObject private var searchController: EditorSearchController
     @State private var isShowingSettingsPopover = false
     @State private var isTargetingTabDrop = false
+    @FocusState private var focusedSearchField: SearchField?
+
+    enum SearchField: Hashable {
+        case find
+        case replace
+    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: Binding(
@@ -136,6 +143,30 @@ struct ContentView: View {
 
                 Divider()
 
+                if searchController.isPresented, let selectedTab = workspace.selectedTab {
+                    let matches = findMatches(in: selectedTab)
+                    EditorSearchBar(
+                        query: $searchController.query,
+                        replacement: $searchController.replacement,
+                        isCaseSensitive: $searchController.isCaseSensitive,
+                        isReplaceVisible: searchController.isReplaceVisible,
+                        matchSummary: matchSummary(for: matches, in: selectedTab),
+                        focusedField: $focusedSearchField,
+                        onClose: { searchController.hide() },
+                        onFindNext: { findNext(in: selectedTab) },
+                        onFindPrevious: { findPrevious(in: selectedTab) },
+                        onReplace: { replaceCurrentMatch(in: selectedTab) },
+                        onReplaceAll: { replaceAllMatches(in: selectedTab) }
+                    )
+                    .onAppear {
+                        DispatchQueue.main.async {
+                            focusedSearchField = .find
+                        }
+                    }
+
+                    Divider()
+                }
+
                 if let selectedTab = workspace.selectedTab {
                     CodeEditorView(
                         text: selectedTabBinding(selectedTab),
@@ -152,6 +183,9 @@ struct ContentView: View {
             if let selectedTab = workspace.selectedTab {
                 fileInfoBar(for: selectedTab)
             }
+        }
+        .onChange(of: searchController.eventID) { _, _ in
+            handleSearchCommand()
         }
     }
 
@@ -242,6 +276,172 @@ struct ContentView: View {
         workspace.requestCloseTab(id)
     }
 
+    private func handleSearchCommand() {
+        guard searchController.isPresented else { return }
+        focusedSearchField = .find
+
+        guard let selectedTab = workspace.selectedTab else {
+            return
+        }
+
+        switch searchController.lastCommand {
+        case .showFind, .showReplace:
+            if !searchController.query.isEmpty {
+                findNext(in: selectedTab)
+            }
+        case .findNext, .useSelectionForFind:
+            findNext(in: selectedTab)
+        case .findPrevious:
+            findPrevious(in: selectedTab)
+        }
+    }
+
+    private func findNext(in tab: EditorTab) {
+        guard let textView = ActiveEditorTextViewRegistry.shared.textView else { return }
+        guard !searchController.query.isEmpty else { return }
+
+        let text = tab.content as NSString
+        let currentSelection = textView.selectedRange()
+        let startLocation = NSMaxRange(currentSelection)
+
+        if let match = findMatch(
+            in: text,
+            query: searchController.query,
+            range: NSRange(location: min(startLocation, text.length), length: max(0, text.length - min(startLocation, text.length))),
+            options: stringCompareOptions
+        ) ?? findMatch(in: text, query: searchController.query, range: NSRange(location: 0, length: min(startLocation, text.length)), options: stringCompareOptions) {
+            select(match, in: textView)
+        }
+    }
+
+    private func findPrevious(in tab: EditorTab) {
+        guard let textView = ActiveEditorTextViewRegistry.shared.textView else { return }
+        guard !searchController.query.isEmpty else { return }
+
+        let text = tab.content as NSString
+        let currentSelection = textView.selectedRange()
+        let startLocation = max(0, currentSelection.location)
+
+        if let match = findMatch(
+            in: text,
+            query: searchController.query,
+            range: NSRange(location: 0, length: min(startLocation, text.length)),
+            options: backwardStringCompareOptions
+        ) ?? findMatch(
+            in: text,
+            query: searchController.query,
+            range: NSRange(location: startLocation, length: max(0, text.length - startLocation)),
+            options: backwardStringCompareOptions
+        ) {
+            select(match, in: textView)
+        }
+    }
+
+    private func replaceCurrentMatch(in tab: EditorTab) {
+        guard let textView = ActiveEditorTextViewRegistry.shared.textView else { return }
+        guard !searchController.query.isEmpty else { return }
+
+        let selectedRange = textView.selectedRange()
+        let text = tab.content as NSString
+
+        if selectedRange.length > 0,
+           selectedRange.location != NSNotFound,
+           NSMaxRange(selectedRange) <= text.length,
+           text.substring(with: selectedRange) == searchController.query {
+            let updated = text.replacingCharacters(in: selectedRange, with: searchController.replacement)
+            workspace.updateContent(updated, for: tab.id)
+            let replacementRange = NSRange(location: selectedRange.location, length: (searchController.replacement as NSString).length)
+            DispatchQueue.main.async {
+                select(replacementRange, in: textView)
+            }
+            findNext(in: tab)
+            return
+        }
+
+        findNext(in: tab)
+    }
+
+    private func replaceAllMatches(in tab: EditorTab) {
+        guard !searchController.query.isEmpty else { return }
+
+        let text = tab.content as NSString
+        let fullRange = NSRange(location: 0, length: text.length)
+        let updated = text.replacingOccurrences(
+            of: searchController.query,
+            with: searchController.replacement,
+            options: stringCompareOptions,
+            range: fullRange
+        )
+        workspace.updateContent(updated, for: tab.id)
+    }
+
+    private func findMatches(in tab: EditorTab) -> [NSRange] {
+        guard !searchController.query.isEmpty else { return [] }
+
+        let text = tab.content as NSString
+        var matches: [NSRange] = []
+        var searchLocation = 0
+
+        while searchLocation <= text.length {
+            let searchRange = NSRange(location: searchLocation, length: text.length - searchLocation)
+            let match = text.range(of: searchController.query, options: stringCompareOptions, range: searchRange)
+            guard match.location != NSNotFound, match.length > 0 else { break }
+            matches.append(match)
+            searchLocation = NSMaxRange(match)
+        }
+
+        return matches
+    }
+
+    private func matchSummary(for matches: [NSRange], in tab: EditorTab) -> String {
+        guard !matches.isEmpty else {
+            return searchController.query.isEmpty ? "" : "0 matches"
+        }
+
+        guard let textView = ActiveEditorTextViewRegistry.shared.textView else {
+            return "\(matches.count) matches"
+        }
+
+        let selectedRange = textView.selectedRange()
+        if let currentIndex = matches.firstIndex(where: { NSEqualRanges($0, selectedRange) }) {
+            return "\(currentIndex + 1) of \(matches.count)"
+        }
+
+        return "\(matches.count) matches"
+    }
+
+    private func findMatch(
+        in text: NSString,
+        query: String,
+        range: NSRange,
+        options: NSString.CompareOptions
+    ) -> NSRange? {
+        guard range.location != NSNotFound,
+              range.location >= 0,
+              NSMaxRange(range) <= text.length,
+              !query.isEmpty else {
+            return nil
+        }
+
+        let match = text.range(of: query, options: options, range: range)
+        return match.location == NSNotFound ? nil : match
+    }
+
+    private func select(_ range: NSRange, in textView: NSTextView) {
+        textView.setSelectedRange(range)
+        textView.scrollRangeToVisible(range)
+    }
+
+    private var stringCompareOptions: NSString.CompareOptions {
+        searchController.isCaseSensitive ? [] : [.caseInsensitive]
+    }
+
+    private var backwardStringCompareOptions: NSString.CompareOptions {
+        var options = stringCompareOptions
+        options.insert(.backwards)
+        return options
+    }
+
     private func handleDroppedItems(_ providers: [NSItemProvider]) -> Bool {
         let fileURLProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
         guard !fileURLProviders.isEmpty else { return false }
@@ -299,6 +499,89 @@ struct ContentView: View {
         case .dark:
             .dark
         }
+    }
+}
+
+private struct EditorSearchBar: View {
+    @Binding var query: String
+    @Binding var replacement: String
+    @Binding var isCaseSensitive: Bool
+    let isReplaceVisible: Bool
+    let matchSummary: String
+    let focusedField: FocusState<ContentView.SearchField?>.Binding
+    let onClose: () -> Void
+    let onFindNext: () -> Void
+    let onFindPrevious: () -> Void
+    let onReplace: () -> Void
+    let onReplaceAll: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TextField("Find", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 220)
+                .focused(focusedField, equals: .find)
+                .onSubmit {
+                    onFindNext()
+                    focusedField.wrappedValue = .find
+                }
+
+            Button {
+                onFindPrevious()
+                focusedField.wrappedValue = .find
+            } label: {
+                Image(systemName: "chevron.up")
+            }
+            .buttonStyle(.borderless)
+
+            Button {
+                onFindNext()
+                focusedField.wrappedValue = .find
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(.borderless)
+
+            Toggle("Match Case", isOn: $isCaseSensitive)
+                .toggleStyle(.checkbox)
+
+            if !matchSummary.isEmpty {
+                Text(matchSummary)
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 70, alignment: .leading)
+            }
+
+            if isReplaceVisible {
+                TextField("Replace", text: $replacement)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                    .focused(focusedField, equals: .replace)
+                    .onSubmit {
+                        onReplace()
+                        focusedField.wrappedValue = .replace
+                    }
+
+                Button("Replace") {
+                    onReplace()
+                }
+
+                Button("Replace All") {
+                    onReplaceAll()
+                }
+            }
+
+            Spacer()
+
+            Button {
+                onClose()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
     }
 }
 
