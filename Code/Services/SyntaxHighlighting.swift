@@ -12,6 +12,14 @@ protocol SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String)
 }
 
+private func isLocation(_ location: Int, containedIn ranges: [NSRange]) -> Bool {
+    ranges.contains { NSLocationInRange(location, $0) }
+}
+
+private func intersects(_ range: NSRange, with ranges: [NSRange]) -> Bool {
+    ranges.contains { NSIntersectionRange(range, $0).length > 0 }
+}
+
 struct PlainTextHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
@@ -47,29 +55,115 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         textStorage.setAttributes(theme.baseAttributes, range: fullRange)
 
-        for match in commentRegex.matches(in: text, range: fullRange) {
-            textStorage.addAttributes(theme.commentAttributes, range: match.range)
+        let commentRanges = commentRegex.matches(in: text, range: fullRange).map(\.range)
+        let stringRanges = stringRegex.matches(in: text, range: fullRange)
+            .map(\.range)
+            .filter { !isLocation($0.location, containedIn: commentRanges) }
+
+        for range in stringRanges {
+            textStorage.addAttributes(theme.stringAttributes, range: range)
         }
 
-        for match in stringRegex.matches(in: text, range: fullRange) {
-            textStorage.addAttributes(theme.stringAttributes, range: match.range)
-        }
-
-        for match in variableRegex.matches(in: text, range: fullRange) {
+        for match in variableRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
-        for match in keywordRegex.matches(in: text, range: fullRange) {
+        for match in keywordRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
-        for match in builtInRegex.matches(in: text, range: fullRange) {
+        for match in builtInRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
-        for match in commandRegex.matches(in: text, range: fullRange) where match.numberOfRanges > 1 {
+        for match in commandRegex.matches(in: text, range: fullRange)
+        where match.numberOfRanges > 1 && !intersects(match.range(at: 1), with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.commandAttributes, range: match.range(at: 1))
         }
+
+        for range in commentRanges {
+            textStorage.addAttributes(theme.commentAttributes, range: range)
+        }
+    }
+}
+
+struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
+    let theme: SkinTheme
+
+    func apply(to textStorage: NSTextStorage, text: String) {
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        textStorage.setAttributes(theme.baseAttributes, range: fullRange)
+
+        let lines = text.components(separatedBy: "\n")
+        var location = 0
+
+        for line in lines {
+            let lineLength = (line as NSString).length
+            let lineRange = NSRange(location: location, length: lineLength)
+            highlightLine(line, in: textStorage, lineRange: lineRange)
+            location += lineLength + 1
+        }
+    }
+
+    private func highlightLine(_ line: String, in textStorage: NSTextStorage, lineRange: NSRange) {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+
+        if trimmed.hasPrefix("#") {
+            textStorage.addAttributes(theme.commentAttributes, range: lineRange)
+            return
+        }
+
+        let nsLine = line as NSString
+        guard let equalsIndex = line.firstIndex(of: "=") else { return }
+
+        let keyLength = line.distance(from: line.startIndex, to: equalsIndex)
+        let keyRange = NSRange(location: lineRange.location, length: keyLength)
+        if keyRange.length > 0 {
+            textStorage.addAttributes(theme.variableAttributes, range: keyRange)
+        }
+
+        let valueStart = keyLength + 1
+        guard valueStart < nsLine.length else { return }
+
+        let valueString = nsLine.substring(from: valueStart)
+        let commentOffset = inlineCommentOffset(in: valueString)
+
+        if let commentOffset {
+            let commentRange = NSRange(location: lineRange.location + valueStart + commentOffset, length: valueString.count - commentOffset)
+            textStorage.addAttributes(theme.commentAttributes, range: commentRange)
+
+            if commentOffset > 0 {
+                let valueRange = NSRange(location: lineRange.location + valueStart, length: commentOffset)
+                textStorage.addAttributes(theme.stringAttributes, range: valueRange)
+            }
+        } else {
+            let valueRange = NSRange(location: lineRange.location + valueStart, length: nsLine.length - valueStart)
+            textStorage.addAttributes(theme.stringAttributes, range: valueRange)
+        }
+    }
+
+    private func inlineCommentOffset(in value: String) -> Int? {
+        var inDoubleQuotes = false
+        var inSingleQuotes = false
+        var previousCharacter: Character?
+
+        for (offset, character) in value.enumerated() {
+            if character == "\"" && previousCharacter != "\\" && !inSingleQuotes {
+                inDoubleQuotes.toggle()
+            } else if character == "'" && previousCharacter != "\\" && !inDoubleQuotes {
+                inSingleQuotes.toggle()
+            } else if character == "#", !inDoubleQuotes, !inSingleQuotes {
+                return offset
+            }
+
+            previousCharacter = character
+        }
+
+        return nil
     }
 }
 
@@ -99,27 +193,36 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         textStorage.setAttributes(theme.baseAttributes, range: fullRange)
 
-        for match in commentRegex.matches(in: text, range: fullRange) {
-            textStorage.addAttributes(theme.commentAttributes, range: match.range)
+        let stringRanges = stringRegex.matches(in: text, range: fullRange).map(\.range)
+        let commentRanges = commentRegex.matches(in: text, range: fullRange)
+            .map(\.range)
+            .filter { !isLocation($0.location, containedIn: stringRanges) }
+
+        for range in stringRanges {
+            textStorage.addAttributes(theme.stringAttributes, range: range)
         }
 
-        for match in stringRegex.matches(in: text, range: fullRange) {
-            textStorage.addAttributes(theme.stringAttributes, range: match.range)
+        for range in commentRanges {
+            textStorage.addAttributes(theme.commentAttributes, range: range)
         }
 
-        for match in decoratorRegex.matches(in: text, range: fullRange) {
+        for match in decoratorRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.commandAttributes, range: match.range)
         }
 
-        for match in variableRegex.matches(in: text, range: fullRange) {
+        for match in variableRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
-        for match in keywordRegex.matches(in: text, range: fullRange) {
+        for match in keywordRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
-        for match in builtInRegex.matches(in: text, range: fullRange) {
+        for match in builtInRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.builtinAttributes, range: match.range)
         }
     }
@@ -154,32 +257,40 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         textStorage.setAttributes(theme.baseAttributes, range: fullRange)
 
-        for match in blockCommentRegex.matches(in: text, range: fullRange) {
-            textStorage.addAttributes(theme.commentAttributes, range: match.range)
+        let blockCommentRanges = blockCommentRegex.matches(in: text, range: fullRange).map(\.range)
+        let stringRanges = stringRegex.matches(in: text, range: fullRange)
+            .map(\.range)
+            .filter { !isLocation($0.location, containedIn: blockCommentRanges) }
+        let commentRanges = blockCommentRanges + lineCommentRegex.matches(in: text, range: fullRange)
+            .map(\.range)
+            .filter { !isLocation($0.location, containedIn: stringRanges + blockCommentRanges) }
+
+        for range in stringRanges {
+            textStorage.addAttributes(theme.stringAttributes, range: range)
         }
 
-        for match in lineCommentRegex.matches(in: text, range: fullRange) {
-            textStorage.addAttributes(theme.commentAttributes, range: match.range)
-        }
-
-        for match in stringRegex.matches(in: text, range: fullRange) {
-            textStorage.addAttributes(theme.stringAttributes, range: match.range)
-        }
-
-        for match in variableRegex.matches(in: text, range: fullRange) {
+        for match in variableRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
-        for match in keywordRegex.matches(in: text, range: fullRange) {
+        for match in keywordRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
-        for match in builtInRegex.matches(in: text, range: fullRange) {
+        for match in builtInRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
-        for match in commandRegex.matches(in: text, range: fullRange) {
+        for match in commandRegex.matches(in: text, range: fullRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.commandAttributes, range: match.range)
+        }
+
+        for range in commentRanges {
+            textStorage.addAttributes(theme.commentAttributes, range: range)
         }
     }
 }
@@ -191,6 +302,8 @@ enum SyntaxHighlighterFactory {
         switch language {
         case .shell:
             return ShellSyntaxHighlighter(theme: theme)
+        case .dotenv:
+            return DotEnvSyntaxHighlighter(theme: theme)
         case .python:
             return PythonSyntaxHighlighter(theme: theme)
         case .powerShell:

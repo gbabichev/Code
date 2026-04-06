@@ -28,6 +28,7 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable {
 enum EditorLanguage: String, Codable {
     case plainText
     case shell
+    case dotenv
     case python
     case powerShell
 
@@ -38,9 +39,14 @@ enum EditorLanguage: String, Codable {
             return .shell
         }
 
-        let shellFileNames = ["bashrc", "zshrc", "profile", "bash_profile", "zprofile", ".env"]
+        let shellFileNames = ["bashrc", "zshrc", "profile", "bash_profile", "zprofile"]
         if shellFileNames.contains(url.lastPathComponent.lowercased()) {
             return .shell
+        }
+
+        let lastPathComponent = url.lastPathComponent.lowercased()
+        if lastPathComponent == ".env" || lastPathComponent.hasPrefix(".env.") {
+            return .dotenv
         }
 
         if ["py", "pyw", "pyi"].contains(url.pathExtension.lowercased()) {
