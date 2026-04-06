@@ -14,7 +14,10 @@ struct ContentView: View {
     @State private var pendingTabClose: PendingTabClose?
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: Binding(
+            get: { preferences.isSidebarVisible ? .all : .detailOnly },
+            set: { preferences.isSidebarVisible = $0 != .detailOnly }
+        )) {
             sidebar
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280)
         } detail: {

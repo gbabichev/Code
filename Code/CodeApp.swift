@@ -13,7 +13,7 @@ struct CodeApp: App {
     @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "workspace") {
             WorkspaceSceneView()
                 .environmentObject(preferences)
                 .environmentObject(sessionRegistry)
@@ -56,9 +56,11 @@ private struct WorkspaceSceneView: View {
 }
 
 private struct WorkspaceContentView: View {
+    let sessionID: String
     @StateObject private var workspace: EditorWorkspace
 
     init(sessionID: String) {
+        self.sessionID = sessionID
         _workspace = StateObject(wrappedValue: EditorWorkspace(sessionStore: SessionStore(sessionID: sessionID)))
     }
 

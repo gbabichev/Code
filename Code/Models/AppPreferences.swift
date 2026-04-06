@@ -60,6 +60,12 @@ final class AppPreferences: ObservableObject {
         }
     }
 
+    @Published var isSidebarVisible: Bool {
+        didSet {
+            userDefaults.set(isSidebarVisible, forKey: Keys.isSidebarVisible)
+        }
+    }
+
     @Published private(set) var availableSkins: [SkinDefinition] = []
     @Published private(set) var availableEditorFonts: [String] = []
     @Published var errorMessage: String?
@@ -104,6 +110,12 @@ final class AppPreferences: ObservableObject {
             editorFontSize = Self.defaultFontSize
         }
 
+        if userDefaults.object(forKey: Keys.isSidebarVisible) != nil {
+            isSidebarVisible = userDefaults.bool(forKey: Keys.isSidebarVisible)
+        } else {
+            isSidebarVisible = true
+        }
+
         reloadEditorFonts()
         reloadSkins()
 
@@ -113,6 +125,7 @@ final class AppPreferences: ObservableObject {
         userDefaults.set(selectedSkinID, forKey: Keys.selectedSkinID)
         userDefaults.set(editorFontName, forKey: Keys.editorFontName)
         userDefaults.set(editorFontSize, forKey: Keys.editorFontSize)
+        userDefaults.set(isSidebarVisible, forKey: Keys.isSidebarVisible)
     }
 
     var selectedSkin: SkinDefinition {
@@ -254,4 +267,5 @@ private enum Keys {
     static let selectedSkinID = "preferences.selectedSkinID"
     static let editorFontName = "preferences.editorFontName"
     static let editorFontSize = "preferences.editorFontSize"
+    static let isSidebarVisible = "preferences.isSidebarVisible"
 }
