@@ -19,7 +19,6 @@ struct FileTreeView: View {
             OutlineGroup(nodes, children: \.outlineChildren) { node in
                 FileRowView(
                     node: node,
-                    isSelected: node.id == selectedFileID,
                     isDirty: isNodeDirty(node)
                 )
                     .contentShape(Rectangle())
@@ -44,7 +43,6 @@ struct FileTreeView: View {
 
 private struct FileRowView: View {
     let node: FileNode
-    let isSelected: Bool
     let isDirty: Bool
 
     var body: some View {
@@ -63,7 +61,5 @@ private struct FileRowView: View {
         .font(.system(size: 13))
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 2)
-        .background(isSelected ? Color.accentColor.opacity(0.12) : .clear)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }
