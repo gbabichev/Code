@@ -6,27 +6,27 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 
 ## Current Architecture
 
-- `Basic Editor/Basic_EditorApp.swift`
+- `Code/CodeApp.swift`
   App entry point and command wiring, including menu commands like `View > Word Wrap`.
-- `Basic Editor/ContentView.swift`
+- `Code/ContentView.swift`
   Main `NavigationSplitView`, toolbar, settings popover, sidebar, tab strip, and editor composition.
-- `Basic Editor/Models/EditorWorkspace.swift`
+- `Code/Models/EditorWorkspace.swift`
   App-level state: root folder, file tree, open tabs, selected tab, settings, persistence, skin import/export, and dirty-state helpers used by the sidebar.
-- `Basic Editor/Models/EditorModels.swift`
+- `Code/Models/EditorModels.swift`
   Core models, editor session snapshot, skin schema models, theme derivation, and language inference.
-- `Basic Editor/Views/CodeEditorView.swift`
+- `Code/Views/CodeEditorView.swift`
   `NSTextView` bridge for editing, wrapping, syntax highlighting, and the custom gutter container.
-- `Basic Editor/Views/FileTreeView.swift`
+- `Code/Views/FileTreeView.swift`
   Sidebar filesystem tree with live dirty indicators on files and folders.
-- `Basic Editor/Views/TabBarView.swift`
+- `Code/Views/TabBarView.swift`
   Horizontal custom tab strip with live dirty indicators per tab.
-- `Basic Editor/Services/SessionStore.swift`
+- `Code/Services/SessionStore.swift`
   Session persistence to Application Support.
-- `Basic Editor/Services/SkinStore.swift`
+- `Code/Services/SkinStore.swift`
   Bundled and user-imported skin loading plus import/export helpers.
-- `Basic Editor/Services/SyntaxHighlighting.swift`
+- `Code/Services/SyntaxHighlighting.swift`
   Semantic token theme application and language highlighter implementations.
-- `Basic Editor/Skins/*.json`
+- `Code/Skins/*.json`
   Bundled skin definitions.
 
 ## Skin System
@@ -47,6 +47,7 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 
 ## Follow-up Guidance
 
+- The project folder is now `Code`, but some internal symbols and persistence locations still use the legacy `Basic Editor` name. Treat those as compatibility-sensitive until they are deliberately migrated.
 - If adding Python or other languages, add new `EditorLanguage` cases and highlighters that map into the same semantic roles used by the JSON skin schema.
 - Keep settings persistence backward compatible when changing `EditorSessionSnapshot`.
 - Prefer bundled JSON examples over embedding default data in Swift, except for minimal fallback safety.

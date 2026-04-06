@@ -1,6 +1,6 @@
 //
-//  Basic_EditorApp.swift
-//  Basic Editor
+//  CodeApp.swift
+//  Code
 //
 //  Created by George Babichev on 4/5/26.
 //
@@ -8,7 +8,7 @@
 import SwiftUI
 
 @main
-struct Basic_EditorApp: App {
+struct CodeApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var workspace = EditorWorkspace()
 
