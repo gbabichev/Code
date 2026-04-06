@@ -6,13 +6,19 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct TabBarView: View {
+    private static let tabDragType = UTType.plainText
+
     let tabs: [EditorTab]
     let selectedTabID: EditorTab.ID?
     let isDropTargeted: Bool
     let onSelect: (EditorTab.ID) -> Void
     let onClose: (EditorTab.ID) -> Void
+    let onMove: (EditorTab.ID, EditorTab.ID) -> Void
+    let onMoveToEnd: (EditorTab.ID) -> Void
+    @State private var draggedTabID: EditorTab.ID?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -21,10 +27,20 @@ struct TabBarView: View {
                     TabItemView(
                         tab: tab,
                         isSelected: tab.id == selectedTabID,
+                        draggedTabID: $draggedTabID,
                         onSelect: onSelect,
-                        onClose: onClose
+                        onClose: onClose,
+                        onMove: onMove
                     )
                 }
+
+                Color.clear
+                    .frame(width: 28, height: 34)
+                    .contentShape(Rectangle())
+                    .onDrop(of: [UTType.plainText], delegate: TabDropToEndDelegate(
+                        draggedTabID: $draggedTabID,
+                        onMoveToEnd: onMoveToEnd
+                    ))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -39,10 +55,14 @@ struct TabBarView: View {
 }
 
 private struct TabItemView: View {
+    private static let tabDragType = UTType.plainText
+
     @ObservedObject var tab: EditorTab
     let isSelected: Bool
+    @Binding var draggedTabID: EditorTab.ID?
     let onSelect: (EditorTab.ID) -> Void
     let onClose: (EditorTab.ID) -> Void
+    let onMove: (EditorTab.ID, EditorTab.ID) -> Void
 
     var body: some View {
         HStack(spacing: 8) {
@@ -74,5 +94,61 @@ private struct TabItemView: View {
         .onTapGesture {
             onSelect(tab.id)
         }
+        .onDrag {
+            draggedTabID = tab.id
+            return NSItemProvider(object: NSString(string: tab.id))
+        }
+        .onDrop(of: [Self.tabDragType], delegate: TabDropDelegate(
+            tabID: tab.id,
+            draggedTabID: $draggedTabID,
+            onMove: onMove
+        ))
+    }
+}
+
+private struct TabDropDelegate: DropDelegate {
+    let tabID: EditorTab.ID
+    @Binding var draggedTabID: EditorTab.ID?
+    let onMove: (EditorTab.ID, EditorTab.ID) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedTabID, draggedTabID != tabID else { return }
+        onMove(draggedTabID, tabID)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedTabID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [UTType.plainText])
+    }
+}
+
+private struct TabDropToEndDelegate: DropDelegate {
+    @Binding var draggedTabID: EditorTab.ID?
+    let onMoveToEnd: (EditorTab.ID) -> Void
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedTabID else { return }
+        onMoveToEnd(draggedTabID)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedTabID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        info.hasItemsConforming(to: [UTType.plainText])
     }
 }

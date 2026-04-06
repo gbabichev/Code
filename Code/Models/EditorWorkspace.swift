@@ -153,6 +153,29 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
+    func moveTab(_ id: EditorTab.ID, before targetID: EditorTab.ID) {
+        guard id != targetID,
+              let sourceIndex = openTabs.firstIndex(where: { $0.id == id }),
+              let targetIndex = openTabs.firstIndex(where: { $0.id == targetID }) else {
+            return
+        }
+
+        let tab = openTabs.remove(at: sourceIndex)
+        let adjustedTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
+        openTabs.insert(tab, at: adjustedTargetIndex)
+        persistSession()
+    }
+
+    func moveTabToEnd(_ id: EditorTab.ID) {
+        guard let sourceIndex = openTabs.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        let tab = openTabs.remove(at: sourceIndex)
+        openTabs.append(tab)
+        persistSession()
+    }
+
     func requestCloseTab(_ id: EditorTab.ID) {
         guard let tab = tab(withID: id) else { return }
 

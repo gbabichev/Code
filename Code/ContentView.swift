@@ -133,7 +133,9 @@ struct ContentView: View {
                     selectedTabID: workspace.selectedTabID,
                     isDropTargeted: isTargetingTabDrop,
                     onSelect: { workspace.selectedTabID = $0 },
-                    onClose: requestCloseTab
+                    onClose: requestCloseTab,
+                    onMove: workspace.moveTab,
+                    onMoveToEnd: workspace.moveTabToEnd
                 )
                 .onDrop(
                     of: [UTType.fileURL.identifier],
