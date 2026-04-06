@@ -33,17 +33,7 @@ struct ContentView: View {
             editorPane
         }
         .toolbar {
-            ToolbarItemGroup {
-                Button("Open Folder") {
-                    workspace.chooseRootFolder()
-                }
-
-                Button("Save") {
-                    workspace.saveSelectedTab()
-                }
-                .keyboardShortcut("s", modifiers: [.command])
-                .disabled(workspace.selectedTab == nil)
-
+            ToolbarItemGroup(placement: .navigation) {
                 Button {
                     isShowingSettingsPopover.toggle()
                 } label: {
