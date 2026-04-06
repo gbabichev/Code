@@ -31,361 +31,6 @@ final class ActiveEditorTextViewRegistry {
     }
 }
 
-private struct SourceLine {
-    let index: Int
-    let content: String
-    let fullText: String
-    let indentation: Int
-    let leadingWhitespace: String
-
-    var trimmedContent: String {
-        content.trimmingCharacters(in: .whitespaces)
-    }
-
-    var isBlank: Bool {
-        trimmedContent.isEmpty
-    }
-}
-
-private struct CodeFoldRegion: Identifiable {
-    let id: String
-    let startLineIndex: Int
-    let endLineIndex: Int
-    let placeholderLeadingWhitespace: String
-}
-
-struct ProjectedFoldRegion {
-    let id: String
-    let visibleHeaderLineNumber: Int
-    let isCollapsed: Bool
-}
-
-private struct FoldProjection {
-    let displayText: String
-    let projectedRegions: [ProjectedFoldRegion]
-}
-
-private enum CodeFoldDetector {
-    private static let pythonHeaderPattern = try! NSRegularExpression(
-        pattern: #"^\s*(async\s+def|def|class)\b.*:\s*(#.*)?$"#
-    )
-    private static let shellFunctionSignaturePattern = try! NSRegularExpression(
-        pattern: #"^\s*(?:function\s+)?[A-Za-z_][A-Za-z0-9_.:-]*\s*(?:\(\s*\))?\s*(?:\{\s*)?$"#
-    )
-    private static let powerShellHeaderPattern = try! NSRegularExpression(
-        pattern: #"^\s*(function|filter|class)\b.*\{"#
-    )
-
-    static func regions(in text: String, language: EditorLanguage) -> [CodeFoldRegion] {
-        let lines = sourceLines(from: text)
-        guard !lines.isEmpty else { return [] }
-
-        let rawRegions: [CodeFoldRegion]
-        switch language {
-        case .python:
-            rawRegions = pythonRegions(in: lines)
-        case .shell:
-            rawRegions = shellRegions(in: lines)
-        case .powerShell:
-            rawRegions = braceRegions(in: lines, headerPattern: powerShellHeaderPattern)
-        case .plainText, .dotenv:
-            rawRegions = []
-        }
-
-        return filterNested(rawRegions)
-    }
-
-    static func project(text: String, regions: [CodeFoldRegion], collapsedRegionIDs: Set<String>) -> FoldProjection {
-        let lines = sourceLines(from: text)
-        guard !lines.isEmpty else {
-            return FoldProjection(displayText: text, projectedRegions: [])
-        }
-
-        let regionsByStart = Dictionary(uniqueKeysWithValues: regions.map { ($0.startLineIndex, $0) })
-        var projectedRegions: [ProjectedFoldRegion] = []
-        var displayText = ""
-        var sourceLineIndex = 0
-        var visibleLineNumber = 1
-
-        while sourceLineIndex < lines.count {
-            let line = lines[sourceLineIndex]
-            displayText += line.fullText
-
-            if let region = regionsByStart[sourceLineIndex] {
-                let isCollapsed = collapsedRegionIDs.contains(region.id)
-                projectedRegions.append(
-                    ProjectedFoldRegion(
-                        id: region.id,
-                        visibleHeaderLineNumber: visibleLineNumber,
-                        isCollapsed: isCollapsed
-                    )
-                )
-
-                if isCollapsed {
-                    let placeholder = region.placeholderLeadingWhitespace + "..."
-                    let collapsesToEOF = region.endLineIndex == lines.count - 1
-                    displayText += collapsesToEOF ? placeholder : placeholder + "\n"
-                    visibleLineNumber += 2
-                    sourceLineIndex = region.endLineIndex + 1
-                    continue
-                }
-            }
-
-            visibleLineNumber += 1
-            sourceLineIndex += 1
-        }
-
-        return FoldProjection(displayText: displayText, projectedRegions: projectedRegions)
-    }
-
-    private static func pythonRegions(in lines: [SourceLine]) -> [CodeFoldRegion] {
-        var regions: [CodeFoldRegion] = []
-
-        for line in lines {
-            guard isMatch(pythonHeaderPattern, text: line.content),
-                  let bodyStartIndex = nextNonBlankLine(after: line.index, in: lines),
-                  lines[bodyStartIndex].indentation > line.indentation else {
-                continue
-            }
-
-            var endIndex = bodyStartIndex
-            var probe = bodyStartIndex + 1
-
-            while probe < lines.count {
-                let candidate = lines[probe]
-                if candidate.isBlank {
-                    endIndex = probe
-                    probe += 1
-                    continue
-                }
-
-                if candidate.indentation <= line.indentation {
-                    break
-                }
-
-                endIndex = probe
-                probe += 1
-            }
-
-            if endIndex > line.index {
-                regions.append(
-                    CodeFoldRegion(
-                        id: "python:\(line.index):\(endIndex)",
-                        startLineIndex: line.index,
-                        endLineIndex: endIndex,
-                        placeholderLeadingWhitespace: lines[bodyStartIndex].leadingWhitespace
-                    )
-                )
-            }
-        }
-
-        return regions
-    }
-
-    private static func shellRegions(in lines: [SourceLine]) -> [CodeFoldRegion] {
-        var regions: [CodeFoldRegion] = []
-
-        for line in lines where isMatch(shellFunctionSignaturePattern, text: line.content) {
-            let braceLineIndex: Int
-            if braceDelta(in: line.content) > 0 {
-                braceLineIndex = line.index
-            } else if let nextLineIndex = nextNonBlankLine(after: line.index, in: lines),
-                      lines[nextLineIndex].trimmedContent == "{" {
-                braceLineIndex = nextLineIndex
-            } else {
-                continue
-            }
-
-            var balance = 0
-            var probe = braceLineIndex
-            var endIndex: Int?
-
-            while probe < lines.count {
-                balance += braceDelta(in: lines[probe].content)
-                if balance <= 0, probe > braceLineIndex {
-                    endIndex = probe
-                    break
-                }
-                probe += 1
-            }
-
-            guard let endIndex, endIndex > line.index else { continue }
-            let bodyStartIndex = min(braceLineIndex + 1, endIndex)
-            regions.append(
-                CodeFoldRegion(
-                    id: "shell:\(line.index):\(endIndex)",
-                    startLineIndex: line.index,
-                    endLineIndex: endIndex,
-                    placeholderLeadingWhitespace: lines[bodyStartIndex].leadingWhitespace
-                )
-            )
-        }
-
-        return regions
-    }
-
-    private static func braceRegions(in lines: [SourceLine], headerPattern: NSRegularExpression) -> [CodeFoldRegion] {
-        var regions: [CodeFoldRegion] = []
-
-        for line in lines where isMatch(headerPattern, text: line.content) {
-            let headerBalance = braceDelta(in: line.content)
-            guard headerBalance > 0 else { continue }
-
-            var balance = headerBalance
-            var probe = line.index + 1
-            var endIndex: Int?
-
-            while probe < lines.count {
-                balance += braceDelta(in: lines[probe].content)
-                if balance <= 0 {
-                    endIndex = probe
-                    break
-                }
-                probe += 1
-            }
-
-            guard let endIndex, endIndex > line.index else { continue }
-            let bodyStartIndex = min(line.index + 1, endIndex)
-            regions.append(
-                CodeFoldRegion(
-                    id: "brace:\(line.index):\(endIndex)",
-                    startLineIndex: line.index,
-                    endLineIndex: endIndex,
-                    placeholderLeadingWhitespace: lines[bodyStartIndex].leadingWhitespace
-                )
-            )
-        }
-
-        return regions
-    }
-
-    private static func sourceLines(from text: String) -> [SourceLine] {
-        guard !text.isEmpty else { return [] }
-
-        var lines: [SourceLine] = []
-        var startIndex = text.startIndex
-        var lineIndex = 0
-
-        while startIndex < text.endIndex {
-            if let newlineIndex = text[startIndex...].firstIndex(of: "\n") {
-                let content = String(text[startIndex..<newlineIndex])
-                let fullText = String(text[startIndex...newlineIndex])
-                let leadingWhitespace = String(content.prefix { $0 == " " || $0 == "\t" })
-                lines.append(
-                    SourceLine(
-                        index: lineIndex,
-                        content: content,
-                        fullText: fullText,
-                        indentation: indentationWidth(for: leadingWhitespace),
-                        leadingWhitespace: leadingWhitespace
-                    )
-                )
-                startIndex = text.index(after: newlineIndex)
-            } else {
-                let content = String(text[startIndex...])
-                let leadingWhitespace = String(content.prefix { $0 == " " || $0 == "\t" })
-                lines.append(
-                    SourceLine(
-                        index: lineIndex,
-                        content: content,
-                        fullText: content,
-                        indentation: indentationWidth(for: leadingWhitespace),
-                        leadingWhitespace: leadingWhitespace
-                    )
-                )
-                break
-            }
-
-            lineIndex += 1
-        }
-
-        return lines
-    }
-
-    private static func nextNonBlankLine(after lineIndex: Int, in lines: [SourceLine]) -> Int? {
-        var probe = lineIndex + 1
-        while probe < lines.count {
-            if !lines[probe].isBlank {
-                return probe
-            }
-            probe += 1
-        }
-        return nil
-    }
-
-    private static func filterNested(_ regions: [CodeFoldRegion]) -> [CodeFoldRegion] {
-        let sorted = regions.sorted {
-            if $0.startLineIndex == $1.startLineIndex {
-                return $0.endLineIndex < $1.endLineIndex
-            }
-            return $0.startLineIndex < $1.startLineIndex
-        }
-
-        var filtered: [CodeFoldRegion] = []
-        for region in sorted {
-            if let previous = filtered.last,
-               region.startLineIndex > previous.startLineIndex,
-               region.endLineIndex <= previous.endLineIndex {
-                continue
-            }
-            filtered.append(region)
-        }
-        return filtered
-    }
-
-    private static func indentationWidth(for whitespace: String) -> Int {
-        whitespace.reduce(into: 0) { width, character in
-            width += character == "\t" ? 4 : 1
-        }
-    }
-
-    private static func braceDelta(in line: String) -> Int {
-        var delta = 0
-        var isInSingleQuote = false
-        var isInDoubleQuote = false
-        var isEscaped = false
-
-        for character in line {
-            if isEscaped {
-                isEscaped = false
-                continue
-            }
-
-            if character == "\\" {
-                isEscaped = true
-                continue
-            }
-
-            if character == "'" && !isInDoubleQuote {
-                isInSingleQuote.toggle()
-                continue
-            }
-
-            if character == "\"" && !isInSingleQuote {
-                isInDoubleQuote.toggle()
-                continue
-            }
-
-            if isInSingleQuote || isInDoubleQuote {
-                continue
-            }
-
-            if character == "{" {
-                delta += 1
-            } else if character == "}" {
-                delta -= 1
-            }
-        }
-
-        return delta
-    }
-
-    private static func isMatch(_ regex: NSRegularExpression, text: String) -> Bool {
-        let range = NSRange(location: 0, length: (text as NSString).length)
-        return regex.firstMatch(in: text, range: range) != nil
-    }
-}
-
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
     let isWordWrapEnabled: Bool
@@ -493,14 +138,8 @@ struct CodeEditorView: NSViewRepresentable {
         weak var scrollView: NSScrollView?
         let gutterView = GutterView(frame: .zero)
         private var isApplyingHighlighting = false
-        private var isApplyingProjection = false
         private var sourceText: String
-        private var detectedFoldRegions: [CodeFoldRegion] = []
-        private var projectedFoldRegions: [ProjectedFoldRegion] = []
-        private var collapsedRegionIDs: Set<String> = []
         private(set) var requiresHighlightRefresh = true
-        private var pendingRefreshWorkItem: DispatchWorkItem?
-        private var pendingFoldRefresh = false
 
         init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, editorFont: NSFont, editorSemiboldFont: NSFont) {
             self.textBinding = textBinding
@@ -516,15 +155,9 @@ struct CodeEditorView: NSViewRepresentable {
             self.textView = textView
             self.scrollView = scrollView
             gutterView.textView = textView
-            gutterView.onToggleFold = { [weak self] regionID in
-                self?.toggleFold(regionID: regionID)
-            }
             ActiveEditorTextViewRegistry.shared.register(textView)
 
             if let lineClickableTextView = textView as? LineClickableTextView {
-                lineClickableTextView.beforeEditingHandler = { [weak self] in
-                    self?.expandAllFoldsIfNeeded()
-                }
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
                 lineClickableTextView.indentWidth = indentWidth
             }
@@ -542,25 +175,16 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView, !isApplyingProjection else { return }
+            guard let textView else { return }
             let editedRange = unsafe textView.textStorage?.editedRange
             sourceText = textView.string
             textBinding.wrappedValue = sourceText
             applyHighlighting(in: editedRange)
             textView.needsDisplay = true
             gutterView.needsDisplay = true
-            if pendingFoldRefresh {
-                pendingFoldRefresh = false
-                scheduleDeferredEditorRefresh()
-            }
         }
 
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
-            pendingFoldRefresh = pendingFoldRefresh || editRequiresFoldRefresh(
-                in: textView.string,
-                affectedCharRange: affectedCharRange,
-                replacementString: replacementString
-            )
             return true
         }
 
@@ -626,10 +250,16 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func syncWithBindingText(_ text: String) -> Bool {
-            if sourceText != text {
+            guard let textView else {
                 sourceText = text
+                return false
             }
-            return recalculateFolds()
+            guard sourceText != text || textView.string != text else { return false }
+
+            sourceText = text
+            textView.string = text
+            requiresHighlightRefresh = true
+            return true
         }
 
         func applyHighlighting(force: Bool = false, in editedRange: NSRange? = nil) {
@@ -655,149 +285,6 @@ struct CodeEditorView: NSViewRepresentable {
             requiresHighlightRefresh = false
         }
 
-        private func recalculateFolds() -> Bool {
-            guard let textView else { return false }
-
-            detectedFoldRegions = CodeFoldDetector.regions(in: sourceText, language: language)
-            let validRegionIDs = Set(detectedFoldRegions.map(\.id))
-            collapsedRegionIDs = collapsedRegionIDs.intersection(validRegionIDs)
-
-            let projection = CodeFoldDetector.project(
-                text: sourceText,
-                regions: detectedFoldRegions,
-                collapsedRegionIDs: collapsedRegionIDs
-            )
-            projectedFoldRegions = projection.projectedRegions
-            gutterView.projectedFoldRegions = projectedFoldRegions
-
-            var didChange = false
-            if textView.string != projection.displayText {
-                isApplyingProjection = true
-                textView.string = projection.displayText
-                isApplyingProjection = false
-                didChange = true
-                requiresHighlightRefresh = true
-            }
-
-            if let layoutManager = unsafe textView.layoutManager,
-               let textContainer = unsafe textView.textContainer {
-                layoutManager.ensureLayout(for: textContainer)
-            }
-
-            return didChange
-        }
-
-        private func toggleFold(regionID: String) {
-            cancelDeferredEditorRefresh()
-            if collapsedRegionIDs.contains(regionID) {
-                collapsedRegionIDs.remove(regionID)
-            } else {
-                collapsedRegionIDs.insert(regionID)
-            }
-
-            _ = recalculateFolds()
-            applyHighlighting(force: true)
-            textView?.needsDisplay = true
-            gutterView.needsDisplay = true
-        }
-
-        private func expandAllFoldsIfNeeded() {
-            guard !collapsedRegionIDs.isEmpty else { return }
-            cancelDeferredEditorRefresh()
-            collapsedRegionIDs.removeAll()
-            _ = recalculateFolds()
-            applyHighlighting(force: true)
-        }
-
-        private func scheduleDeferredEditorRefresh() {
-            pendingRefreshWorkItem?.cancel()
-
-            let workItem = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                self.pendingRefreshWorkItem = nil
-                let didChangeProjection = self.recalculateFolds()
-                if didChangeProjection || self.requiresHighlightRefresh {
-                    self.applyHighlighting(force: true)
-                }
-            }
-
-            pendingRefreshWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
-        }
-
-        private func cancelDeferredEditorRefresh() {
-            pendingRefreshWorkItem?.cancel()
-            pendingRefreshWorkItem = nil
-        }
-
-        private func editRequiresFoldRefresh(in currentText: String, affectedCharRange: NSRange, replacementString: String?) -> Bool {
-            guard language != .plainText, language != .dotenv else { return false }
-            guard let replacementString else { return true }
-
-            let nsText = currentText as NSString
-            let safeLocation = min(max(affectedCharRange.location, 0), nsText.length)
-            let safeLength = min(max(affectedCharRange.length, 0), nsText.length - safeLocation)
-            let safeRange = NSRange(location: safeLocation, length: safeLength)
-            let removedText = safeRange.length > 0 ? nsText.substring(with: safeRange) : ""
-
-            if containsFoldStructuralToken(replacementString) || containsFoldStructuralToken(removedText) {
-                return true
-            }
-
-            if language == .python, editTouchesPythonIndentation(in: nsText, affectedCharRange: safeRange) {
-                return true
-            }
-
-            return false
-        }
-
-        private func containsFoldStructuralToken(_ text: String) -> Bool {
-            switch language {
-            case .python:
-                return text.contains("\n") || text.contains(":")
-            case .shell, .powerShell:
-                return text.contains("\n") || text.contains("{") || text.contains("}")
-            case .plainText, .dotenv:
-                return false
-            }
-        }
-
-        private func editTouchesPythonIndentation(in text: NSString, affectedCharRange: NSRange) -> Bool {
-            let lineStart = lineStartIndex(in: text, for: affectedCharRange.location)
-            let lineEnd = lineEndIndex(in: text, from: lineStart)
-
-            var firstNonWhitespace = lineStart
-            while firstNonWhitespace < lineEnd {
-                let character = text.character(at: firstNonWhitespace)
-                if character != 32 && character != 9 {
-                    break
-                }
-                firstNonWhitespace += 1
-            }
-
-            return affectedCharRange.location <= firstNonWhitespace
-        }
-
-        private func lineStartIndex(in text: NSString, for location: Int) -> Int {
-            guard text.length > 0 else { return 0 }
-            var index = min(max(location, 0), text.length)
-            if index == text.length, index > 0 {
-                index -= 1
-            }
-            while index > 0, text.character(at: index - 1) != 10 {
-                index -= 1
-            }
-            return index
-        }
-
-        private func lineEndIndex(in text: NSString, from location: Int) -> Int {
-            var index = min(max(location, 0), text.length)
-            while index < text.length, text.character(at: index) != 10 {
-                index += 1
-            }
-            return index
-        }
-
         @objc
         private func handleBoundsDidChange() {
             gutterView.needsDisplay = true
@@ -809,7 +296,6 @@ final class LineClickableTextView: NSTextView {
     var currentLineHighlightColor: NSColor = .clear {
         didSet { needsDisplay = true }
     }
-    var beforeEditingHandler: (() -> Void)?
     var lineCommentPrefix: String?
     var indentWidth = 4
 
@@ -845,15 +331,11 @@ final class LineClickableTextView: NSTextView {
             outdentSelection()
             return
         }
-        if !event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
-            beforeEditingHandler?()
-        }
         super.keyDown(with: event)
     }
 
     func toggleLineComment() {
         guard let lineCommentPrefix else { return }
-        beforeEditingHandler?()
 
         let nsText = string as NSString
         let selectedRange = selectedRange()
@@ -903,8 +385,6 @@ final class LineClickableTextView: NSTextView {
     }
 
     private func adjustIndentation(outdent: Bool) {
-        beforeEditingHandler?()
-
         let nsText = string as NSString
         let selectedRange = selectedRange()
         let lineRange = nsText.lineRange(for: selectedRange)
@@ -985,27 +465,22 @@ final class LineClickableTextView: NSTextView {
     }
 
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
-        beforeEditingHandler?()
         super.insertText(insertString, replacementRange: replacementRange)
     }
 
     override func paste(_ sender: Any?) {
-        beforeEditingHandler?()
         super.paste(sender)
     }
 
     override func cut(_ sender: Any?) {
-        beforeEditingHandler?()
         super.cut(sender)
     }
 
     override func deleteBackward(_ sender: Any?) {
-        beforeEditingHandler?()
         super.deleteBackward(sender)
     }
 
     override func deleteForward(_ sender: Any?) {
-        beforeEditingHandler?()
         super.deleteForward(sender)
     }
 
@@ -1267,10 +742,6 @@ final class EditorContainerView: NSView {
 
 final class GutterView: NSView {
     weak var textView: NSTextView?
-    var projectedFoldRegions: [ProjectedFoldRegion] = [] {
-        didSet { needsDisplay = true }
-    }
-    var onToggleFold: ((String) -> Void)?
     var theme = SkinTheme.fallback {
         didSet { needsDisplay = true }
     }
@@ -1299,7 +770,6 @@ final class GutterView: NSView {
         let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
         let text = textView.string as NSString
         let selectedLine = selectedLineNumber(in: textView)
-        let foldRegionByLine = Dictionary(uniqueKeysWithValues: projectedFoldRegions.map { ($0.visibleHeaderLineNumber, $0) })
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .right
@@ -1320,13 +790,6 @@ final class GutterView: NSView {
                 NSRect(x: 0, y: y, width: bounds.width - 1, height: height).fill()
             }
 
-            if let foldRegion = foldRegionByLine[lineNumber] {
-                drawFoldIndicator(
-                    isCollapsed: foldRegion.isCollapsed,
-                    in: NSRect(x: 8, y: y + 4, width: 10, height: 10)
-                )
-            }
-
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: theme.font,
                 .foregroundColor: lineNumber == selectedLine ? theme.gutterCurrentLineNumberColor : theme.gutterTextColor,
@@ -1345,18 +808,6 @@ final class GutterView: NSView {
             selectedLine: selectedLine,
             lineNumber: lineNumber
         )
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        guard point.x <= 20,
-              let lineNumber = lineNumber(atY: point.y),
-              let foldRegion = projectedFoldRegions.first(where: { $0.visibleHeaderLineNumber == lineNumber }) else {
-            super.mouseDown(with: event)
-            return
-        }
-
-        onToggleFold?(foldRegion.id)
     }
 
     private func selectedLineNumber(in textView: NSTextView) -> Int {
@@ -1394,55 +845,6 @@ final class GutterView: NSView {
         return max(newlineCount, 1)
     }
 
-    private func lineNumber(atY yPosition: CGFloat) -> Int? {
-        guard let textView,
-              let layoutManager = unsafe textView.layoutManager,
-              let scrollView = textView.enclosingScrollView else {
-            return nil
-        }
-
-        let clipOrigin = scrollView.contentView.bounds.origin
-        let targetY = yPosition + clipOrigin.y - textView.textContainerInset.height
-        let text = textView.string as NSString
-
-        if !layoutManager.extraLineFragmentRect.isEmpty,
-           targetY >= layoutManager.extraLineFragmentRect.minY,
-           targetY <= layoutManager.extraLineFragmentRect.maxY {
-            return lineNumber(atCharacterIndex: text.length, text: text)
-        }
-
-        var glyphIndex = 0
-        while glyphIndex < layoutManager.numberOfGlyphs {
-            var lineGlyphRange = NSRange()
-            let lineRect = unsafe layoutManager.lineFragmentRect(
-                forGlyphAt: glyphIndex,
-                effectiveRange: &lineGlyphRange,
-                withoutAdditionalLayout: true
-            )
-            if targetY >= lineRect.minY, targetY <= lineRect.maxY {
-                return lineNumber(atGlyphIndex: glyphIndex, layoutManager: layoutManager, text: text)
-            }
-            glyphIndex = NSMaxRange(lineGlyphRange)
-        }
-
-        return nil
-    }
-
-    private func drawFoldIndicator(isCollapsed: Bool, in rect: NSRect) {
-        let path = NSBezierPath()
-        if isCollapsed {
-            path.move(to: NSPoint(x: rect.minX + 2, y: rect.minY + 1))
-            path.line(to: NSPoint(x: rect.maxX - 2, y: rect.midY))
-            path.line(to: NSPoint(x: rect.minX + 2, y: rect.maxY - 1))
-        } else {
-            path.move(to: NSPoint(x: rect.minX + 1, y: rect.minY + 2))
-            path.line(to: NSPoint(x: rect.maxX - 1, y: rect.minY + 2))
-            path.line(to: NSPoint(x: rect.midX, y: rect.maxY - 2))
-        }
-        path.close()
-        theme.gutterTextColor.setFill()
-        path.fill()
-    }
 
     private func drawExtraLineFragmentIfNeeded(
         layoutManager: NSLayoutManager,
