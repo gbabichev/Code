@@ -190,6 +190,18 @@ private struct EditorCommands: Commands {
             }
             .keyboardShortcut("/", modifiers: [.command])
             .disabled(workspace?.selectedTab == nil)
+
+            Button("Indent") {
+                ActiveEditorTextViewRegistry.shared.indentSelection()
+            }
+            .keyboardShortcut("]", modifiers: [.command])
+            .disabled(workspace?.selectedTab == nil)
+
+            Button("Outdent") {
+                ActiveEditorTextViewRegistry.shared.outdentSelection()
+            }
+            .keyboardShortcut("[", modifiers: [.command])
+            .disabled(workspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .textFormatting) {

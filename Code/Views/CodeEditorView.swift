@@ -21,6 +21,14 @@ final class ActiveEditorTextViewRegistry {
     func toggleLineComment() {
         (textView as? LineClickableTextView)?.toggleLineComment()
     }
+
+    func indentSelection() {
+        (textView as? LineClickableTextView)?.indentSelection()
+    }
+
+    func outdentSelection() {
+        (textView as? LineClickableTextView)?.outdentSelection()
+    }
 }
 
 private struct SourceLine {
@@ -816,6 +824,14 @@ final class LineClickableTextView: NSTextView {
             toggleLineComment()
             return
         }
+        if modifiers == [.command], event.charactersIgnoringModifiers == "]" {
+            indentSelection()
+            return
+        }
+        if modifiers == [.command], event.charactersIgnoringModifiers == "[" {
+            outdentSelection()
+            return
+        }
         if !event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command) {
             beforeEditingHandler?()
         }
@@ -852,6 +868,57 @@ final class LineClickableTextView: NSTextView {
         }
 
         var updatedLines = updatedActiveLines
+        if originalHasTrailingNewline {
+            updatedLines.append("")
+        }
+        let replacement = updatedLines.joined(separator: "\n")
+
+        guard shouldChangeText(in: lineRange, replacementString: replacement) else { return }
+        unsafe textStorage?.beginEditing()
+        unsafe textStorage?.replaceCharacters(in: lineRange, with: replacement)
+        unsafe textStorage?.endEditing()
+        didChangeText()
+        setSelectedRange(NSRange(location: lineRange.location, length: (replacement as NSString).length))
+    }
+
+    func indentSelection() {
+        adjustIndentation(outdent: false)
+    }
+
+    func outdentSelection() {
+        adjustIndentation(outdent: true)
+    }
+
+    private func adjustIndentation(outdent: Bool) {
+        beforeEditingHandler?()
+
+        let nsText = string as NSString
+        let selectedRange = selectedRange()
+        let lineRange = nsText.lineRange(for: selectedRange)
+        let block = nsText.substring(with: lineRange)
+        let originalHasTrailingNewline = block.hasSuffix("\n")
+        let lines = block.components(separatedBy: "\n")
+        let lineCount = originalHasTrailingNewline ? max(lines.count - 1, 0) : lines.count
+        guard lineCount > 0 else { return }
+
+        let indentUnit = "    "
+        let updatedActiveLines = lines.prefix(lineCount).map { line in
+            if outdent {
+                if line.hasPrefix(indentUnit) {
+                    return String(line.dropFirst(indentUnit.count))
+                }
+                if line.hasPrefix("\t") {
+                    return String(line.dropFirst())
+                }
+                let leadingSpaces = line.prefix { $0 == " " }
+                let removalCount = min(leadingSpaces.count, indentUnit.count)
+                return String(line.dropFirst(removalCount))
+            }
+
+            return indentUnit + line
+        }
+
+        var updatedLines = Array(updatedActiveLines)
         if originalHasTrailingNewline {
             updatedLines.append("")
         }
