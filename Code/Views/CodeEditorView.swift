@@ -823,7 +823,7 @@ final class LineClickableTextView: NSTextView {
 
         if event.type == .leftMouseDown,
            event.clickCount == 1,
-           moveInsertionPointToClickedLineIfNeeded(event: event) {
+           beginTrailingLineSelectionIfNeeded(event: event) {
             return
         }
 
@@ -1011,9 +1011,19 @@ final class LineClickableTextView: NSTextView {
 
     @discardableResult
     func moveInsertionPointToClosestLine(for pointInSelf: NSPoint) -> Bool {
+        guard let selectionIndex = selectionIndexForClosestLine(for: pointInSelf) else {
+            return false
+        }
+
+        unsafe window?.makeFirstResponder(self)
+        setSelectedRange(NSRange(location: selectionIndex, length: 0))
+        return true
+    }
+
+    private func selectionIndexForClosestLine(for pointInSelf: NSPoint) -> Int? {
         guard let layoutManager = unsafe layoutManager,
               let textContainer = unsafe textContainer else {
-            return false
+            return nil
         }
 
         let containerPoint = NSPoint(
@@ -1027,26 +1037,50 @@ final class LineClickableTextView: NSTextView {
             layoutManager: layoutManager,
             textContainer: textContainer
         ) else {
-            return false
+            return nil
         }
-
-        unsafe window?.makeFirstResponder(self)
-        setSelectedRange(NSRange(location: selectionIndex, length: 0))
-        return true
+        return selectionIndex
     }
 
     @discardableResult
-    private func moveInsertionPointToClickedLineIfNeeded(event: NSEvent) -> Bool {
+    func beginTrailingLineSelectionIfNeeded(event: NSEvent) -> Bool {
         guard unsafe layoutManager != nil,
               unsafe textContainer != nil else {
             return false
         }
 
         let point = convert(event.locationInWindow, from: nil)
-        guard moveInsertionPointToClosestLine(for: point) else {
+        guard let anchorIndex = selectionIndexForClosestLine(for: point) else {
             return false
         }
+
+        unsafe window?.makeFirstResponder(self)
+        setSelectedRange(NSRange(location: anchorIndex, length: 0))
+        trackSelectionDrag(from: anchorIndex, initialEvent: event)
         return true
+    }
+
+    private func trackSelectionDrag(from anchorIndex: Int, initialEvent: NSEvent) {
+        guard let window = unsafe window else { return }
+
+        var lastSelectionIndex = anchorIndex
+
+        while let nextEvent = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
+            let point = convert(nextEvent.locationInWindow, from: nil)
+            if let selectionIndex = selectionIndexForClosestLine(for: point) {
+                lastSelectionIndex = selectionIndex
+                let location = min(anchorIndex, selectionIndex)
+                let length = abs(selectionIndex - anchorIndex)
+                setSelectedRange(NSRange(location: location, length: length))
+            }
+
+            if nextEvent.type == .leftMouseUp {
+                if lastSelectionIndex == anchorIndex {
+                    setSelectedRange(NSRange(location: anchorIndex, length: 0))
+                }
+                break
+            }
+        }
     }
 
     private func insertionIndexForExtraLineClick(
@@ -1186,7 +1220,19 @@ final class EditorClipView: NSClipView {
 
         let clipPoint = convert(event.locationInWindow, from: nil)
         let textPoint = convert(clipPoint, to: textView)
-        if textView.moveInsertionPointToClosestLine(for: textPoint) {
+        let translatedEvent = NSEvent.mouseEvent(
+            with: event.type,
+            location: textView.convert(textPoint, to: nil),
+            modifierFlags: event.modifierFlags,
+            timestamp: event.timestamp,
+            windowNumber: event.windowNumber,
+            context: nil,
+            eventNumber: event.eventNumber,
+            clickCount: event.clickCount,
+            pressure: event.pressure
+        ) ?? event
+
+        if textView.beginTrailingLineSelectionIfNeeded(event: translatedEvent) {
             return
         }
 
