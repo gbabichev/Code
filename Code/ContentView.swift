@@ -283,8 +283,32 @@ struct ContentView: View {
             Divider()
                 .frame(height: 12)
 
-            Text(tab.language.rawValue.uppercased())
-                .font(.caption.monospaced())
+            Menu(languageStatusTitle(for: tab)) {
+                Button {
+                    workspace.updateSelectedTabLanguageOverride(nil)
+                } label: {
+                    if tab.languageOverride == nil {
+                        Label("Auto Detect (\(tab.inferredLanguage.title))", systemImage: "checkmark")
+                    } else {
+                        Text("Auto Detect (\(tab.inferredLanguage.title))")
+                    }
+                }
+
+                Divider()
+
+                ForEach(EditorLanguage.allCases) { language in
+                    Button {
+                        workspace.updateSelectedTabLanguageOverride(language)
+                    } label: {
+                        if tab.languageOverride == language {
+                            Label(language.title, systemImage: "checkmark")
+                        } else {
+                            Text(language.title)
+                        }
+                    }
+                }
+            }
+            .menuStyle(.borderlessButton)
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -308,6 +332,14 @@ struct ContentView: View {
             index = tab.content.index(after: index)
         }
         return count
+    }
+
+    private func languageStatusTitle(for tab: EditorTab) -> String {
+        if tab.languageOverride == nil {
+            return "Auto: \(tab.inferredLanguage.title)"
+        }
+
+        return tab.language.title
     }
 
     private func selectedTabBinding(_ tab: EditorTab) -> Binding<String> {

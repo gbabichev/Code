@@ -25,12 +25,14 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum EditorLanguage: String, Codable {
+enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
     case plainText
     case shell
     case dotenv
     case python
     case powerShell
+
+    var id: String { rawValue }
 
     static func infer(from url: URL) -> EditorLanguage {
         let shellExtensions = ["sh", "bash", "zsh", "ksh", "command"]
@@ -66,6 +68,21 @@ enum EditorLanguage: String, Codable {
             return "#"
         case .plainText:
             return nil
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .plainText:
+            "Plain Text"
+        case .shell:
+            "Shell"
+        case .dotenv:
+            "DOTENV"
+        case .python:
+            "Python"
+        case .powerShell:
+            "PowerShell"
         }
     }
 }
@@ -305,6 +322,7 @@ struct EditorTabSnapshot: Codable {
     let id: String?
     let filePath: String?
     let title: String?
+    let languageOverride: EditorLanguage?
     let encoding: EditorTextEncoding?
     let lineEnding: EditorLineEnding?
     let lastSavedEncoding: EditorTextEncoding?
@@ -316,6 +334,7 @@ struct EditorTabSnapshot: Codable {
         id: String? = nil,
         filePath: String?,
         title: String? = nil,
+        languageOverride: EditorLanguage? = nil,
         encoding: EditorTextEncoding? = nil,
         lineEnding: EditorLineEnding? = nil,
         lastSavedEncoding: EditorTextEncoding? = nil,
@@ -326,6 +345,7 @@ struct EditorTabSnapshot: Codable {
         self.id = id
         self.filePath = filePath
         self.title = title
+        self.languageOverride = languageOverride
         self.encoding = encoding
         self.lineEnding = lineEnding
         self.lastSavedEncoding = lastSavedEncoding
@@ -394,6 +414,7 @@ final class EditorTab: ObservableObject, Identifiable {
     let id: String
     @Published var fileURL: URL?
     @Published var customTitle: String?
+    @Published var languageOverride: EditorLanguage?
     @Published var textEncoding: EditorTextEncoding
     @Published var lineEnding: EditorLineEnding
 
@@ -406,6 +427,7 @@ final class EditorTab: ObservableObject, Identifiable {
     init(
         id: String = UUID().uuidString,
         fileURL: URL?,
+        languageOverride: EditorLanguage? = nil,
         textEncoding: EditorTextEncoding = .utf8,
         lineEnding: EditorLineEnding = .lf,
         customTitle: String? = nil,
@@ -417,6 +439,7 @@ final class EditorTab: ObservableObject, Identifiable {
     ) {
         self.id = id
         self.fileURL = fileURL
+        self.languageOverride = languageOverride
         self.textEncoding = textEncoding
         self.lineEnding = lineEnding
         self.customTitle = customTitle
@@ -434,6 +457,15 @@ final class EditorTab: ObservableObject, Identifiable {
     }
 
     var language: EditorLanguage {
+        if let languageOverride {
+            return languageOverride
+        }
+
+        guard let fileURL else { return .plainText }
+        return EditorLanguage.infer(from: fileURL)
+    }
+
+    var inferredLanguage: EditorLanguage {
         guard let fileURL else { return .plainText }
         return EditorLanguage.infer(from: fileURL)
     }

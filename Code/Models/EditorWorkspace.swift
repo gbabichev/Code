@@ -127,6 +127,7 @@ final class EditorWorkspace: ObservableObject {
             let fileContents = try readTextFile(at: url)
             let tab = EditorTab(
                 fileURL: url,
+                languageOverride: nil,
                 textEncoding: fileContents.encoding,
                 lineEnding: fileContents.lineEnding,
                 content: fileContents.content,
@@ -288,6 +289,13 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
+    func updateSelectedTabLanguageOverride(_ language: EditorLanguage?) {
+        guard let selectedTab else { return }
+        if selectedTab.languageOverride == language { return }
+        selectedTab.languageOverride = language
+        persistSession()
+    }
+
     func persistSession() {
         let snapshot = EditorSessionSnapshot(
             rootFolderPath: rootFolderURL?.path(percentEncoded: false),
@@ -298,6 +306,7 @@ final class EditorWorkspace: ObservableObject {
                     id: $0.id,
                     filePath: $0.fileURL?.path(percentEncoded: false),
                     title: $0.fileURL == nil ? $0.title : nil,
+                    languageOverride: $0.languageOverride,
                     encoding: $0.textEncoding,
                     lineEnding: $0.lineEnding,
                     lastSavedEncoding: $0.lastSavedEncoding,
@@ -338,6 +347,7 @@ final class EditorWorkspace: ObservableObject {
                 let tab = EditorTab(
                     id: item.id ?? url.path(percentEncoded: false),
                     fileURL: url,
+                    languageOverride: item.languageOverride,
                     textEncoding: currentEncoding,
                     lineEnding: currentLineEnding,
                     content: item.content,
@@ -353,6 +363,7 @@ final class EditorWorkspace: ObservableObject {
             let tab = EditorTab(
                 id: item.id ?? UUID().uuidString,
                 fileURL: nil,
+                languageOverride: item.languageOverride,
                 textEncoding: item.encoding ?? .utf8,
                 lineEnding: item.lineEnding ?? .lf,
                 customTitle: item.title,
