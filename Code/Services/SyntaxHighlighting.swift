@@ -41,12 +41,6 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
     private let variableRegex = try! NSRegularExpression(
         pattern: #"\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^}]+\}"#
     )
-    private let stringRegex = try! NSRegularExpression(
-        pattern: #""([^"\\]|\\.)*"|'([^'\\]|\\.)*'"#
-    )
-    private let commentRegex = try! NSRegularExpression(
-        pattern: #"(?m)#.*$"#
-    )
     private let commandRegex = try! NSRegularExpression(
         pattern: #"(?m)^\s*([A-Za-z_./-][A-Za-z0-9_./-]*)"#
     )
@@ -55,10 +49,7 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         textStorage.setAttributes(theme.baseAttributes, range: fullRange)
 
-        let commentRanges = commentRegex.matches(in: text, range: fullRange).map(\.range)
-        let stringRanges = stringRegex.matches(in: text, range: fullRange)
-            .map(\.range)
-            .filter { !isLocation($0.location, containedIn: commentRanges) }
+        let (stringRanges, commentRanges) = shellStringAndCommentRanges(in: text as NSString)
 
         for range in stringRanges {
             textStorage.addAttributes(theme.stringAttributes, range: range)
@@ -87,6 +78,92 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
         for range in commentRanges {
             textStorage.addAttributes(theme.commentAttributes, range: range)
         }
+    }
+
+    private func shellStringAndCommentRanges(in text: NSString) -> ([NSRange], [NSRange]) {
+        var stringRanges: [NSRange] = []
+        var commentRanges: [NSRange] = []
+        var index = 0
+        var activeQuote: unichar?
+        var quoteStart: Int?
+        var isEscaped = false
+
+        while index < text.length {
+            let character = text.character(at: index)
+
+            if let activeQuoteValue = activeQuote {
+                if activeQuoteValue == 34 {
+                    if character == 92, !isEscaped {
+                        isEscaped = true
+                        index += 1
+                        continue
+                    }
+
+                    if character == 34, !isEscaped, let quoteStartValue = quoteStart {
+                        stringRanges.append(NSRange(location: quoteStartValue, length: index - quoteStartValue + 1))
+                        activeQuote = nil
+                        quoteStart = nil
+                        isEscaped = false
+                        index += 1
+                        continue
+                    }
+
+                    isEscaped = false
+                } else if character == 39, let quoteStartValue = quoteStart {
+                    stringRanges.append(NSRange(location: quoteStartValue, length: index - quoteStartValue + 1))
+                    activeQuote = nil
+                    quoteStart = nil
+                    isEscaped = false
+                    index += 1
+                    continue
+                }
+
+                index += 1
+                continue
+            }
+
+            if character == 35, isShellCommentStart(in: text, at: index) {
+                let lineEnd = lineEndIndex(in: text, startingAt: index)
+                commentRanges.append(NSRange(location: index, length: lineEnd - index))
+                index = lineEnd
+                continue
+            }
+
+            if character == 34 || character == 39 {
+                activeQuote = character
+                quoteStart = index
+                isEscaped = false
+                index += 1
+                continue
+            }
+
+            index += 1
+        }
+
+        if let quoteStart {
+            stringRanges.append(NSRange(location: quoteStart, length: text.length - quoteStart))
+        }
+
+        return (stringRanges, commentRanges)
+    }
+    private func isShellCommentStart(in text: NSString, at index: Int) -> Bool {
+        guard index == 0 else {
+            let previousCharacter = text.character(at: index - 1)
+            return CharacterSet.whitespacesAndNewlines.contains(UnicodeScalar(previousCharacter)!)
+                || previousCharacter == 59
+                || previousCharacter == 124
+                || previousCharacter == 38
+        }
+
+        return true
+    }
+
+    private func lineEndIndex(in text: NSString, startingAt index: Int) -> Int {
+        var probe = index
+        while probe < text.length, text.character(at: probe) != 10 {
+            probe += 1
+        }
+        return probe
     }
 }
 
