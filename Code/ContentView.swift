@@ -35,6 +35,12 @@ struct ContentView: View {
         } detail: {
             editorPane
         }
+#if DEBUG
+        .overlay(alignment: .bottomTrailing) {
+            BetaTag()
+                .padding(12)
+        }
+#endif
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button {
