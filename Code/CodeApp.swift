@@ -101,6 +101,7 @@ private struct WorkspaceContentView: View {
 
     var body: some View {
         ContentView()
+            .frame(minWidth: 500, minHeight: 500)
             .environmentObject(workspace)
             .focusedSceneValue(\.activeEditorWorkspace, workspace)
             .background(WindowDirtyStateView(isDocumentEdited: workspace.hasDirtyTabs))
