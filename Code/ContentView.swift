@@ -217,6 +217,9 @@ struct ContentView: View {
                             focusedSearchField = .find
                         }
                     }
+                    .onExitCommand {
+                        searchController.hide()
+                    }
 
                     Divider()
                 }
