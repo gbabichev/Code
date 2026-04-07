@@ -24,13 +24,14 @@ final class EditorWorkspace: ObservableObject {
 
     init(
         fileManager: FileManager = .default,
-        sessionStore: SessionStore
+        sessionStore: SessionStore,
+        skipUntitledIfPendingFiles: Bool = false
     ) {
         self.fileManager = fileManager
         self.sessionStore = sessionStore
         restoreSession()
 
-        if openTabs.isEmpty {
+        if openTabs.isEmpty && !skipUntitledIfPendingFiles {
             createUntitledTab()
         }
     }

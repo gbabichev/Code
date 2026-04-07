@@ -41,6 +41,13 @@ struct CodeApp: App {
                 openNewWindow: { openWindow(id: "workspace") }
             )
         }
+        .onChange(of: externalFileRouter.pendingRequestID) { _, _ in
+            // Files arrived while no window was visible — open one
+            let hasVisibleWindows = NSApp.windows.contains(where: { $0.isVisible })
+            if !hasVisibleWindows {
+                openWindow(id: "workspace")
+            }
+        }
     }
 }
 
@@ -103,7 +110,11 @@ private struct WorkspaceContentView: View {
 
     init(sessionID: String) {
         self.sessionID = sessionID
-        _workspace = StateObject(wrappedValue: EditorWorkspace(sessionStore: SessionStore(sessionID: sessionID)))
+        let hasPendingFiles = ExternalFileRouter.shared.hasPendingFiles()
+        _workspace = StateObject(wrappedValue: EditorWorkspace(
+            sessionStore: SessionStore(sessionID: sessionID),
+            skipUntitledIfPendingFiles: hasPendingFiles
+        ))
     }
 
     var body: some View {
@@ -157,9 +168,23 @@ final class ExternalFileRouter: ObservableObject {
         pendingRequestID = UUID()
     }
 
+    func hasPendingFiles() -> Bool {
+        !pendingFiles.isEmpty
+    }
+
+    @MainActor
     func consumePendingFiles() -> [URL] {
         let files = pendingFiles
         pendingFiles.removeAll()
+
+        // Activate the app and bring window to front
+        if !files.isEmpty {
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = NSApp.windows.first(where: { $0.isVisible }) {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+
         return files
     }
 }
