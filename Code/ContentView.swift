@@ -89,26 +89,65 @@ struct ContentView: View {
                     description: Text("Pick a root folder to browse files in the sidebar.")
                 )
             } else {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(workspace.rootFolderURL?.lastPathComponent ?? "")
-                            .font(.headline)
-                        Text(workspace.rootFolderURL?.path(percentEncoded: false) ?? "")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                    Spacer()
-                    Button {
-                        workspace.reloadFileTree()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                }
-                .padding(12)
+                VStack(spacing: 0) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "folder.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 30, height: 30)
+                                .background(
+                                    LinearGradient(
+                                        colors: [
+                                            Color.accentColor.opacity(0.95),
+                                            Color.accentColor.opacity(0.7)
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                )
 
-                Divider()
+                            Text(workspace.rootFolderURL?.lastPathComponent ?? "")
+                                .font(.headline.weight(.semibold))
+
+                            Spacer(minLength: 0)
+
+                            Button {
+                                workspace.reloadFileTree()
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .frame(width: 28, height: 28)
+                            }
+                            .buttonStyle(.plain)
+                            .background(
+                                Circle()
+                                    .fill(Color.primary.opacity(0.05))
+                            )
+                            .help("Refresh Folder")
+                        }
+
+                        Text(workspace.rootFolderURL?.path(percentEncoded: false) ?? "")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.primary.opacity(0.72))
+                            .lineLimit(2)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(Color.primary.opacity(0.08))
+                            )
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.08))
+                            }
+                    }
+                    .padding(12)
+
+                    Divider()
+                }
 
                 FileTreeView(
                     nodes: workspace.fileTree,
