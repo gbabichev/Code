@@ -79,13 +79,11 @@ struct CodeEditorView: NSViewRepresentable {
         textView.string = text
 
         let scrollView = NSScrollView()
-        let clipView = EditorClipView()
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = !isWordWrapEnabled
         scrollView.borderType = .noBorder
         scrollView.backgroundColor = theme.editorBackgroundColor
         scrollView.drawsBackground = true
-        scrollView.contentView = clipView
         scrollView.documentView = textView
         scrollView.contentView.postsBoundsChangedNotifications = true
 
@@ -252,8 +250,12 @@ struct CodeEditorView: NSViewRepresentable {
             unsafe textView.layoutManager?.ensureLayout(for: textContainer)
             textView.sizeToFit()
             let minimumWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
+            let minimumHeight = max((scrollView?.contentSize.height ?? textView.bounds.height), 0)
             if textView.frame.width < minimumWidth {
                 textView.frame.size.width = minimumWidth
+            }
+            if textView.frame.height < minimumHeight {
+                textView.frame.size.height = minimumHeight
             }
             textView.needsDisplay = true
         }
@@ -389,13 +391,6 @@ final class LineClickableTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         ActiveEditorTextViewRegistry.shared.register(self)
-
-        if event.type == .leftMouseDown,
-           event.clickCount == 1,
-           beginTrailingLineSelectionIfNeeded(event: event) {
-            return
-        }
-
         super.mouseDown(with: event)
     }
 
@@ -659,160 +654,6 @@ final class LineClickableTextView: NSTextView {
         return NSRange(location: start, length: length)
     }
 
-    @discardableResult
-    func moveInsertionPointToClosestLine(for pointInSelf: NSPoint) -> Bool {
-        guard let selectionIndex = selectionIndexForClosestLine(for: pointInSelf) else {
-            return false
-        }
-
-        unsafe window?.makeFirstResponder(self)
-        setSelectedRange(NSRange(location: selectionIndex, length: 0))
-        return true
-    }
-
-    private func selectionIndexForClosestLine(for pointInSelf: NSPoint) -> Int? {
-        guard let layoutManager = unsafe layoutManager,
-              let textContainer = unsafe textContainer else {
-            return nil
-        }
-
-        let containerPoint = NSPoint(
-            x: pointInSelf.x - textContainerInset.width,
-            y: pointInSelf.y - textContainerInset.height
-        )
-
-        guard let selectionIndex = insertionIndexForTrailingLineClick(
-            point: pointInSelf,
-            containerPoint: containerPoint,
-            layoutManager: layoutManager,
-            textContainer: textContainer
-        ) else {
-            return nil
-        }
-        return selectionIndex
-    }
-
-    @discardableResult
-    func beginTrailingLineSelectionIfNeeded(event: NSEvent) -> Bool {
-        guard unsafe layoutManager != nil,
-              unsafe textContainer != nil else {
-            return false
-        }
-
-        let point = convert(event.locationInWindow, from: nil)
-        guard let anchorIndex = selectionIndexForClosestLine(for: point) else {
-            return false
-        }
-
-        unsafe window?.makeFirstResponder(self)
-        setSelectedRange(NSRange(location: anchorIndex, length: 0))
-        trackSelectionDrag(from: anchorIndex, initialEvent: event)
-        return true
-    }
-
-    private func trackSelectionDrag(from anchorIndex: Int, initialEvent: NSEvent) {
-        guard let window = unsafe window else { return }
-
-        var lastSelectionIndex = anchorIndex
-
-        while let nextEvent = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
-            let point = convert(nextEvent.locationInWindow, from: nil)
-            if let selectionIndex = selectionIndexForClosestLine(for: point) {
-                lastSelectionIndex = selectionIndex
-                let location = min(anchorIndex, selectionIndex)
-                let length = abs(selectionIndex - anchorIndex)
-                setSelectedRange(NSRange(location: location, length: length))
-            }
-
-            if nextEvent.type == .leftMouseUp {
-                if lastSelectionIndex == anchorIndex {
-                    setSelectedRange(NSRange(location: anchorIndex, length: 0))
-                }
-                break
-            }
-        }
-    }
-
-    private func insertionIndexForExtraLineClick(
-        point: NSPoint,
-        containerPoint: NSPoint,
-        layoutManager: NSLayoutManager
-    ) -> Int? {
-        let extraLineRect = layoutManager.extraLineFragmentRect
-        guard !extraLineRect.isEmpty else { return nil }
-        guard containerPoint.y >= extraLineRect.minY, containerPoint.y <= extraLineRect.maxY else { return nil }
-
-        let usedRect = layoutManager.extraLineFragmentUsedRect
-        let visualMaxX = textContainerInset.width + max(usedRect.maxX, 0)
-        guard point.x >= visualMaxX else { return nil }
-
-        return string.count
-    }
-
-    private func insertionIndexForTrailingLineClick(
-        point: NSPoint,
-        containerPoint: NSPoint,
-        layoutManager: NSLayoutManager,
-        textContainer: NSTextContainer
-    ) -> Int? {
-        if let extraLineSelection = insertionIndexForExtraLineClick(
-            point: point,
-            containerPoint: containerPoint,
-            layoutManager: layoutManager
-        ) {
-            return extraLineSelection
-        }
-
-        guard let lineHit = lineHitTest(at: containerPoint, layoutManager: layoutManager, textContainer: textContainer) else {
-            return nil
-        }
-
-        let visualMaxX = textContainerInset.width + lineHit.usedRect.maxX
-        guard point.x >= visualMaxX else { return nil }
-
-        var insertionIndex = NSMaxRange(lineHit.characterRange)
-        let text = string as NSString
-        if insertionIndex > 0,
-           insertionIndex <= text.length,
-           text.character(at: insertionIndex - 1) == 10 {
-            insertionIndex -= 1
-        }
-
-        return insertionIndex
-    }
-
-    private func lineHitTest(
-        at containerPoint: NSPoint,
-        layoutManager: NSLayoutManager,
-        textContainer: NSTextContainer
-    ) -> (usedRect: NSRect, characterRange: NSRange)? {
-        guard layoutManager.numberOfGlyphs > 0 else { return nil }
-
-        var glyphIndex = 0
-        while glyphIndex < layoutManager.numberOfGlyphs {
-            var lineGlyphRange = NSRange()
-            let lineRect = unsafe layoutManager.lineFragmentRect(
-                forGlyphAt: glyphIndex,
-                effectiveRange: &lineGlyphRange,
-                withoutAdditionalLayout: true
-            )
-
-            if containerPoint.y >= lineRect.minY, containerPoint.y <= lineRect.maxY {
-                let usedRect = unsafe layoutManager.lineFragmentUsedRect(
-                    forGlyphAt: glyphIndex,
-                    effectiveRange: nil,
-                    withoutAdditionalLayout: true
-                )
-                let characterRange = unsafe layoutManager.characterRange(forGlyphRange: lineGlyphRange, actualGlyphRange: nil)
-                return (usedRect, characterRange)
-            }
-
-            glyphIndex = NSMaxRange(lineGlyphRange)
-        }
-
-        return nil
-    }
-
     private func drawCurrentLineHighlight(in dirtyRect: NSRect) {
         guard currentLineHighlightColor.alphaComponent > 0,
               let layoutManager = unsafe layoutManager,
@@ -858,35 +699,6 @@ final class LineClickableTextView: NSTextView {
             width: bounds.width,
             height: lineRect.height
         )
-    }
-}
-
-final class EditorClipView: NSClipView {
-    override func mouseDown(with event: NSEvent) {
-        guard let textView = documentView as? LineClickableTextView else {
-            super.mouseDown(with: event)
-            return
-        }
-
-        let clipPoint = convert(event.locationInWindow, from: nil)
-        let textPoint = convert(clipPoint, to: textView)
-        let translatedEvent = NSEvent.mouseEvent(
-            with: event.type,
-            location: textView.convert(textPoint, to: nil),
-            modifierFlags: event.modifierFlags,
-            timestamp: event.timestamp,
-            windowNumber: event.windowNumber,
-            context: nil,
-            eventNumber: event.eventNumber,
-            clickCount: event.clickCount,
-            pressure: event.pressure
-        ) ?? event
-
-        if textView.beginTrailingLineSelectionIfNeeded(event: translatedEvent) {
-            return
-        }
-
-        super.mouseDown(with: event)
     }
 }
 
