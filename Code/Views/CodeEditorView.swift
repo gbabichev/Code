@@ -216,6 +216,9 @@ struct CodeEditorView: NSViewRepresentable {
             let suggestions = completionCandidates(in: textView.string, partial: partial, excluding: reservedWords)
             guard !suggestions.isEmpty else { return [] }
 
+            // Don't pre-select any item — prevents the popup from ghost-typing
+            // the top match into the text while the user is still typing
+            unsafe index?.pointee = -1
             return suggestions
         }
 
@@ -398,6 +401,7 @@ final class LineClickableTextView: NSTextView {
     var indentWidth = 4
     private var shouldTriggerAutomaticCompletion = false
     private var isApplyingAcceptedCompletion = false
+    private var completionTimer: Timer?
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -598,6 +602,7 @@ final class LineClickableTextView: NSTextView {
 
     func notePendingCompletionTrigger(replacementString: String?, affectedRange: NSRange) {
         guard !isApplyingAcceptedCompletion else {
+            cancelCompletionTimer()
             shouldTriggerAutomaticCompletion = false
             return
         }
@@ -606,17 +611,40 @@ final class LineClickableTextView: NSTextView {
               let replacementString,
               replacementString.count == 1,
               let scalar = replacementString.unicodeScalars.first else {
+            cancelCompletionTimer()
             shouldTriggerAutomaticCompletion = false
             return
         }
 
-        shouldTriggerAutomaticCompletion = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_")).contains(scalar)
+        let isValidChar = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_")).contains(scalar)
+        if isValidChar {
+            // Reset debounce timer on each valid character — only show completions after a pause
+            scheduleCompletionAfterPause()
+        } else {
+            cancelCompletionTimer()
+            shouldTriggerAutomaticCompletion = false
+        }
     }
 
     func performAutomaticCompletionIfNeeded() {
-        guard shouldTriggerAutomaticCompletion else { return }
-        shouldTriggerAutomaticCompletion = false
+        // No longer called on every keystroke; completion is timer-driven now
+    }
 
+    private func scheduleCompletionAfterPause() {
+        cancelCompletionTimer()
+        completionTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.showCompletionIfReady()
+            }
+        }
+    }
+
+    private func cancelCompletionTimer() {
+        completionTimer?.invalidate()
+        completionTimer = nil
+    }
+
+    private func showCompletionIfReady() {
         guard !isApplyingAcceptedCompletion,
               selectedRange().length == 0,
               currentPartialWordRange()?.length ?? 0 >= 2 else {
