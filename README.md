@@ -16,6 +16,11 @@
 
 Code is a small macOS-only editor built for the moments when a full IDE feels excessive. It is designed for fast edits on local files, scripts, configs, and quick tasks without plugins, onboarding flows, or heavy project tooling.
 
+<p align="center">
+  <img src="./docs/App1.jpg" alt="Code light mode" width="50%"><img src="./docs/App2.jpg" alt="Code dark mode" width="50%">
+</p>
+
+
 ## Features
 
 - Folder browser in the sidebar
