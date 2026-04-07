@@ -21,6 +21,8 @@ final class EditorWorkspace: ObservableObject {
     private let fileManager: FileManager
     private let sessionStore: SessionStore
     private var tabObservers: [String: AnyCancellable] = [:]
+    private var persistSessionTimer: Timer?
+    private var persistSessionThrottled = false
 
     init(
         fileManager: FileManager = .default,
@@ -350,6 +352,21 @@ final class EditorWorkspace: ObservableObject {
     }
 
     func persistSession() {
+        // Debounce: flush to disk after 250ms of inactivity
+        guard !persistSessionThrottled else { return }
+        persistSessionThrottled = true
+
+        persistSessionTimer?.invalidate()
+        persistSessionTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.flushSession()
+                self?.persistSessionThrottled = false
+            }
+        }
+    }
+
+    /// Immediately write session state to disk (used on app termination)
+    func flushSession() {
         let snapshot = EditorSessionSnapshot(
             rootFolderPath: rootFolderURL?.path(percentEncoded: false),
             selectedFilePath: selectedFileID,

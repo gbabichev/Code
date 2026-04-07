@@ -30,7 +30,6 @@ final class ActiveEditorTextViewRegistry {
 
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
-    let isActive: Bool
     let isWordWrapEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
@@ -116,9 +115,7 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
 
         guard let textView = context.coordinator.textView else { return }
-        if isActive {
-            ActiveEditorTextViewRegistry.shared.register(textView)
-        }
+        ActiveEditorTextViewRegistry.shared.register(textView)
         let didTextChange = context.coordinator.syncWithBindingText(text)
         if didLanguageChange || didSkinChange || didFontChange || context.coordinator.requiresHighlightRefresh {
             context.coordinator.applyHighlighting(force: true)

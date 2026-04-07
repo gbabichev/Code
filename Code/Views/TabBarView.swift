@@ -107,9 +107,11 @@ private struct TabItemView: View {
         }
         .shadow(color: isSelected ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
         .contentShape(Rectangle())
-        .onTapGesture {
-            onSelect(tab.id)
-        }
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                onSelect(tab.id)
+            }
+        )
         .onDrag {
             draggedTabID = tab.id
             return NSItemProvider(object: NSString(string: tab.id))

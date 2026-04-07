@@ -127,6 +127,9 @@ private struct WorkspaceContentView: View {
             .onAppear {
                 openPendingExternalFiles()
             }
+            .onDisappear {
+                workspace.flushSession()
+            }
             .onChange(of: externalFileRouter.pendingRequestID) { _, _ in
                 openPendingExternalFiles()
             }

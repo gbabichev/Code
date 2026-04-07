@@ -224,23 +224,7 @@ struct ContentView: View {
                     Divider()
                 }
 
-                ZStack {
-                    ForEach(workspace.openTabs) { tab in
-                        CodeEditorView(
-                            text: selectedTabBinding(tab),
-                            isActive: tab.id == workspace.selectedTabID,
-                            isWordWrapEnabled: preferences.isWordWrapEnabled,
-                            skin: preferences.selectedSkin,
-                            language: tab.language,
-                            indentWidth: preferences.indentWidth,
-                            editorFont: preferences.editorFont,
-                            editorSemiboldFont: preferences.editorSemiboldFont
-                        )
-                        .opacity(tab.id == workspace.selectedTabID ? 1 : 0)
-                        .allowsHitTesting(tab.id == workspace.selectedTabID)
-                        .accessibilityHidden(tab.id != workspace.selectedTabID)
-                    }
-                }
+                editorArea
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -425,6 +409,24 @@ struct ContentView: View {
             get: { tab.content },
             set: { workspace.updateContent($0, for: tab.id) }
         )
+    }
+
+    private var editorArea: some View {
+        Group {
+            if let tab = workspace.selectedTab {
+                let binding = selectedTabBinding(tab)
+                let lang = tab.language
+                EditorAreaView(
+                    text: binding,
+                    isWordWrapEnabled: preferences.isWordWrapEnabled,
+                    skin: preferences.selectedSkin,
+                    language: lang,
+                    indentWidth: preferences.indentWidth,
+                    editorFont: preferences.editorFont,
+                    editorSemiboldFont: preferences.editorSemiboldFont
+                )
+            }
+        }
     }
 
     private func requestCloseTab(_ id: EditorTab.ID) {
@@ -698,6 +700,31 @@ struct ContentView: View {
             .light
         case .dark:
             .dark
+        }
+    }
+}
+
+// MARK: - Editor Area View (extracted to help compiler type-checking)
+private struct EditorAreaView: View {
+    let text: Binding<String>
+    let isWordWrapEnabled: Bool
+    let skin: SkinDefinition
+    let language: EditorLanguage
+    let indentWidth: Int
+    let editorFont: NSFont
+    let editorSemiboldFont: NSFont
+
+    var body: some View {
+        ZStack {
+            CodeEditorView(
+                text: text,
+                isWordWrapEnabled: isWordWrapEnabled,
+                skin: skin,
+                language: language,
+                indentWidth: indentWidth,
+                editorFont: editorFont,
+                editorSemiboldFont: editorSemiboldFont
+            )
         }
     }
 }
