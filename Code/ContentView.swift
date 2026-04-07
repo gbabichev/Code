@@ -35,6 +35,7 @@ struct ContentView: View {
         } detail: {
             editorPane
         }
+        .navigationSplitViewStyle(.prominentDetail)
 #if DEBUG
         .overlay(alignment: .bottomTrailing) {
             BetaTag()

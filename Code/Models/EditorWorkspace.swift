@@ -432,7 +432,11 @@ final class EditorWorkspace: ObservableObject {
 
         openTabs = restoredTabs
         selectedFileID = snapshot.selectedFilePath
-        selectedTabID = snapshot.selectedTabPath ?? restoredTabs.first?.id
+        if let preferredID = snapshot.selectedTabPath, restoredTabs.contains(where: { $0.id == preferredID }) {
+            selectedTabID = preferredID
+        } else {
+            selectedTabID = restoredTabs.first?.id
+        }
     }
     private func attachObserver(to tab: EditorTab) {
         tabObservers[tab.id] = tab.objectWillChange.sink { [weak self] _ in
