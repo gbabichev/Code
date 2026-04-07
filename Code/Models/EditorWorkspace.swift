@@ -230,7 +230,8 @@ final class EditorWorkspace: ObservableObject {
 
         tab.content = content
         tab.refreshDirtyState()
-        persistSession()
+        // Don't persist session on every keystroke - let the debounced timer handle it
+        // (persistSession is already called from the objectWillChange observer)
     }
 
     func saveSelectedTab() async {

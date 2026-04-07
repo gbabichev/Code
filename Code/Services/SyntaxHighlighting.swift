@@ -10,6 +10,10 @@ protocol SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?)
 }
 
+/// Maximum document size for full highlighting (10KB ~ 200 lines)
+/// Beyond this, only the visible/edited range is highlighted
+private let maxFullHighlightSize = 10_000
+
 private func isLocation(_ location: Int, containedIn ranges: [NSRange]) -> Bool {
     ranges.contains { NSLocationInRange(location, $0) }
 }
@@ -23,8 +27,17 @@ struct PlainTextHighlighter: SyntaxHighlighting {
 
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
-        let range = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
-        textStorage.setAttributes(theme.baseAttributes, range: range)
+        // For large files, limit highlighting to max 5000 chars if no range specified
+        let maxRange = textStorage.length > maxFullHighlightSize ? 5000 : fullRange.length
+        let effectiveRange: NSRange
+        if let range {
+            effectiveRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        } else if textStorage.length > maxFullHighlightSize {
+            effectiveRange = NSRange(location: 0, length: min(maxRange, fullRange.length))
+        } else {
+            effectiveRange = fullRange
+        }
+        textStorage.setAttributes(theme.baseAttributes, range: effectiveRange)
     }
 }
 
@@ -47,6 +60,13 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        
+        // Only limit range when a specific edit range was provided (not during force/full highlighting)
+        if range != nil, highlightRange.length >= maxFullHighlightSize {
+            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            return
+        }
+        
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let (stringRanges, commentRanges) = shellStringAndCommentRanges(in: text as NSString, within: highlightRange)
@@ -173,6 +193,13 @@ struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        
+        // For very large files, limit the processing to avoid performance issues
+        guard highlightRange.length < maxFullHighlightSize else {
+            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            return
+        }
+        
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let nsText = text as NSString
@@ -270,6 +297,13 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        
+        // For very large files, limit the processing to avoid performance issues
+        guard highlightRange.length < maxFullHighlightSize else {
+            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            return
+        }
+        
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let stringRanges = Self.stringRegex.matches(in: text, range: highlightRange).map(\.range)
@@ -335,6 +369,13 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        
+        // For very large files, limit the processing to avoid performance issues
+        guard highlightRange.length < maxFullHighlightSize else {
+            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            return
+        }
+        
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let blockCommentRanges = Self.blockCommentRegex.matches(in: text, range: fullRange)
@@ -410,6 +451,13 @@ struct XMLSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        
+        // For very large files, limit the processing to avoid performance issues
+        guard highlightRange.length < maxFullHighlightSize else {
+            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            return
+        }
+        
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let (stringRanges, commentRanges) = xmlStringsAndComments(in: text as NSString, within: highlightRange)
@@ -511,6 +559,13 @@ struct JSONSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        
+        // For very large files, limit the processing to avoid performance issues
+        guard highlightRange.length < maxFullHighlightSize else {
+            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            return
+        }
+        
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let (keyRanges, stringRanges, commentRanges) = jsonTokens(in: text as NSString, within: highlightRange)

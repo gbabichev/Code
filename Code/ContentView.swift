@@ -260,6 +260,10 @@ struct ContentView: View {
             refreshSearchMatches()
         }
         .onChange(of: workspace.selectedTab?.content ?? "") { _, _ in
+            // Only refresh search if search panel is actually visible and has a query
+            guard searchController.isPresented, !searchController.query.isEmpty else {
+                return
+            }
             refreshSearchMatches()
         }
         .onAppear {
@@ -384,16 +388,18 @@ struct ContentView: View {
 
     private func lineCount(for tab: EditorTab) -> Int {
         guard !tab.content.isEmpty else { return 1 }
-
-        var count = 1
-        var index = tab.content.startIndex
-        while index < tab.content.endIndex {
-            if tab.content[index] == "\n" {
-                count += 1
-            }
-            index = tab.content.index(after: index)
+        // Use NSString for O(n) newline counting instead of O(n²) Swift string iteration
+        let nsContent = tab.content as NSString
+        var count = 0
+        var range = NSRange(location: 0, length: nsContent.length)
+        while range.length > 0 {
+            let newlineRange = nsContent.range(of: "\n", options: [], range: range)
+            if newlineRange.location == NSNotFound { break }
+            count += 1
+            let next = NSMaxRange(newlineRange)
+            range = NSRange(location: next, length: nsContent.length - next)
         }
-        return count
+        return count + 1
     }
 
     private func languageStatusTitle(for tab: EditorTab) -> String {

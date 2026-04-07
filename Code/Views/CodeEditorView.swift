@@ -44,7 +44,8 @@ struct CodeEditorView: NSViewRepresentable {
             skin: skin,
             indentWidth: indentWidth,
             editorFont: editorFont,
-            editorSemiboldFont: editorSemiboldFont
+            editorSemiboldFont: editorSemiboldFont,
+            isWordWrapEnabled: isWordWrapEnabled
         )
     }
 
@@ -101,6 +102,7 @@ struct CodeEditorView: NSViewRepresentable {
             || context.coordinator.editorFont.pointSize != editorFont.pointSize
             || context.coordinator.editorSemiboldFont.fontName != editorSemiboldFont.fontName
             || context.coordinator.editorSemiboldFont.pointSize != editorSemiboldFont.pointSize
+        let didWordWrapChange = context.coordinator.isWordWrapEnabled != isWordWrapEnabled
         context.coordinator.language = language
         context.coordinator.skin = skin
         context.coordinator.indentWidth = indentWidth
@@ -112,7 +114,11 @@ struct CodeEditorView: NSViewRepresentable {
             let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
             context.coordinator.applyTheme(theme)
         }
-        context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
+        
+        // Only reconfigure layout when word wrap state actually changes
+        if didWordWrapChange {
+            context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
+        }
 
         guard let textView = context.coordinator.textView else { return }
         ActiveEditorTextViewRegistry.shared.register(textView)
@@ -133,6 +139,7 @@ struct CodeEditorView: NSViewRepresentable {
         var indentWidth: Int
         var editorFont: NSFont
         var editorSemiboldFont: NSFont
+        var isWordWrapEnabled: Bool
         weak var textView: NSTextView?
         weak var scrollView: NSScrollView?
         let gutterView = GutterView(frame: .zero)
@@ -141,13 +148,14 @@ struct CodeEditorView: NSViewRepresentable {
         private(set) var requiresHighlightRefresh = true
         private var deferredHighlightWorkItem: DispatchWorkItem?
 
-        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, editorFont: NSFont, editorSemiboldFont: NSFont) {
+        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool) {
             self.textBinding = textBinding
             self.language = language
             self.skin = skin
             self.indentWidth = indentWidth
             self.editorFont = editorFont
             self.editorSemiboldFont = editorSemiboldFont
+            self.isWordWrapEnabled = isWordWrapEnabled
             self.sourceText = textBinding.wrappedValue
         }
 
@@ -176,12 +184,13 @@ struct CodeEditorView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
-            let editedRange = unsafe textView.textStorage?.editedRange
             sourceText = textView.string
             textBinding.wrappedValue = sourceText
-            applyHighlighting(in: editedRange)
-            (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
-            textView.needsDisplay = true
+
+            // Don't run highlighting synchronously - defer it entirely
+            scheduleDeferredHighlightRefresh()
+            
+            // Only redraw the gutter for current line highlight
             gutterView.needsDisplay = true
         }
 
@@ -307,16 +316,42 @@ struct CodeEditorView: NSViewRepresentable {
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
             textStorage.beginEditing()
+            
+            // For files >10KB (~200 lines), limit the highlight range to avoid performance issues
+            let shouldLimitRange = !force && textStorage.length > 10_000
+            let highlightRange: NSRange?
+            if shouldLimitRange, let range = editedRange {
+                // Expand to 1000 characters around the edit point (about 20 lines)
+                let expansion = 1000
+                let start = max(range.location - expansion, 0)
+                let end = min(range.location + range.length + expansion, textStorage.length)
+                highlightRange = NSRange(location: start, length: end - start)
+            } else {
+                highlightRange = force ? nil : editedRange
+            }
+            
             SyntaxHighlighterFactory.makeHighlighter(
                 for: language,
                 skin: skin,
                 editorFont: editorFont,
                 semiboldFont: editorSemiboldFont
             )
-            .apply(to: textStorage, text: textView.string, in: force ? nil : editedRange)
+            .apply(to: textStorage, text: textView.string, in: highlightRange)
+            
             textStorage.endEditing()
             textView.selectedRanges = selectedRanges
-            textView.needsDisplay = true
+            
+            // Only redraw the affected area
+            if let range = highlightRange,
+               let layoutManager = unsafe textView.layoutManager,
+               let textContainer = unsafe textView.textContainer {
+                let glyphRange = unsafe layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                textView.setNeedsDisplay(rect)
+            } else {
+                textView.needsDisplay = true
+            }
+            
             gutterView.needsDisplay = true
             isApplyingHighlighting = false
             requiresHighlightRefresh = false
@@ -329,11 +364,17 @@ struct CodeEditorView: NSViewRepresentable {
                 self?.applyHighlighting(force: true)
             }
             deferredHighlightWorkItem = workItem
-            DispatchQueue.main.async(execute: workItem)
+            // Debounce with 200ms delay — HighlightSwift runs async via JavaScriptCore
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
         }
 
         @objc
         private func handleBoundsDidChange() {
+            // Only redraw gutter if scroll position actually changed
+            guard let scrollView,
+                  scrollView.contentView.bounds.origin != gutterView.lastClipOrigin else {
+                return
+            }
             gutterView.needsDisplay = true
         }
 
@@ -767,6 +808,9 @@ final class GutterView: NSView {
     var theme = SkinTheme.fallback {
         didSet { needsDisplay = true }
     }
+    
+    // Cache for scroll offset to avoid redundant redraws
+    var lastClipOrigin: CGPoint = .zero
 
     override var isFlipped: Bool {
         true
@@ -830,6 +874,9 @@ final class GutterView: NSView {
             selectedLine: selectedLine,
             lineNumber: lineNumber
         )
+        
+        // Update cache
+        lastClipOrigin = clipOrigin
     }
 
     private func selectedLineNumber(in textView: NSTextView) -> Int {
