@@ -1,6 +1,6 @@
 //
 //  AboutView.swift
-//  iCook
+//  Code
 //
 
 #if os(macOS)

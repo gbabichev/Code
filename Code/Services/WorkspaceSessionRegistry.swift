@@ -2,8 +2,6 @@
 //  WorkspaceSessionRegistry.swift
 //  Code
 //
-//  Created by Codex on 4/5/26.
-//
 
 import Combine
 import Foundation

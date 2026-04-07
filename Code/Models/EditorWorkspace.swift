@@ -1,8 +1,6 @@
 //
 //  EditorWorkspace.swift
-//  Basic Editor
-//
-//  Created by Codex on 4/5/26.
+//  Code
 //
 
 import AppKit

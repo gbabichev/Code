@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  Basic Editor
+//  Code
 //
 //  Created by George Babichev on 4/5/26.
 //

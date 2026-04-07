@@ -1,8 +1,6 @@
 //
 //  BetaTag.swift
-//  DHCP Test Tool
-//
-//  Created by George Babichev on 12/31/25.
+//  Code
 //
 
 import SwiftUI

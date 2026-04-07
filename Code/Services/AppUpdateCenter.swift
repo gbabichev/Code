@@ -2,8 +2,6 @@
 //  AppUpdateCenter.swift
 //  Code
 //
-//  Created by Codex on 4/7/26.
-//
 
 import AppKit
 import Combine

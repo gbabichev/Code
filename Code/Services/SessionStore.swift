@@ -1,8 +1,6 @@
 //
 //  SessionStore.swift
-//  Basic Editor
-//
-//  Created by Codex on 4/5/26.
+//  Code
 //
 
 import Foundation
@@ -14,7 +12,7 @@ struct SessionStore {
     init(sessionID: String? = nil, fileManager: FileManager = .default) {
         self.fileManager = fileManager
         let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let directoryURL = appSupportURL.appendingPathComponent("Basic Editor", isDirectory: true)
+        let directoryURL = appSupportURL.appendingPathComponent("Code", isDirectory: true)
 
         if !fileManager.fileExists(atPath: directoryURL.path(percentEncoded: false)) {
             try? fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)

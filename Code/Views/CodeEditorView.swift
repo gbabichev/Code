@@ -1,10 +1,7 @@
 //
 //  CodeEditorView.swift
-//  Basic Editor
+//  Code
 //
-//  Created by Codex on 4/5/26.
-//
-
 import AppKit
 import SwiftUI
 

@@ -1,8 +1,6 @@
 //
 //  SkinStore.swift
-//  Basic Editor
-//
-//  Created by Codex on 4/5/26.
+//  Code
 //
 
 import AppKit
@@ -17,7 +15,7 @@ struct SkinStore {
 
         let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let directoryURL = appSupportURL
-            .appendingPathComponent("Basic Editor", isDirectory: true)
+            .appendingPathComponent("Code", isDirectory: true)
             .appendingPathComponent("Skins", isDirectory: true)
 
         if !fileManager.fileExists(atPath: directoryURL.path(percentEncoded: false)) {
