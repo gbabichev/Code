@@ -29,6 +29,9 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
     case dotenv
     case python
     case powerShell
+    case xml
+    case json
+    case plist
 
     var id: String { rawValue }
 
@@ -57,6 +60,18 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
             return .powerShell
         }
 
+        if ["xml", "xsl", "xsd", "plist"].contains(url.pathExtension.lowercased()) {
+            return .xml
+        }
+
+        if lastPathComponent.hasSuffix(".plist") {
+            return .xml
+        }
+
+        if url.pathExtension.lowercased() == "json" {
+            return .json
+        }
+
         return .plainText
     }
 
@@ -64,7 +79,7 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .shell, .dotenv, .python, .powerShell:
             return "#"
-        case .plainText:
+        case .plainText, .xml, .json, .plist:
             return nil
         }
     }
@@ -81,6 +96,12 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
             "Python"
         case .powerShell:
             "PowerShell"
+        case .xml:
+            "XML"
+        case .json:
+            "JSON"
+        case .plist:
+            "Property List"
         }
     }
 }

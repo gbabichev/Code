@@ -398,6 +398,228 @@ private func expandedLineRange(for range: NSRange, in text: NSString) -> NSRange
     return NSRange(location: startLineStart, length: endLineEnd - startLineStart)
 }
 
+// MARK: - XML / PList Highlighter
+struct XMLSyntaxHighlighter: SyntaxHighlighting {
+    let theme: SkinTheme
+
+    private static let tagRegex = try! NSRegularExpression(pattern: #"<\/?[A-Za-z_:][A-Za-z0-9_:\.-]*"#)
+    private static let attributeRegex = try! NSRegularExpression(pattern: #"\s([A-Za-z_:][A-Za-z0-9_:\.-]*)\s*="#)
+    private static let numberRegex = try! NSRegularExpression(pattern: #"\b-?\d+\.?\d*\b"#)
+    private static let booleanRegex = try! NSRegularExpression(pattern: #"(?m)\b(true|false)\b"#)
+
+    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+
+        let (stringRanges, commentRanges) = xmlStringsAndComments(in: text as NSString, within: highlightRange)
+
+        for range in stringRanges {
+            textStorage.addAttributes(theme.stringAttributes, range: range)
+        }
+
+        for match in Self.tagRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
+            textStorage.addAttributes(theme.keywordAttributes, range: match.range)
+        }
+
+        for match in Self.attributeRegex.matches(in: text, range: highlightRange)
+        where match.numberOfRanges > 1 && !intersects(match.range(at: 1), with: commentRanges + stringRanges) {
+            textStorage.addAttributes(theme.variableAttributes, range: match.range(at: 1))
+        }
+
+        for match in Self.numberRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
+            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+        }
+
+        for match in Self.booleanRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
+            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+        }
+
+        for range in commentRanges {
+            textStorage.addAttributes(theme.commentAttributes, range: range)
+        }
+    }
+
+    private func xmlStringsAndComments(in text: NSString, within range: NSRange) -> ([NSRange], [NSRange]) {
+        var stringRanges: [NSRange] = []
+        var commentRanges: [NSRange] = []
+        var index = range.location
+
+        while index < NSMaxRange(range) {
+            let remaining = text.substring(from: index)
+            let nsRange = NSRange(remaining.startIndex..., in: remaining)
+            if nsRange.length == 0 { break }
+
+            let substring = text.substring(with: NSRange(location: index, length: min(4, text.length - index)))
+
+            // Comment: <!--
+            if substring.hasPrefix("<!--") {
+                let searchRange = NSRange(location: index, length: text.length - index)
+                let endIdx = text.range(of: "-->", options: [], range: searchRange)
+                if endIdx.location != NSNotFound {
+                    let commentEnd = endIdx.location + 3
+                    commentRanges.append(NSRange(location: index, length: commentEnd - index))
+                    index = commentEnd
+                } else {
+                    commentRanges.append(NSRange(location: index, length: text.length - index))
+                    break
+                }
+                continue
+            }
+
+            // String in quotes
+            if text.character(at: index) == 34 { // "
+                var end = index + 1
+                var escaped = false
+                while end < text.length {
+                    let ch = text.character(at: end)
+                    if ch == 92 { // backslash
+                        escaped = !escaped
+                        end += 1
+                        continue
+                    }
+                    if ch == 34 && !escaped {
+                        end += 1
+                        break
+                    }
+                    escaped = false
+                    end += 1
+                }
+                stringRanges.append(NSRange(location: index, length: end - index))
+                index = end
+                continue
+            }
+
+            index += 1
+        }
+
+        return (stringRanges, commentRanges)
+    }
+}
+
+// MARK: - JSON Highlighter
+struct JSONSyntaxHighlighter: SyntaxHighlighting {
+    let theme: SkinTheme
+
+    private static let numberRegex = try! NSRegularExpression(pattern: #"(?m)\b-?\d+\.?\d*([eE][+-]?\d+)?\b"#)
+    private static let booleanRegex = try! NSRegularExpression(pattern: #"(?m)\b(true|false)\b"#)
+    private static let nullRegex = try! NSRegularExpression(pattern: #"(?m)\bnull\b"#)
+
+    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+
+        let (keyRanges, stringRanges, commentRanges) = jsonTokens(in: text as NSString, within: highlightRange)
+
+        // Keys
+        for range in keyRanges {
+            textStorage.addAttributes(theme.variableAttributes, range: range)
+        }
+
+        // String values
+        for range in stringRanges {
+            textStorage.addAttributes(theme.stringAttributes, range: range)
+        }
+
+        for match in Self.numberRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: commentRanges + keyRanges + stringRanges) {
+            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+        }
+
+        for match in Self.booleanRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: commentRanges + keyRanges + stringRanges) {
+            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+        }
+
+        for match in Self.nullRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: commentRanges + keyRanges + stringRanges) {
+            textStorage.addAttributes(theme.keywordAttributes, range: match.range)
+        }
+
+        for range in commentRanges {
+            textStorage.addAttributes(theme.commentAttributes, range: range)
+        }
+    }
+
+    private func jsonTokens(in text: NSString, within range: NSRange) -> ([NSRange], [NSRange], [NSRange]) {
+        var keyRanges: [NSRange] = []
+        var stringRanges: [NSRange] = []
+        var commentRanges: [NSRange] = []
+        var index = range.location
+
+        while index < NSMaxRange(range) {
+            let ch = text.character(at: index)
+
+            // Line comment //
+            if index + 1 < text.length, ch == 47, text.character(at: index + 1) == 47 {
+                let lineEnd = text.lineRange(for: NSRange(location: index, length: 0)).location
+                commentRanges.append(NSRange(location: index, length: lineEnd - index))
+                index = lineEnd
+                continue
+            }
+
+            // Block comment /* ... */
+            if index + 1 < text.length, ch == 47, text.character(at: index + 1) == 42 {
+                let searchRange = NSRange(location: index + 2, length: text.length - index - 2)
+                let endIdx = text.range(of: "*/", options: [], range: searchRange)
+                if endIdx.location != NSNotFound {
+                    let commentEnd = endIdx.location + 2
+                    commentRanges.append(NSRange(location: index, length: commentEnd - index))
+                    index = commentEnd
+                } else {
+                    commentRanges.append(NSRange(location: index, length: text.length - index))
+                    break
+                }
+                continue
+            }
+
+            // String
+            if ch == 34 { // "
+                var end = index + 1
+                var escaped = false
+                while end < text.length {
+                    let c = text.character(at: end)
+                    if c == 92 {
+                        escaped = !escaped
+                        end += 1
+                        continue
+                    }
+                    if c == 34 && !escaped {
+                        end += 1
+                        break
+                    }
+                    escaped = false
+                    end += 1
+                }
+                let strRange = NSRange(location: index, length: end - index)
+
+                // Check if followed by colon (key) — skip whitespace
+                var scan = end
+                while scan < text.length {
+                    let c = text.character(at: scan)
+                    if c != 32 && c != 9 && c != 10 && c != 13 { break }
+                    scan += 1
+                }
+                if scan < text.length, text.character(at: scan) == 58 {
+                    keyRanges.append(strRange)
+                } else {
+                    stringRanges.append(strRange)
+                }
+                index = end
+                continue
+            }
+
+            index += 1
+        }
+
+        return (keyRanges, stringRanges, commentRanges)
+    }
+}
+
 private func lineStart(in text: NSString, at location: Int) -> Int {
     guard text.length > 0 else { return 0 }
     var index = min(max(location, 0), text.length)
@@ -434,6 +656,10 @@ enum SyntaxHighlighterFactory {
             return PythonSyntaxHighlighter(theme: theme)
         case .powerShell:
             return PowerShellSyntaxHighlighter(theme: theme)
+        case .xml, .plist:
+            return XMLSyntaxHighlighter(theme: theme)
+        case .json:
+            return JSONSyntaxHighlighter(theme: theme)
         case .plainText:
             return PlainTextHighlighter(theme: theme)
         }
