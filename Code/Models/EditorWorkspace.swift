@@ -242,11 +242,20 @@ final class EditorWorkspace: ObservableObject {
         saveTab(id: tab.id)
     }
 
+    func saveSelectedTabAs() {
+        guard let tab = selectedTab else { return }
+        saveTab(id: tab.id, forceSavePanel: true)
+    }
+
     func saveTab(id: EditorTab.ID) {
+        saveTab(id: id, forceSavePanel: false)
+    }
+
+    func saveTab(id: EditorTab.ID, forceSavePanel: Bool) {
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
 
         let destinationURL: URL
-        if let fileURL = tab.fileURL {
+        if let fileURL = tab.fileURL, !forceSavePanel {
             destinationURL = fileURL
         } else {
             let panel = NSSavePanel()

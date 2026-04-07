@@ -203,6 +203,14 @@ private struct EditorCommands: Commands {
             }
             .keyboardShortcut("s", modifiers: [.command])
             .disabled(workspace?.selectedTab == nil)
+
+            Button {
+                workspace?.saveSelectedTabAs()
+            } label: {
+                Label("Save As...", systemImage: "square.and.arrow.down.on.square")
+            }
+            .keyboardShortcut("s", modifiers: [.command, .shift])
+            .disabled(workspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .pasteboard) {
@@ -299,6 +307,15 @@ private struct EditorCommands: Commands {
                 Label("Word Wrap", systemImage: "text.justify.left")
             }
             .keyboardShortcut("z", modifiers: [.option, .command])
+        }
+
+        CommandGroup(replacing: .appTermination) {
+            Button {
+                NSApp.terminate(nil)
+            } label: {
+                Label("Quit Code", systemImage: "xmark.circle")
+            }
+            .keyboardShortcut("q", modifiers: [.command])
         }
     }
 }
