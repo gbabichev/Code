@@ -442,7 +442,6 @@ enum SyntaxHighlighterFactory {
 
 struct SkinTheme {
     static let fallback = SkinDefinition(
-        schemaVersion: 1,
         id: "classic",
         name: "Classic",
         editor: .init(

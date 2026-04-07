@@ -123,25 +123,6 @@ enum EditorTextEncoding: String, Codable, CaseIterable, Identifiable {
             "UTF-32"
         }
     }
-
-    init?(stringEncodingRawValue: UInt) {
-        let encoding = String.Encoding(rawValue: stringEncodingRawValue)
-
-        switch encoding {
-        case .utf8:
-            self = .utf8
-        case .utf16:
-            self = .utf16
-        case .utf16LittleEndian:
-            self = .utf16LittleEndian
-        case .utf16BigEndian:
-            self = .utf16BigEndian
-        case .utf32:
-            self = .utf32
-        default:
-            return nil
-        }
-    }
 }
 
 enum EditorLineEnding: String, Codable, CaseIterable, Identifiable {
@@ -175,7 +156,6 @@ enum EditorLineEnding: String, Codable, CaseIterable, Identifiable {
 }
 
 struct SkinDefinition: Codable, Identifiable, Hashable {
-    let schemaVersion: Int
     let id: String
     let name: String
     let editor: SkinEditorColors

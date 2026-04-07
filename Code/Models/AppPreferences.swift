@@ -152,7 +152,6 @@ final class AppPreferences: ObservableObject {
         availableSkins.first(where: { $0.id == selectedSkinID })
             ?? availableSkins.first
             ?? SkinDefinition(
-                schemaVersion: 1,
                 id: Self.defaultSkinID,
                 name: "Classic",
                 editor: .init(

@@ -104,12 +104,10 @@ private struct WorkspaceSceneView: View {
 }
 
 private struct WorkspaceContentView: View {
-    let sessionID: String
     @StateObject private var workspace: EditorWorkspace
     @EnvironmentObject private var externalFileRouter: ExternalFileRouter
 
     init(sessionID: String) {
-        self.sessionID = sessionID
         let hasPendingFiles = ExternalFileRouter.shared.hasPendingFiles()
         _workspace = StateObject(wrappedValue: EditorWorkspace(
             sessionStore: SessionStore(sessionID: sessionID),

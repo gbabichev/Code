@@ -31,25 +31,6 @@ final class WorkspaceSessionRegistry: ObservableObject {
         return UUID().uuidString
     }
 
-    func resolveSessionID(storedSessionID: String?) -> String {
-        if let storedSessionID, !storedSessionID.isEmpty {
-            register(sessionID: storedSessionID)
-            return storedSessionID
-        }
-
-        if !didConsumeLaunchRestore,
-           let lastSessionID = userDefaults.string(forKey: Keys.lastFocusedSessionID),
-           SessionStore(sessionID: lastSessionID, fileManager: fileManager).hasSavedSession {
-            didConsumeLaunchRestore = true
-            register(sessionID: lastSessionID)
-            return lastSessionID
-        }
-
-        let sessionID = UUID().uuidString
-        register(sessionID: sessionID)
-        return sessionID
-    }
-
     func markFocused(sessionID: String) {
         guard !sessionID.isEmpty else { return }
         register(sessionID: sessionID)

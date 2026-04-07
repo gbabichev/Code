@@ -696,25 +696,18 @@ final class LineClickableTextView: NSTextView {
 
     private func drawCurrentLineHighlight(in dirtyRect: NSRect) {
         guard currentLineHighlightColor.alphaComponent > 0,
-              let layoutManager = unsafe layoutManager,
-              let textContainer = unsafe textContainer else {
+              let layoutManager = unsafe layoutManager else {
             return
         }
 
-        let highlightRect = currentLineHighlightRect(
-            layoutManager: layoutManager,
-            textContainer: textContainer
-        )
+        let highlightRect = currentLineHighlightRect(layoutManager: layoutManager)
         guard highlightRect.intersects(dirtyRect) else { return }
 
         currentLineHighlightColor.setFill()
         highlightRect.fill()
     }
 
-    private func currentLineHighlightRect(
-        layoutManager: NSLayoutManager,
-        textContainer: NSTextContainer
-    ) -> NSRect {
+    private func currentLineHighlightRect(layoutManager: NSLayoutManager) -> NSRect {
         let insertionLocation = min(selectedRange().location, string.count)
 
         if insertionLocation == string.count, !layoutManager.extraLineFragmentRect.isEmpty {

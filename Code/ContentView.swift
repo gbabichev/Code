@@ -204,7 +204,7 @@ struct ContentView: View {
                         replacement: $searchController.replacement,
                         isCaseSensitive: $searchController.isCaseSensitive,
                         isReplaceVisible: searchController.isReplaceVisible,
-                        matchSummary: matchSummary(for: cachedSearchMatches, in: selectedTab),
+                        matchSummary: matchSummary(for: cachedSearchMatches),
                         focusedField: $focusedSearchField,
                         onClose: { searchController.hide() },
                         onFindNext: { findNext(in: selectedTab) },
@@ -560,7 +560,7 @@ struct ContentView: View {
         cachedSearchMatches = findMatches(in: selectedTab)
     }
 
-    private func matchSummary(for matches: [NSRange], in tab: EditorTab) -> String {
+    private func matchSummary(for matches: [NSRange]) -> String {
         guard !matches.isEmpty else {
             return searchController.query.isEmpty ? "" : "0 matches"
         }
@@ -974,17 +974,6 @@ private struct SettingsPopoverView: View {
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.08))
-        }
-    }
-
-    private func settingLabel(_ title: String, detail: String) -> some View {
-        HStack {
-            Text(title)
-                .font(.subheadline.weight(.medium))
-            Spacer()
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 

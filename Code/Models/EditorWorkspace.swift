@@ -224,11 +224,6 @@ final class EditorWorkspace: ObservableObject {
         pendingTabClose = nil
     }
 
-    func updateSelectedTabContent(_ content: String) {
-        guard let tab = selectedTab else { return }
-        updateContent(content, for: tab.id)
-    }
-
     func updateContent(_ content: String, for id: EditorTab.ID) {
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
         if tab.content == content { return }
