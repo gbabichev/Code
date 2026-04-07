@@ -5,6 +5,7 @@
 //  Created by George Babichev on 4/5/26.
 //
 
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -237,6 +238,14 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderless)
                 .help("Open Parent Folder in Finder")
+
+                Button {
+                    openParentFolderInTerminal(for: tab)
+                } label: {
+                    Image(systemName: "terminal")
+                }
+                .buttonStyle(.borderless)
+                .help("Open Parent Folder in Terminal")
 
                 Button {
                     copyFileURL(for: tab)
@@ -568,6 +577,16 @@ struct ContentView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(fileURL.absoluteString, forType: .string)
         showToast("File URL Copied")
+    }
+
+    private func openParentFolderInTerminal(for tab: EditorTab) {
+        guard let folderURL = tab.fileURL?.deletingLastPathComponent() else { return }
+        guard let terminalURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
+            return
+        }
+
+        let configuration = NSWorkspace.OpenConfiguration()
+        NSWorkspace.shared.open([folderURL], withApplicationAt: terminalURL, configuration: configuration) { _, _ in }
     }
 
     private func showToast(_ message: String) {
