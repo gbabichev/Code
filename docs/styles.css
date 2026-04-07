@@ -99,6 +99,29 @@ h1 {
   line-height: 1.65;
 }
 
+.hero-actions {
+  margin-top: 24px;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--ink);
+  color: #fffaf2;
+  text-decoration: none;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  box-shadow: 0 10px 24px rgba(31, 28, 24, 0.12);
+}
+
+.button-link:hover {
+  opacity: 0.92;
+}
+
 .showcase {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -203,6 +226,16 @@ ul {
   color: var(--ink);
 }
 
+.footer-meta {
+  margin-top: 8px;
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+.footer-meta a {
+  color: inherit;
+}
+
 @media (max-width: 780px) {
   .page {
     width: min(100vw - 24px, 1080px);
@@ -235,5 +268,61 @@ ul {
     width: 64px;
     height: 64px;
     border-radius: 18px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #16181c;
+    --paper: rgba(28, 31, 36, 0.88);
+    --paper-strong: #20242a;
+    --ink: #f3efe7;
+    --muted: #b4aea4;
+    --line: rgba(243, 239, 231, 0.1);
+    --accent: #78c1c7;
+    --accent-soft: #21363a;
+    --warm: #9d7a41;
+    --shadow: 0 22px 60px rgba(0, 0, 0, 0.3);
+  }
+
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(157, 122, 65, 0.18), transparent 28%),
+      radial-gradient(circle at top right, rgba(120, 193, 199, 0.14), transparent 24%),
+      linear-gradient(180deg, #101215 0%, var(--bg) 100%);
+  }
+
+  .hero {
+    background: linear-gradient(135deg, rgba(31, 35, 40, 0.96), rgba(22, 24, 28, 0.9));
+  }
+
+  .button-link {
+    background: #f3efe7;
+    color: #16181c;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+  }
+
+  .shot {
+    background: rgba(28, 31, 36, 0.88);
+  }
+
+  .feature-band {
+    background:
+      linear-gradient(135deg, rgba(120, 193, 199, 0.1), rgba(157, 122, 65, 0.12)),
+      var(--paper-strong);
+  }
+
+  .feature-list > div {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(243, 239, 231, 0.08);
+  }
+
+  .panel.muted {
+    background: linear-gradient(180deg, rgba(33, 54, 58, 0.82), rgba(28, 31, 36, 0.94));
+  }
+
+  .footer-note {
+    background: linear-gradient(135deg, rgba(157, 122, 65, 0.18), rgba(28, 31, 36, 0.94));
   }
 }

@@ -1,20 +1,46 @@
-# Basic Editor
+# Code
 
-Minimal macOS-only SwiftUI/AppKit file editor in Swift 6.
+<p align="center">
+  <img src="./docs/icon.png" alt="Code app icon" width="96" height="96">
+</p>
 
-## Current Scope
+<p align="center">
+  Lightweight macOS editor for quick file edits, scripts, and small tasks.
+</p>
 
-- `NavigationSplitView` shell with filesystem sidebar
-- Multiple open file tabs
-- Draft/session restore across app relaunch
-- AppKit-backed text editor with shell-oriented syntax highlighting
+<p align="center">
+  <a href="https://gbabichev.github.io/Code/">Website</a> ·
+  <a href="https://github.com/gbabichev/Code">Repository</a>
+</p>
+
+## Overview
+
+Code is a small macOS-only editor built for the moments when a full IDE feels excessive. It is designed for fast edits on local files, scripts, configs, and quick tasks without plugins, onboarding flows, or heavy project tooling.
+
+## Features
+
+- Folder browser in the sidebar
+- Multiple tabs and multi-window support
+- Session recovery across relaunch, including unsaved work
+- Syntax highlighting for Shell, PowerShell, and Python
+- Lightweight autocomplete for in-file functions and variables
+- Status bar tools for line count, encoding, line endings, Finder, Terminal, and file URL copying
 - JSON-backed syntax skin system with import/export
+
+## 🖥️ Install & Minimum Requirements
+
+- macOS 26.0 or later  
+- Apple Silicon & Intel
+- ~10 MB free disk space  
+
+### ⚙️ Installation
+Grab it from the Releases. 
 
 ## Skin Schema
 
 Skins are JSON files loaded from:
 
-- Bundled app resources: `Basic Editor/Skins/*.json`
+- Bundled app resources: `Code/Skins/*.json`
 - User skins: `~/Library/Application Support/Basic Editor/Skins/*.json`
 
 The selected skin is persisted by `id`, so bundled and imported skins use the same path.
@@ -58,17 +84,14 @@ The selected skin is persisted by `id`, so bundled and imported skins use the sa
 - `languageOverrides` is keyed by language id like `shell`.
 - The schema is intentionally semantic rather than regex-specific.
 
-That matters for future languages. The JSON should describe roles like `keyword`, `string`, `comment`, `builtin`, `variable`, `command`, and later additional roles such as `type`, `number`, `operator`, `function`, `property`, `decorator`, or `attribute` can be added without redesigning the file format. Language-specific highlighters should map their parser/regex output onto these shared semantic roles.
+That matters for future languages. The JSON should describe roles like `keyword`, `string`, `comment`, `builtin`, `variable`, and `command`, with room to add roles such as `type`, `number`, `operator`, `function`, `property`, `decorator`, or `attribute` later without redesigning the format.
 
 ## Import / Export
 
 - Import from the settings popover copies a validated skin JSON into the app support skins folder.
 - Export writes the currently selected skin back out as JSON.
 
-## Build
+## 📝 Changelog
 
-Example local build without signing:
-
-```sh
-xcodebuild -project 'Basic Editor.xcodeproj' -scheme 'Basic Editor' -configuration Debug -sdk macosx -derivedDataPath '.derivedData' CODE_SIGNING_ALLOWED=NO build
-```
+### 1.0.0
+- Initial Release.
