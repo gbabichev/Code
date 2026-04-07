@@ -56,7 +56,9 @@ struct ContentView: View {
         .preferredColorScheme(preferredColorScheme)
         .alert("Save Changes?", isPresented: pendingTabCloseBinding, presenting: workspace.pendingTabClose) { pending in
             Button("Save") {
-                workspace.confirmPendingTabCloseSave()
+                Task {
+                    await workspace.confirmPendingTabCloseSave()
+                }
             }
             Button("Discard", role: .destructive) {
                 workspace.confirmPendingTabCloseDiscard()
@@ -817,7 +819,9 @@ private struct SettingsPopoverView: View {
                         }
 
                         Button("Export Current…") {
-                            preferences.exportSelectedSkin()
+                            Task {
+                                await preferences.exportSelectedSkin()
+                            }
                         }
                     }
                 }

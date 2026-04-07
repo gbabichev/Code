@@ -221,20 +221,42 @@ final class AppPreferences: ObservableObject {
         }
     }
 
-    func exportSelectedSkin() {
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [.json]
-        panel.canCreateDirectories = true
-        panel.nameFieldStringValue = "\(selectedSkin.id).json"
-        panel.prompt = "Export Skin"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+    func exportSelectedSkin() async {
+        guard let url = await presentSkinExportPanel() else { return }
 
         do {
             try skinStore.exportSkin(selectedSkin, to: url)
         } catch {
             errorMessage = "Failed to export skin: \(error.localizedDescription)"
         }
+    }
+
+    private func presentSkinExportPanel() async -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(selectedSkin.id).json"
+        panel.prompt = "Export Skin"
+        panel.title = ""
+        panel.message = ""
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+
+        if let hostWindow = NSApp.keyWindow ?? NSApp.mainWindow {
+            return await withCheckedContinuation { continuation in
+                panel.beginSheetModal(for: hostWindow) { response in
+                    guard response == .OK, let url = panel.url else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    continuation.resume(returning: url)
+                }
+            }
+        }
+
+        guard panel.runModal() == .OK, let url = panel.url else { return nil }
+        return url
     }
 
     func reloadSkins() {

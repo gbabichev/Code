@@ -197,7 +197,9 @@ private struct EditorCommands: Commands {
 
         CommandGroup(after: .saveItem) {
             Button {
-                workspace?.saveSelectedTab()
+                Task {
+                    await workspace?.saveSelectedTab()
+                }
             } label: {
                 Label("Save", systemImage: "square.and.arrow.down")
             }
@@ -205,7 +207,9 @@ private struct EditorCommands: Commands {
             .disabled(workspace?.selectedTab == nil)
 
             Button {
-                workspace?.saveSelectedTabAs()
+                Task {
+                    await workspace?.saveSelectedTabAs()
+                }
             } label: {
                 Label("Save As...", systemImage: "square.and.arrow.down.on.square")
             }

@@ -204,9 +204,9 @@ final class EditorWorkspace: ObservableObject {
         requestCloseTab(selectedTabID)
     }
 
-    func confirmPendingTabCloseSave() {
+    func confirmPendingTabCloseSave() async {
         guard let pendingTabClose else { return }
-        saveTab(id: pendingTabClose.id)
+        await saveTab(id: pendingTabClose.id)
         if errorMessage == nil {
             closeTab(pendingTabClose.id)
         }
@@ -237,32 +237,31 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
-    func saveSelectedTab() {
+    func saveSelectedTab() async {
         guard let tab = selectedTab else { return }
-        saveTab(id: tab.id)
+        await saveTab(id: tab.id)
     }
 
-    func saveSelectedTabAs() {
+    func saveSelectedTabAs() async {
         guard let tab = selectedTab else { return }
-        saveTab(id: tab.id, forceSavePanel: true)
+        await saveTab(id: tab.id, forceSavePanel: true)
     }
 
-    func saveTab(id: EditorTab.ID) {
-        saveTab(id: id, forceSavePanel: false)
+    func saveTab(id: EditorTab.ID) async {
+        await saveTab(id: id, forceSavePanel: false)
     }
 
-    func saveTab(id: EditorTab.ID, forceSavePanel: Bool) {
+    func saveTab(id: EditorTab.ID, forceSavePanel: Bool) async {
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
 
         let destinationURL: URL
         if let fileURL = tab.fileURL, !forceSavePanel {
             destinationURL = fileURL
         } else {
-            let panel = NSSavePanel()
-            panel.canCreateDirectories = true
-            panel.nameFieldStringValue = tab.title
-
-            guard panel.runModal() == .OK, let url = panel.url else {
+            guard let url = await presentSavePanel(
+                suggestedFileName: tab.title,
+                existingFileURL: tab.fileURL
+            ) else {
                 return
             }
 
@@ -292,6 +291,40 @@ final class EditorWorkspace: ObservableObject {
         } catch {
             errorMessage = "Failed to save \(destinationURL.lastPathComponent): \(error.localizedDescription)"
         }
+    }
+
+    private func presentSavePanel(
+        suggestedFileName: String,
+        existingFileURL: URL?
+    ) async -> URL? {
+        let panel = NSSavePanel()
+        panel.title = ""
+        panel.message = ""
+        panel.prompt = "Save"
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = existingFileURL?.lastPathComponent ?? suggestedFileName
+        panel.directoryURL = existingFileURL?.deletingLastPathComponent()
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+
+        if let hostWindow = NSApp.keyWindow ?? NSApp.mainWindow {
+            return await withCheckedContinuation { continuation in
+                panel.beginSheetModal(for: hostWindow) { response in
+                    guard response == .OK, let destinationURL = panel.url else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    continuation.resume(returning: destinationURL)
+                }
+            }
+        }
+
+        guard panel.runModal() == .OK, let destinationURL = panel.url else {
+            return nil
+        }
+
+        return destinationURL
     }
 
     func updateSelectedTabEncoding(_ encoding: EditorTextEncoding) {
