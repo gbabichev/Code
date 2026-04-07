@@ -9,8 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://gbabichev.github.io/Code/">Website</a> ·
-  <a href="https://github.com/gbabichev/Code">Repository</a>
+  <a href="https://gbabichev.github.io/Code/">Website</a>
 </p>
 
 ## Overview
