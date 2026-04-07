@@ -13,6 +13,7 @@ struct ContentView: View {
     @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var workspace: EditorWorkspace
     @EnvironmentObject private var searchController: EditorSearchController
+    @EnvironmentObject private var aboutController: AboutOverlayController
     @State private var isShowingSettingsPopover = false
     @State private var isTargetingTabDrop = false
     @State private var cachedSearchMatches: [NSRange] = []
@@ -77,6 +78,11 @@ struct ContentView: View {
             }
         } message: {
             Text(activeErrorMessage)
+        }
+        .overlay {
+            if aboutController.isPresented {
+                AboutOverlayView(isPresented: $aboutController.isPresented)
+            }
         }
     }
 

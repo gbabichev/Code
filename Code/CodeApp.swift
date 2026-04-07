@@ -17,6 +17,7 @@ struct CodeApp: App {
     @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
     @StateObject private var searchController = EditorSearchController()
+    @StateObject private var aboutController = AboutOverlayController()
 
     var body: some Scene {
         WindowGroup(id: "workspace") {
@@ -24,7 +25,8 @@ struct CodeApp: App {
                 preferences: preferences,
                 sessionRegistry: sessionRegistry,
                 externalFileRouter: externalFileRouter,
-                searchController: searchController
+                searchController: searchController,
+                aboutController: aboutController
             )
         }
         .windowStyle(.hiddenTitleBar)
@@ -32,6 +34,7 @@ struct CodeApp: App {
             EditorCommands(
                 preferences: preferences,
                 searchController: searchController,
+                aboutController: aboutController,
                 openNewWindow: { openWindow(id: "workspace") }
             )
         }
@@ -43,6 +46,7 @@ private struct WorkspaceSceneView: View {
     @ObservedObject var sessionRegistry: WorkspaceSessionRegistry
     @ObservedObject var externalFileRouter: ExternalFileRouter
     @ObservedObject var searchController: EditorSearchController
+    @ObservedObject var aboutController: AboutOverlayController
     @Environment(\.scenePhase) private var scenePhase
     @SceneStorage("workspaceSessionID") private var workspaceSessionID = ""
     @State private var bootstrapSessionID: String
@@ -51,12 +55,14 @@ private struct WorkspaceSceneView: View {
         preferences: AppPreferences,
         sessionRegistry: WorkspaceSessionRegistry,
         externalFileRouter: ExternalFileRouter,
-        searchController: EditorSearchController
+        searchController: EditorSearchController,
+        aboutController: AboutOverlayController
     ) {
         self.preferences = preferences
         self.sessionRegistry = sessionRegistry
         self.externalFileRouter = externalFileRouter
         self.searchController = searchController
+        self.aboutController = aboutController
         _bootstrapSessionID = State(initialValue: sessionRegistry.makeSceneBootstrapSessionID())
     }
 
@@ -68,6 +74,7 @@ private struct WorkspaceSceneView: View {
             .environmentObject(preferences)
             .environmentObject(externalFileRouter)
             .environmentObject(searchController)
+            .environmentObject(aboutController)
             .onAppear {
                 if workspaceSessionID.isEmpty {
                     workspaceSessionID = effectiveSessionID
@@ -145,13 +152,31 @@ final class ExternalFileRouter: ObservableObject {
     }
 }
 
+@MainActor
+final class AboutOverlayController: ObservableObject {
+    @Published var isPresented = false
+
+    func present() {
+        isPresented = true
+    }
+}
+
 private struct EditorCommands: Commands {
     @FocusedValue(\.activeEditorWorkspace) private var workspace
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var searchController: EditorSearchController
+    @ObservedObject var aboutController: AboutOverlayController
     let openNewWindow: () -> Void
 
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button {
+                aboutController.present()
+            } label: {
+                Label("About Code", systemImage: "info.circle")
+            }
+        }
+
         CommandGroup(replacing: .newItem) {
             Button {
                 workspace?.createUntitledTab()
