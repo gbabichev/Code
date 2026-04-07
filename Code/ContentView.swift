@@ -220,16 +220,22 @@ struct ContentView: View {
                     Divider()
                 }
 
-                if let selectedTab = workspace.selectedTab {
-                    CodeEditorView(
-                        text: selectedTabBinding(selectedTab),
-                        isWordWrapEnabled: preferences.isWordWrapEnabled,
-                        skin: preferences.selectedSkin,
-                        language: selectedTab.language,
-                        indentWidth: preferences.indentWidth,
-                        editorFont: preferences.editorFont,
-                        editorSemiboldFont: preferences.editorSemiboldFont
-                    )
+                ZStack {
+                    ForEach(workspace.openTabs) { tab in
+                        CodeEditorView(
+                            text: selectedTabBinding(tab),
+                            isActive: tab.id == workspace.selectedTabID,
+                            isWordWrapEnabled: preferences.isWordWrapEnabled,
+                            skin: preferences.selectedSkin,
+                            language: tab.language,
+                            indentWidth: preferences.indentWidth,
+                            editorFont: preferences.editorFont,
+                            editorSemiboldFont: preferences.editorSemiboldFont
+                        )
+                        .opacity(tab.id == workspace.selectedTabID ? 1 : 0)
+                        .allowsHitTesting(tab.id == workspace.selectedTabID)
+                        .accessibilityHidden(tab.id != workspace.selectedTabID)
+                    }
                 }
             }
         }

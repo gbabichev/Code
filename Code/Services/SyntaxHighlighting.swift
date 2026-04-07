@@ -33,16 +33,16 @@ struct PlainTextHighlighter: SyntaxHighlighting {
 struct ShellSyntaxHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
-    private let keywordRegex = try! NSRegularExpression(
+    private static let keywordRegex = try! NSRegularExpression(
         pattern: #"(?m)\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|in|select|until|time)\b"#
     )
-    private let builtInRegex = try! NSRegularExpression(
+    private static let builtInRegex = try! NSRegularExpression(
         pattern: #"(?m)\b(export|local|readonly|return|shift|unset|eval|exec|source|alias|trap|cd|exit|echo|printf)\b"#
     )
-    private let variableRegex = try! NSRegularExpression(
+    private static let variableRegex = try! NSRegularExpression(
         pattern: #"\$[A-Za-z_][A-Za-z0-9_]*|\$\{[^}]+\}"#
     )
-    private let commandRegex = try! NSRegularExpression(
+    private static let commandRegex = try! NSRegularExpression(
         pattern: #"(?m)^\s*([A-Za-z_./-][A-Za-z0-9_./-]*)"#
     )
 
@@ -57,22 +57,22 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
             textStorage.addAttributes(theme.stringAttributes, range: range)
         }
 
-        for match in variableRegex.matches(in: text, range: highlightRange)
+        for match in Self.variableRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
-        for match in keywordRegex.matches(in: text, range: highlightRange)
+        for match in Self.keywordRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
-        for match in builtInRegex.matches(in: text, range: highlightRange)
+        for match in Self.builtInRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
-        for match in commandRegex.matches(in: text, range: highlightRange)
+        for match in Self.commandRegex.matches(in: text, range: highlightRange)
         where match.numberOfRanges > 1 && !intersects(match.range(at: 1), with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.commandAttributes, range: match.range(at: 1))
         }
@@ -250,22 +250,22 @@ struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
 struct PythonSyntaxHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
-    private let commentRegex = try! NSRegularExpression(
+    private static let commentRegex = try! NSRegularExpression(
         pattern: #"(?m)#.*$"#
     )
-    private let stringRegex = try! NSRegularExpression(
+    private static let stringRegex = try! NSRegularExpression(
         pattern: #"(?s)(\"\"\".*?\"\"\"|'''.*?'''|f\"([^\"\\]|\\.)*\"|f'([^'\\]|\\.)*'|r\"([^\"\\]|\\.)*\"|r'([^'\\]|\\.)*'|b\"([^\"\\]|\\.)*\"|b'([^'\\]|\\.)*'|u\"([^\"\\]|\\.)*\"|u'([^'\\]|\\.)*'|\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*')"#
     )
-    private let keywordRegex = try! NSRegularExpression(
+    private static let keywordRegex = try! NSRegularExpression(
         pattern: #"(?m)\b(False|None|True|and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|match|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b"#
     )
-    private let builtInRegex = try! NSRegularExpression(
+    private static let builtInRegex = try! NSRegularExpression(
         pattern: #"(?m)\b(abs|all|any|bool|breakpoint|bytearray|bytes|callable|chr|classmethod|compile|dict|dir|enumerate|filter|float|format|frozenset|getattr|hasattr|hash|hex|input|int|isinstance|issubclass|iter|len|list|map|max|min|next|object|open|ord|pow|print|property|range|repr|reversed|round|set|setattr|slice|sorted|staticmethod|str|sum|super|tuple|type|vars|zip)\b"#
     )
-    private let variableRegex = try! NSRegularExpression(
+    private static let variableRegex = try! NSRegularExpression(
         pattern: #"(?m)\b(self|cls)\b"#
     )
-    private let decoratorRegex = try! NSRegularExpression(
+    private static let decoratorRegex = try! NSRegularExpression(
         pattern: #"(?m)^\s*@[A-Za-z_][A-Za-z0-9_\.]*"#
     )
 
@@ -274,8 +274,8 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        let stringRanges = stringRegex.matches(in: text, range: highlightRange).map(\.range)
-        let commentRanges = commentRegex.matches(in: text, range: fullRange)
+        let stringRanges = Self.stringRegex.matches(in: text, range: highlightRange).map(\.range)
+        let commentRanges = Self.commentRegex.matches(in: text, range: fullRange)
             .map(\.range)
             .filter { NSIntersectionRange($0, highlightRange).length > 0 && !isLocation($0.location, containedIn: stringRanges) }
 
@@ -287,22 +287,22 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
             textStorage.addAttributes(theme.commentAttributes, range: range)
         }
 
-        for match in decoratorRegex.matches(in: text, range: highlightRange)
+        for match in Self.decoratorRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.commandAttributes, range: match.range)
         }
 
-        for match in variableRegex.matches(in: text, range: highlightRange)
+        for match in Self.variableRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
-        for match in keywordRegex.matches(in: text, range: highlightRange)
+        for match in Self.keywordRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
-        for match in builtInRegex.matches(in: text, range: highlightRange)
+        for match in Self.builtInRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.builtinAttributes, range: match.range)
         }
@@ -312,25 +312,25 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
 struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
-    private let blockCommentRegex = try! NSRegularExpression(
+    private static let blockCommentRegex = try! NSRegularExpression(
         pattern: #"(?s)<#.*?#>"#
     )
-    private let lineCommentRegex = try! NSRegularExpression(
+    private static let lineCommentRegex = try! NSRegularExpression(
         pattern: #"(?m)#.*$"#
     )
-    private let stringRegex = try! NSRegularExpression(
+    private static let stringRegex = try! NSRegularExpression(
         pattern: #"(?s)@\".*?\"@|@'.*?'@|\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*'"#
     )
-    private let variableRegex = try! NSRegularExpression(
+    private static let variableRegex = try! NSRegularExpression(
         pattern: #"\$[A-Za-z_][A-Za-z0-9_:]*|\$\{[^}]+\}"#
     )
-    private let keywordRegex = try! NSRegularExpression(
+    private static let keywordRegex = try! NSRegularExpression(
         pattern: #"(?mi)\b(begin|break|catch|class|continue|data|default|do|dynamicparam|else|elseif|end|enum|exit|filter|finally|for|foreach|from|function|if|in|param|process|return|switch|throw|trap|try|until|using|while|workflow)\b"#
     )
-    private let builtInRegex = try! NSRegularExpression(
+    private static let builtInRegex = try! NSRegularExpression(
         pattern: #"(?mi)\b(Write-Host|Write-Output|Write-Error|Write-Warning|Write-Verbose|Write-Debug|Write-Information|Read-Host|ForEach-Object|Where-Object|Select-Object|Sort-Object|Group-Object|Measure-Object|Get-Item|Set-Item|New-Item|Remove-Item|Copy-Item|Move-Item|Test-Path|Join-Path|Split-Path|Resolve-Path|Import-Module|Export-ModuleMember|Invoke-Expression|Start-Process|Stop-Process|Get-Process|Get-Service|Start-Service|Stop-Service|Set-Location|Get-Location|Clear-Host|Out-File|Set-Content|Add-Content|Get-Content)\b"#
     )
-    private let commandRegex = try! NSRegularExpression(
+    private static let commandRegex = try! NSRegularExpression(
         pattern: #"(?mi)\b[A-Z][A-Za-z0-9]*-[A-Z][A-Za-z0-9]*(?:-[A-Z][A-Za-z0-9]*)*\b"#
     )
 
@@ -339,13 +339,13 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        let blockCommentRanges = blockCommentRegex.matches(in: text, range: fullRange)
+        let blockCommentRanges = Self.blockCommentRegex.matches(in: text, range: fullRange)
             .map(\.range)
             .filter { NSIntersectionRange($0, highlightRange).length > 0 }
-        let stringRanges = stringRegex.matches(in: text, range: fullRange)
+        let stringRanges = Self.stringRegex.matches(in: text, range: fullRange)
             .map(\.range)
             .filter { NSIntersectionRange($0, highlightRange).length > 0 && !isLocation($0.location, containedIn: blockCommentRanges) }
-        let commentRanges = blockCommentRanges + lineCommentRegex.matches(in: text, range: fullRange)
+        let commentRanges = blockCommentRanges + Self.lineCommentRegex.matches(in: text, range: fullRange)
             .map(\.range)
             .filter { NSIntersectionRange($0, highlightRange).length > 0 && !isLocation($0.location, containedIn: stringRanges + blockCommentRanges) }
 
@@ -353,22 +353,22 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
             textStorage.addAttributes(theme.stringAttributes, range: range)
         }
 
-        for match in variableRegex.matches(in: text, range: highlightRange)
+        for match in Self.variableRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
-        for match in keywordRegex.matches(in: text, range: highlightRange)
+        for match in Self.keywordRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
-        for match in builtInRegex.matches(in: text, range: highlightRange)
+        for match in Self.builtInRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
-        for match in commandRegex.matches(in: text, range: highlightRange)
+        for match in Self.commandRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             textStorage.addAttributes(theme.commandAttributes, range: match.range)
         }

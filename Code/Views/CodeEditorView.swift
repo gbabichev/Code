@@ -33,6 +33,7 @@ final class ActiveEditorTextViewRegistry {
 
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
+    let isActive: Bool
     let isWordWrapEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
@@ -118,10 +119,14 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
 
         guard let textView = context.coordinator.textView else { return }
-        ActiveEditorTextViewRegistry.shared.register(textView)
+        if isActive {
+            ActiveEditorTextViewRegistry.shared.register(textView)
+        }
         let didTextChange = context.coordinator.syncWithBindingText(text)
-        if didLanguageChange || didSkinChange || didFontChange || didTextChange || context.coordinator.requiresHighlightRefresh {
+        if didLanguageChange || didSkinChange || didFontChange || context.coordinator.requiresHighlightRefresh {
             context.coordinator.applyHighlighting(force: true)
+        } else if didTextChange {
+            context.coordinator.scheduleDeferredHighlightRefresh()
         }
     }
 
@@ -140,6 +145,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var isApplyingHighlighting = false
         private var sourceText: String
         private(set) var requiresHighlightRefresh = true
+        private var deferredHighlightWorkItem: DispatchWorkItem?
 
         init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, editorFont: NSFont, editorSemiboldFont: NSFont) {
             self.textBinding = textBinding
@@ -295,6 +301,8 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func applyHighlighting(force: Bool = false, in editedRange: NSRange? = nil) {
+            deferredHighlightWorkItem?.cancel()
+            deferredHighlightWorkItem = nil
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
             if isApplyingHighlighting { return }
             if !force, editedRange == nil, textView.string == textBinding.wrappedValue { return }
@@ -315,6 +323,16 @@ struct CodeEditorView: NSViewRepresentable {
             gutterView.needsDisplay = true
             isApplyingHighlighting = false
             requiresHighlightRefresh = false
+        }
+
+        func scheduleDeferredHighlightRefresh() {
+            deferredHighlightWorkItem?.cancel()
+
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.applyHighlighting(force: true)
+            }
+            deferredHighlightWorkItem = workItem
+            DispatchQueue.main.async(execute: workItem)
         }
 
         @objc
