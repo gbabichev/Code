@@ -18,6 +18,7 @@ struct CodeApp: App {
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
     @StateObject private var searchController = EditorSearchController()
     @StateObject private var aboutController = AboutOverlayController()
+    @StateObject private var updateCenter = AppUpdateCenter.shared
 
     var body: some Scene {
         WindowGroup(id: "workspace") {
@@ -26,7 +27,8 @@ struct CodeApp: App {
                 sessionRegistry: sessionRegistry,
                 externalFileRouter: externalFileRouter,
                 searchController: searchController,
-                aboutController: aboutController
+                aboutController: aboutController,
+                updateCenter: updateCenter
             )
         }
         .windowStyle(.hiddenTitleBar)
@@ -35,6 +37,7 @@ struct CodeApp: App {
                 preferences: preferences,
                 searchController: searchController,
                 aboutController: aboutController,
+                updateCenter: updateCenter,
                 openNewWindow: { openWindow(id: "workspace") }
             )
         }
@@ -47,6 +50,7 @@ private struct WorkspaceSceneView: View {
     @ObservedObject var externalFileRouter: ExternalFileRouter
     @ObservedObject var searchController: EditorSearchController
     @ObservedObject var aboutController: AboutOverlayController
+    @ObservedObject var updateCenter: AppUpdateCenter
     @Environment(\.scenePhase) private var scenePhase
     @SceneStorage("workspaceSessionID") private var workspaceSessionID = ""
     @State private var bootstrapSessionID: String
@@ -56,13 +60,15 @@ private struct WorkspaceSceneView: View {
         sessionRegistry: WorkspaceSessionRegistry,
         externalFileRouter: ExternalFileRouter,
         searchController: EditorSearchController,
-        aboutController: AboutOverlayController
+        aboutController: AboutOverlayController,
+        updateCenter: AppUpdateCenter
     ) {
         self.preferences = preferences
         self.sessionRegistry = sessionRegistry
         self.externalFileRouter = externalFileRouter
         self.searchController = searchController
         self.aboutController = aboutController
+        self.updateCenter = updateCenter
         _bootstrapSessionID = State(initialValue: sessionRegistry.makeSceneBootstrapSessionID())
     }
 
@@ -75,6 +81,7 @@ private struct WorkspaceSceneView: View {
             .environmentObject(externalFileRouter)
             .environmentObject(searchController)
             .environmentObject(aboutController)
+            .environmentObject(updateCenter)
             .onAppear {
                 if workspaceSessionID.isEmpty {
                     workspaceSessionID = effectiveSessionID
@@ -129,6 +136,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         ExternalFileRouter.shared.enqueue(urls: urls)
     }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        AppUpdateCenter.shared.checkForUpdates(trigger: .automaticLaunch)
+    }
 }
 
 @MainActor
@@ -167,6 +178,7 @@ private struct EditorCommands: Commands {
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var searchController: EditorSearchController
     @ObservedObject var aboutController: AboutOverlayController
+    @ObservedObject var updateCenter: AppUpdateCenter
     let openNewWindow: () -> Void
 
     var body: some Commands {
@@ -176,6 +188,13 @@ private struct EditorCommands: Commands {
             } label: {
                 Label("About Code", systemImage: "info.circle")
             }
+
+            Button {
+                updateCenter.checkForUpdates(trigger: .manual)
+            } label: {
+                Label("Check for Updates…", systemImage: "arrow.triangle.2.circlepath.circle")
+            }
+            .disabled(updateCenter.isChecking)
         }
 
         CommandGroup(replacing: .newItem) {
