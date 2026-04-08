@@ -1003,6 +1003,10 @@ final class LineClickableTextView: NSTextView {
         if isCompletionVisible?() == true, acceptSelectedCompletion?() == true {
             return
         }
+        if selectedRange().length > 0 {
+            indentSelection()
+            return
+        }
         super.insertTab(sender)
     }
 
