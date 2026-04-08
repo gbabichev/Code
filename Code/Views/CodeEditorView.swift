@@ -92,7 +92,9 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.applyTheme(theme)
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
         _ = context.coordinator.syncWithBindingText(text)
-        context.coordinator.applyHighlighting(force: true)
+        DispatchQueue.main.async {
+            context.coordinator.applyHighlighting()
+        }
 
         return container
     }
@@ -118,7 +120,7 @@ struct CodeEditorView: NSViewRepresentable {
             let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
             context.coordinator.applyTheme(theme)
         }
-        
+
         // Only reconfigure layout when word wrap state actually changes
         if didWordWrapChange {
             context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
@@ -130,10 +132,8 @@ struct CodeEditorView: NSViewRepresentable {
         guard let textView = context.coordinator.textView else { return }
         ActiveEditorTextViewRegistry.shared.register(textView)
         let didTextChange = context.coordinator.syncWithBindingText(text)
-        if didLanguageChange || didSkinChange || didFontChange || context.coordinator.requiresHighlightRefresh {
-            context.coordinator.applyHighlighting(force: true)
-        } else if didTextChange {
-            context.coordinator.scheduleDeferredHighlightRefresh()
+        if didLanguageChange || didSkinChange || didFontChange || didTextChange || context.coordinator.requiresHighlightRefresh {
+            context.coordinator.applyHighlighting()
         }
     }
 
@@ -162,7 +162,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var isApplyingHighlighting = false
         private var sourceText: String
         private(set) var requiresHighlightRefresh = true
-        private var deferredHighlightWorkItem: DispatchWorkItem?
+        private var pendingEditedRange: NSRange?
         private let completionController = CompletionController()
 
         init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool) {
@@ -225,15 +225,18 @@ struct CodeEditorView: NSViewRepresentable {
             sourceText = textView.string
             textBinding.wrappedValue = sourceText
 
-            // Don't run highlighting synchronously - defer it entirely
-            scheduleDeferredHighlightRefresh()
+            // Live highlighting on the exact edited range — no debounce needed
+            let editedRange = pendingEditedRange
+            pendingEditedRange = nil
+            applyHighlighting(in: editedRange)
+
             (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
-            
-            // Only redraw the gutter for current line highlight
             gutterView.needsDisplay = true
         }
 
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            // Capture the exact range being edited for live highlighting
+            pendingEditedRange = affectedCharRange
             (textView as? LineClickableTextView)?.notePendingCompletionTrigger(
                 replacementString: replacementString,
                 affectedRange: affectedCharRange
@@ -355,66 +358,62 @@ struct CodeEditorView: NSViewRepresentable {
             return true
         }
 
-        func applyHighlighting(force: Bool = false, in editedRange: NSRange? = nil) {
-            deferredHighlightWorkItem?.cancel()
-            deferredHighlightWorkItem = nil
+        func applyHighlighting(in editedRange: NSRange? = nil) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
-            if isApplyingHighlighting { return }
-            if !force, editedRange == nil, textView.string == textBinding.wrappedValue { return }
+            if isApplyingHighlighting {
+                print("[DEBUG] applyHighlighting SKIP: already applying")
+                return
+            }
+            print("[DEBUG] applyHighlighting START, editedRange: \(editedRange.map { String(describing: $0) } ?? "nil"), textStorage length: \(textStorage.length)")
 
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
             textStorage.beginEditing()
-            
-            // For files >10KB (~200 lines), limit the highlight range to avoid performance issues
-            let shouldLimitRange = !force && textStorage.length > 10_000
-            let highlightRange: NSRange?
-            if shouldLimitRange, let range = editedRange {
-                // Expand to 1000 characters around the edit point (about 20 lines)
-                let expansion = 1000
+
+            // When an edited range is provided (live typing), only highlight
+            // a small window around the cursor. For large files, shrink it
+            // further to keep keystrokes snappy.
+            let highlightRange: NSRange
+            let requestedHighlightRange: NSRange?
+            if let range = editedRange {
+                let expansion = textStorage.length > 50_000 ? 500 : 2000
                 let start = max(range.location - expansion, 0)
                 let end = min(range.location + range.length + expansion, textStorage.length)
                 highlightRange = NSRange(location: start, length: end - start)
+                requestedHighlightRange = highlightRange
             } else {
-                highlightRange = force ? nil : editedRange
+                // Full-document pass (initial load, theme/language change)
+                highlightRange = NSRange(location: 0, length: textStorage.length)
+                requestedHighlightRange = nil
             }
-            
+
             SyntaxHighlighterFactory.makeHighlighter(
                 for: language,
                 skin: skin,
                 editorFont: editorFont,
                 semiboldFont: editorSemiboldFont
             )
-            .apply(to: textStorage, text: textView.string, in: highlightRange)
-            
+            .apply(to: textStorage, text: textView.string, in: requestedHighlightRange)
+            textStorage.edited(.editedAttributes, range: highlightRange, changeInLength: 0)
+
             textStorage.endEditing()
             textView.selectedRanges = selectedRanges
-            
-            // Only redraw the affected area
-            if let range = highlightRange,
-               let layoutManager = unsafe textView.layoutManager,
+
+            print("[DEBUG] applyHighlighting DONE, attributes set on range length: \(highlightRange.length)")
+
+            if let layoutManager = unsafe textView.layoutManager,
                let textContainer = unsafe textView.textContainer {
-                let glyphRange = unsafe layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                layoutManager.invalidateDisplay(forCharacterRange: highlightRange)
+                let glyphRange = unsafe layoutManager.glyphRange(forCharacterRange: highlightRange, actualCharacterRange: nil)
                 let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
                 textView.setNeedsDisplay(rect)
             } else {
                 textView.needsDisplay = true
             }
-            
+
             gutterView.needsDisplay = true
             isApplyingHighlighting = false
             requiresHighlightRefresh = false
-        }
-
-        func scheduleDeferredHighlightRefresh() {
-            deferredHighlightWorkItem?.cancel()
-
-            let workItem = DispatchWorkItem { [weak self] in
-                self?.applyHighlighting(force: true)
-            }
-            deferredHighlightWorkItem = workItem
-            // Debounce with 200ms delay — HighlightSwift runs async via JavaScriptCore
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
         }
 
         @objc

@@ -7,7 +7,7 @@ import AppKit
 import Foundation
 
 protocol SyntaxHighlighting {
-    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?)
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?)
 }
 
 /// Maximum document size for full highlighting (10KB ~ 200 lines)
@@ -21,19 +21,19 @@ private func intersects(_ range: NSRange, with ranges: [NSRange]) -> Bool {
 struct PlainTextHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
-    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
-        let fullRange = NSRange(location: 0, length: textStorage.length)
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
         // For large files, limit highlighting to max 5000 chars if no range specified
-        let maxRange = textStorage.length > maxFullHighlightSize ? 5000 : fullRange.length
+        let maxRange = storage.length > maxFullHighlightSize ? 5000 : fullRange.length
         let effectiveRange: NSRange
         if let range {
             effectiveRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
-        } else if textStorage.length > maxFullHighlightSize {
+        } else if storage.length > maxFullHighlightSize {
             effectiveRange = NSRange(location: 0, length: min(maxRange, fullRange.length))
         } else {
             effectiveRange = fullRange
         }
-        textStorage.setAttributes(theme.baseAttributes, range: effectiveRange)
+        storage.setAttributes(theme.baseAttributes, range: effectiveRange)
     }
 }
 
@@ -53,46 +53,46 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
         pattern: #"(?m)^\s*([A-Za-z_./-][A-Za-z0-9_./-]*)"#
     )
 
-    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
-        let fullRange = NSRange(location: 0, length: textStorage.length)
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
         
         // Only limit range when a specific edit range was provided (not during force/full highlighting)
         if range != nil, highlightRange.length >= maxFullHighlightSize {
-            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            storage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
         
-        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+        storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let (stringRanges, commentRanges) = shellStringAndCommentRanges(in: text as NSString, within: highlightRange)
 
         for range in stringRanges {
-            textStorage.addAttributes(theme.stringAttributes, range: range)
+            storage.addAttributes(theme.stringAttributes, range: range)
         }
 
         for match in Self.variableRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.variableAttributes, range: match.range)
+            storage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
         for match in Self.keywordRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.keywordAttributes, range: match.range)
+            storage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
         for match in Self.builtInRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+            storage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
         for match in Self.commandRegex.matches(in: text, range: highlightRange)
         where match.numberOfRanges > 1 && !intersects(match.range(at: 1), with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.commandAttributes, range: match.range(at: 1))
+            storage.addAttributes(theme.commandAttributes, range: match.range(at: 1))
         }
 
         for range in commentRanges {
-            textStorage.addAttributes(theme.commentAttributes, range: range)
+            storage.addAttributes(theme.commentAttributes, range: range)
         }
     }
 
@@ -186,35 +186,35 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
 struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
-    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
-        let fullRange = NSRange(location: 0, length: textStorage.length)
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
 
         // Only limit range when a specific edit range was provided (not during force/full highlighting)
         if range != nil, highlightRange.length >= maxFullHighlightSize {
-            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            storage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
 
-        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+        storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let nsText = text as NSString
         unsafe nsText.enumerateSubstrings(in: highlightRange, options: [.byLines, .substringNotRequired]) { _, substringRange, enclosingRange, _ in
             let line = nsText.substring(with: substringRange)
-            self.highlightLine(line, in: textStorage, lineRange: substringRange)
+            self.highlightLine(line, in: storage, lineRange: substringRange)
             if enclosingRange.length > substringRange.length {
                 let newlineRange = NSRange(location: NSMaxRange(substringRange), length: enclosingRange.length - substringRange.length)
-                textStorage.setAttributes(self.theme.baseAttributes, range: newlineRange)
+                storage.setAttributes(self.theme.baseAttributes, range: newlineRange)
             }
         }
     }
 
-    private func highlightLine(_ line: String, in textStorage: NSTextStorage, lineRange: NSRange) {
+    private func highlightLine(_ line: String, in storage: NSMutableAttributedString, lineRange: NSRange) {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
 
         if trimmed.hasPrefix("#") {
-            textStorage.addAttributes(theme.commentAttributes, range: lineRange)
+            storage.addAttributes(theme.commentAttributes, range: lineRange)
             return
         }
 
@@ -224,7 +224,7 @@ struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
         let keyLength = line.distance(from: line.startIndex, to: equalsIndex)
         let keyRange = NSRange(location: lineRange.location, length: keyLength)
         if keyRange.length > 0 {
-            textStorage.addAttributes(theme.variableAttributes, range: keyRange)
+            storage.addAttributes(theme.variableAttributes, range: keyRange)
         }
 
         let valueStart = keyLength + 1
@@ -235,15 +235,15 @@ struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
 
         if let commentOffset {
             let commentRange = NSRange(location: lineRange.location + valueStart + commentOffset, length: nsLine.length - valueStart - commentOffset)
-            textStorage.addAttributes(theme.commentAttributes, range: commentRange)
+            storage.addAttributes(theme.commentAttributes, range: commentRange)
 
             if commentOffset > 0 {
                 let valueRange = NSRange(location: lineRange.location + valueStart, length: commentOffset)
-                textStorage.addAttributes(theme.stringAttributes, range: valueRange)
+                storage.addAttributes(theme.stringAttributes, range: valueRange)
             }
         } else {
             let valueRange = NSRange(location: lineRange.location + valueStart, length: nsLine.length - valueStart)
-            textStorage.addAttributes(theme.stringAttributes, range: valueRange)
+            storage.addAttributes(theme.stringAttributes, range: valueRange)
         }
     }
 
@@ -290,17 +290,17 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
         pattern: #"(?m)^\s*@[A-Za-z_][A-Za-z0-9_\.]*"#
     )
 
-    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
-        let fullRange = NSRange(location: 0, length: textStorage.length)
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
 
         // Only limit range when a specific edit range was provided (not during force/full highlighting)
         if range != nil, highlightRange.length >= maxFullHighlightSize {
-            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            storage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
 
-        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+        storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         // Detect comments FIRST so quotes inside comments don't get matched as strings
         let commentRanges = Self.commentRegex.matches(in: text, range: fullRange)
@@ -315,31 +315,31 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
             }
 
         for range in stringRanges {
-            textStorage.addAttributes(theme.stringAttributes, range: range)
+            storage.addAttributes(theme.stringAttributes, range: range)
         }
 
         for range in commentRanges {
-            textStorage.addAttributes(theme.commentAttributes, range: range)
+            storage.addAttributes(theme.commentAttributes, range: range)
         }
 
         for match in Self.decoratorRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.commandAttributes, range: match.range)
+            storage.addAttributes(theme.commandAttributes, range: match.range)
         }
 
         for match in Self.variableRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.variableAttributes, range: match.range)
+            storage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
         for match in Self.keywordRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.keywordAttributes, range: match.range)
+            storage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
         for match in Self.builtInRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+            storage.addAttributes(theme.builtinAttributes, range: match.range)
         }
     }
 }
@@ -369,17 +369,17 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
         pattern: #"(?mi)\b[A-Za-z][A-Za-z0-9]*-[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*\b"#
     )
 
-    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
-        let fullRange = NSRange(location: 0, length: textStorage.length)
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
 
         // Only limit range when a specific edit range was provided (not during force/full highlighting)
         if range != nil, highlightRange.length >= maxFullHighlightSize {
-            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            storage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
 
-        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+        storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         // Detect comments FIRST so quotes inside comments don't get matched as strings
         let blockCommentRanges = Self.blockCommentRegex.matches(in: text, range: fullRange)
@@ -399,31 +399,31 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
             }
 
         for range in stringRanges {
-            textStorage.addAttributes(theme.stringAttributes, range: range)
+            storage.addAttributes(theme.stringAttributes, range: range)
         }
 
         for match in Self.variableRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.variableAttributes, range: match.range)
+            storage.addAttributes(theme.variableAttributes, range: match.range)
         }
 
         for match in Self.keywordRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.keywordAttributes, range: match.range)
+            storage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
         for match in Self.builtInRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+            storage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
         for match in Self.commandRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.commandAttributes, range: match.range)
+            storage.addAttributes(theme.commandAttributes, range: match.range)
         }
 
         for range in commentRanges {
-            textStorage.addAttributes(theme.commentAttributes, range: range)
+            storage.addAttributes(theme.commentAttributes, range: range)
         }
     }
 }
@@ -458,46 +458,46 @@ struct XMLSyntaxHighlighter: SyntaxHighlighting {
     private static let numberRegex = try! NSRegularExpression(pattern: #"\b-?\d+\.?\d*\b"#)
     private static let booleanRegex = try! NSRegularExpression(pattern: #"(?m)\b(true|false)\b"#)
 
-    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
-        let fullRange = NSRange(location: 0, length: textStorage.length)
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
 
         // Only limit range when a specific edit range was provided (not during force/full highlighting)
         if range != nil, highlightRange.length >= maxFullHighlightSize {
-            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            storage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
 
-        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+        storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let (stringRanges, commentRanges) = xmlStringsAndComments(in: text as NSString, within: highlightRange)
 
         for range in stringRanges {
-            textStorage.addAttributes(theme.stringAttributes, range: range)
+            storage.addAttributes(theme.stringAttributes, range: range)
         }
 
         for match in Self.tagRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.keywordAttributes, range: match.range)
+            storage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
         for match in Self.attributeRegex.matches(in: text, range: highlightRange)
         where match.numberOfRanges > 1 && !intersects(match.range(at: 1), with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.variableAttributes, range: match.range(at: 1))
+            storage.addAttributes(theme.variableAttributes, range: match.range(at: 1))
         }
 
         for match in Self.numberRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+            storage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
         for match in Self.booleanRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
-            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+            storage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
         for range in commentRanges {
-            textStorage.addAttributes(theme.commentAttributes, range: range)
+            storage.addAttributes(theme.commentAttributes, range: range)
         }
     }
 
@@ -566,47 +566,47 @@ struct JSONSyntaxHighlighter: SyntaxHighlighting {
     private static let booleanRegex = try! NSRegularExpression(pattern: #"(?m)\b(true|false)\b"#)
     private static let nullRegex = try! NSRegularExpression(pattern: #"(?m)\bnull\b"#)
 
-    func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
-        let fullRange = NSRange(location: 0, length: textStorage.length)
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
 
         // Only limit range when a specific edit range was provided (not during force/full highlighting)
         if range != nil, highlightRange.length >= maxFullHighlightSize {
-            textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            storage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
 
-        textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+        storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let (keyRanges, stringRanges, commentRanges) = jsonTokens(in: text as NSString, within: highlightRange)
 
         // Keys
         for range in keyRanges {
-            textStorage.addAttributes(theme.variableAttributes, range: range)
+            storage.addAttributes(theme.variableAttributes, range: range)
         }
 
         // String values
         for range in stringRanges {
-            textStorage.addAttributes(theme.stringAttributes, range: range)
+            storage.addAttributes(theme.stringAttributes, range: range)
         }
 
         for match in Self.numberRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + keyRanges + stringRanges) {
-            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+            storage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
         for match in Self.booleanRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + keyRanges + stringRanges) {
-            textStorage.addAttributes(theme.builtinAttributes, range: match.range)
+            storage.addAttributes(theme.builtinAttributes, range: match.range)
         }
 
         for match in Self.nullRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + keyRanges + stringRanges) {
-            textStorage.addAttributes(theme.keywordAttributes, range: match.range)
+            storage.addAttributes(theme.keywordAttributes, range: match.range)
         }
 
         for range in commentRanges {
-            textStorage.addAttributes(theme.commentAttributes, range: range)
+            storage.addAttributes(theme.commentAttributes, range: range)
         }
     }
 
