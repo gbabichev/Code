@@ -193,13 +193,13 @@ struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
-        
-        // For very large files, limit the processing to avoid performance issues
-        guard highlightRange.length < maxFullHighlightSize else {
+
+        // Only limit range when a specific edit range was provided (not during force/full highlighting)
+        if range != nil, highlightRange.length >= maxFullHighlightSize {
             textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
-        
+
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let nsText = text as NSString
@@ -279,7 +279,7 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
         pattern: #"(?m)#.*$"#
     )
     private static let stringRegex = try! NSRegularExpression(
-        pattern: #"(?s)(\"\"\".*?\"\"\"|'''.*?'''|f\"([^\"\\]|\\.)*\"|f'([^'\\]|\\.)*'|r\"([^\"\\]|\\.)*\"|r'([^'\\]|\\.)*'|b\"([^\"\\]|\\.)*\"|b'([^'\\]|\\.)*'|u\"([^\"\\]|\\.)*\"|u'([^'\\]|\\.)*'|\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*')"#
+        pattern: #"\"\"\"[\s\S]*?\"\"\"|'''[\s\S]*?'''|(?<![A-Za-z0-9])f\"([^\n\"\\]|\\.)*\"|(?<![A-Za-z0-9])f'([^\n'\\]|\\.)*'|(?<![A-Za-z0-9])r\"([^\n\"\\]|\\.)*\"|(?<![A-Za-z0-9])r'([^\n'\\]|\\.)*'|(?<![A-Za-z0-9])b\"([^\n\"\\]|\\.)*\"|(?<![A-Za-z0-9])b'([^\n'\\]|\\.)*'|(?<![A-Za-z0-9])u\"([^\n\"\\]|\\.)*\"|(?<![A-Za-z0-9])u'([^\n'\\]|\\.)*'|(?<![A-Za-z0-9])\"([^\n\"\\]|\\.)*\"|(?<![A-Za-z0-9])'([^\n'\\]|\\.)*'"#
     )
     private static let keywordRegex = try! NSRegularExpression(
         pattern: #"(?m)\b(False|None|True|and|as|assert|async|await|break|case|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|match|nonlocal|not|or|pass|raise|return|try|while|with|yield)\b"#
@@ -297,19 +297,26 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
-        
-        // For very large files, limit the processing to avoid performance issues
-        guard highlightRange.length < maxFullHighlightSize else {
+
+        // Only limit range when a specific edit range was provided (not during force/full highlighting)
+        if range != nil, highlightRange.length >= maxFullHighlightSize {
             textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
-        
+
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        let stringRanges = Self.stringRegex.matches(in: text, range: highlightRange).map(\.range)
+        // Detect comments FIRST so quotes inside comments don't get matched as strings
         let commentRanges = Self.commentRegex.matches(in: text, range: fullRange)
             .map(\.range)
-            .filter { NSIntersectionRange($0, highlightRange).length > 0 && !isLocation($0.location, containedIn: stringRanges) }
+            .filter { NSIntersectionRange($0, highlightRange).length > 0 }
+
+        let stringRanges = Self.stringRegex.matches(in: text, range: fullRange)
+            .map(\.range)
+            .filter { range in
+                NSIntersectionRange(range, highlightRange).length > 0
+                    && !intersects(range, with: commentRanges)
+            }
 
         for range in stringRanges {
             textStorage.addAttributes(theme.stringAttributes, range: range)
@@ -351,7 +358,7 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
         pattern: #"(?m)#.*$"#
     )
     private static let stringRegex = try! NSRegularExpression(
-        pattern: #"(?s)@\".*?\"@|@'.*?'@|\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*'"#
+        pattern: #"@\"[\s\S]*?\"@|@'[\s\S]*?'@|(?<![A-Za-z0-9])\"([^\n\"\\]|\\.)*\"|(?<![A-Za-z0-9])'([^\n'\\]|\\.)*'"#
     )
     private static let variableRegex = try! NSRegularExpression(
         pattern: #"\$[A-Za-z_][A-Za-z0-9_:]*|\$\{[^}]+\}"#
@@ -363,30 +370,37 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
         pattern: #"(?mi)\b(Write-Host|Write-Output|Write-Error|Write-Warning|Write-Verbose|Write-Debug|Write-Information|Read-Host|ForEach-Object|Where-Object|Select-Object|Sort-Object|Group-Object|Measure-Object|Get-Item|Set-Item|New-Item|Remove-Item|Copy-Item|Move-Item|Test-Path|Join-Path|Split-Path|Resolve-Path|Import-Module|Export-ModuleMember|Invoke-Expression|Start-Process|Stop-Process|Get-Process|Get-Service|Start-Service|Stop-Service|Set-Location|Get-Location|Clear-Host|Out-File|Set-Content|Add-Content|Get-Content)\b"#
     )
     private static let commandRegex = try! NSRegularExpression(
-        pattern: #"(?mi)\b[A-Z][A-Za-z0-9]*-[A-Z][A-Za-z0-9]*(?:-[A-Z][A-Za-z0-9]*)*\b"#
+        pattern: #"(?mi)\b[A-Za-z][A-Za-z0-9]*-[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*\b"#
     )
 
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
-        
-        // For very large files, limit the processing to avoid performance issues
-        guard highlightRange.length < maxFullHighlightSize else {
+
+        // Only limit range when a specific edit range was provided (not during force/full highlighting)
+        if range != nil, highlightRange.length >= maxFullHighlightSize {
             textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
-        
+
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
+        // Detect comments FIRST so quotes inside comments don't get matched as strings
         let blockCommentRanges = Self.blockCommentRegex.matches(in: text, range: fullRange)
             .map(\.range)
             .filter { NSIntersectionRange($0, highlightRange).length > 0 }
+        let lineCommentRanges = Self.lineCommentRegex.matches(in: text, range: fullRange)
+            .map(\.range)
+            .filter { NSIntersectionRange($0, highlightRange).length > 0 }
+        let commentRanges = blockCommentRanges + lineCommentRanges
+
+        // Detect strings, excluding anything inside comments
         let stringRanges = Self.stringRegex.matches(in: text, range: fullRange)
             .map(\.range)
-            .filter { NSIntersectionRange($0, highlightRange).length > 0 && !isLocation($0.location, containedIn: blockCommentRanges) }
-        let commentRanges = blockCommentRanges + Self.lineCommentRegex.matches(in: text, range: fullRange)
-            .map(\.range)
-            .filter { NSIntersectionRange($0, highlightRange).length > 0 && !isLocation($0.location, containedIn: stringRanges + blockCommentRanges) }
+            .filter { range in
+                NSIntersectionRange(range, highlightRange).length > 0
+                    && !intersects(range, with: commentRanges)
+            }
 
         for range in stringRanges {
             textStorage.addAttributes(theme.stringAttributes, range: range)
@@ -451,13 +465,13 @@ struct XMLSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
-        
-        // For very large files, limit the processing to avoid performance issues
-        guard highlightRange.length < maxFullHighlightSize else {
+
+        // Only limit range when a specific edit range was provided (not during force/full highlighting)
+        if range != nil, highlightRange.length >= maxFullHighlightSize {
             textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
-        
+
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let (stringRanges, commentRanges) = xmlStringsAndComments(in: text as NSString, within: highlightRange)
@@ -559,13 +573,13 @@ struct JSONSyntaxHighlighter: SyntaxHighlighting {
     func apply(to textStorage: NSTextStorage, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
-        
-        // For very large files, limit the processing to avoid performance issues
-        guard highlightRange.length < maxFullHighlightSize else {
+
+        // Only limit range when a specific edit range was provided (not during force/full highlighting)
+        if range != nil, highlightRange.length >= maxFullHighlightSize {
             textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
             return
         }
-        
+
         textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         let (keyRanges, stringRanges, commentRanges) = jsonTokens(in: text as NSString, within: highlightRange)
