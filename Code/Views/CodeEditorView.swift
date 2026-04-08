@@ -425,7 +425,7 @@ struct CodeEditorView: NSViewRepresentable {
                 return
             }
             gutterView.needsDisplay = true
-            completionController.reposition(anchorRect: completionAnchorRect())
+            completionController.reposition(anchorRect: completionAnchor()?.rect)
         }
 
         private func completionCandidates(in text: String, partial: String, excluding reservedWords: Set<String>) -> [String] {
@@ -648,7 +648,11 @@ struct CodeEditorView: NSViewRepresentable {
                 return
             }
 
-            completionController.show(items: completionState.items, anchorRect: completionState.anchorRect)
+            completionController.show(
+                items: completionState.items,
+                anchorRect: completionState.anchorRect,
+                placement: completionState.placement
+            )
         }
 
         private func acceptSelectedCompletion() -> Bool {
@@ -665,7 +669,7 @@ struct CodeEditorView: NSViewRepresentable {
             return didApply
         }
 
-        private func completionState(for textView: LineClickableTextView) -> (items: [CompletionItem], anchorRect: NSRect)? {
+        private func completionState(for textView: LineClickableTextView) -> (items: [CompletionItem], anchorRect: NSRect, placement: CompletionPopupPlacement)? {
             guard let partialRange = textView.currentPartialWordRange(),
                   partialRange.length >= 2 else {
                 return nil
@@ -677,27 +681,43 @@ struct CodeEditorView: NSViewRepresentable {
             let partial = source.substring(with: partialRange)
             let reservedWords = reservedIdentifiers(for: language)
             let candidates = completionCandidates(in: textView.string, partial: partial, excluding: reservedWords)
-            guard !candidates.isEmpty, let anchorRect = completionAnchorRect() else { return nil }
-            return (candidates.map(CompletionItem.init(text:)), anchorRect)
+            guard !candidates.isEmpty, let anchor = completionAnchor() else { return nil }
+            return (candidates.map(CompletionItem.init(text:)), anchor.rect, anchor.placement)
         }
 
-        private func completionAnchorRect() -> NSRect? {
+        private func completionAnchor() -> (rect: NSRect, placement: CompletionPopupPlacement)? {
             guard let textView,
                   let containerView,
-                  let caretRect = caretRectInTextViewCoordinates() else {
+                  let anchor = caretRectInTextViewCoordinates() else {
                 return nil
             }
-            return containerView.convert(caretRect, from: textView)
+            return (containerView.convert(anchor.rect, from: textView), anchor.placement)
         }
 
-        private func caretRectInTextViewCoordinates() -> NSRect? {
+        private func caretRectInTextViewCoordinates() -> (rect: NSRect, placement: CompletionPopupPlacement)? {
             guard let textView,
                   let layoutManager = unsafe textView.layoutManager,
                   let textContainer = unsafe textView.textContainer else {
                 return nil
             }
 
-            let insertionLocation = min(textView.selectedRange().location, (textView.string as NSString).length)
+            let textLength = (textView.string as NSString).length
+            let insertionLocation = min(textView.selectedRange().location, textLength)
+            if insertionLocation == textLength, layoutManager.numberOfGlyphs > 0 {
+                let lastGlyphIndex = max(layoutManager.numberOfGlyphs - 1, 0)
+                var lineRect = unsafe layoutManager.lineFragmentRect(
+                    forGlyphAt: lastGlyphIndex,
+                    effectiveRange: nil,
+                    withoutAdditionalLayout: true
+                )
+                lineRect.origin.x += textView.textContainerInset.width
+                lineRect.origin.y += textView.textContainerInset.height
+                lineRect.size.width = max(lineRect.width, 2)
+                let lineHeight = layoutManager.defaultLineHeight(for: textView.font ?? .monospacedSystemFont(ofSize: 12, weight: .regular))
+                lineRect.size.height = max(lineRect.height, lineHeight)
+                return (lineRect, .aboveLine)
+            }
+
             let glyphIndex = layoutManager.glyphIndexForCharacter(at: insertionLocation)
             var glyphRange = NSRange(location: glyphIndex, length: 0)
             if glyphIndex < layoutManager.numberOfGlyphs {
@@ -706,7 +726,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             var caretRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
             if caretRect.isEmpty {
-                return textView.visibleRect
+                return nil
             }
 
             caretRect.origin.x += textView.textContainerInset.width
@@ -714,7 +734,7 @@ struct CodeEditorView: NSViewRepresentable {
             caretRect.size.width = max(caretRect.width, 2)
             let lineHeight = layoutManager.defaultLineHeight(for: textView.font ?? .monospacedSystemFont(ofSize: 12, weight: .regular))
             caretRect.size.height = max(caretRect.height, lineHeight)
-            return caretRect
+            return (caretRect, .belowLine)
         }
 
         private func reservedIdentifiers(for language: EditorLanguage) -> Set<String> {
@@ -1217,7 +1237,7 @@ final class EditorContainerView: NSView {
         completionPopupView.constrainFrame(to: bounds, minimumX: gutterWidth + 8)
     }
 
-    fileprivate func updateCompletionPopup(items: [CompletionItem], selectedIndex: Int, anchorRect: NSRect, theme: CompletionPopupTheme) {
+    fileprivate func updateCompletionPopup(items: [CompletionItem], selectedIndex: Int, anchorRect: NSRect, placement: CompletionPopupPlacement, theme: CompletionPopupTheme) {
         completionPopupView.theme = theme
         completionPopupView.items = items
         completionPopupView.selectedIndex = selectedIndex
@@ -1228,10 +1248,19 @@ final class EditorContainerView: NSView {
         let minimumX = gutterWidth + 8
         let maximumX = bounds.maxX - popupWidth - 8
         let originX = min(max(anchorRect.minX, minimumX), max(minimumX, maximumX))
-        var originY = anchorRect.minY - popupHeight - 4
+        let preferredOriginY: CGFloat
+        switch placement {
+        case .belowLine:
+            preferredOriginY = anchorRect.minY - popupHeight - 4
+        case .aboveLine:
+            preferredOriginY = anchorRect.maxY + 4
+        }
+        var originY = preferredOriginY
 
         if originY < bounds.minY + 8 {
             originY = min(bounds.maxY - popupHeight - 8, anchorRect.maxY + 4)
+        } else if originY + popupHeight > bounds.maxY - 8 {
+            originY = max(bounds.minY + 8, anchorRect.minY - popupHeight - 4)
         }
 
         completionPopupView.frame = NSRect(x: originX, y: originY, width: popupWidth, height: popupHeight)
@@ -1248,6 +1277,11 @@ private struct CompletionItem: Equatable, Identifiable {
     let text: String
 
     var id: String { text }
+}
+
+private enum CompletionPopupPlacement {
+    case belowLine
+    case aboveLine
 }
 
 private struct CompletionPopupTheme {
@@ -1275,6 +1309,7 @@ private final class CompletionController {
     private(set) var items: [CompletionItem] = []
     private(set) var selectedIndex = 0
     private var lastAnchorRect: NSRect?
+    private var placement: CompletionPopupPlacement = .belowLine
 
     var isVisible: Bool {
         !items.isEmpty
@@ -1289,7 +1324,7 @@ private final class CompletionController {
         self.containerView = containerView
     }
 
-    func show(items: [CompletionItem], anchorRect: NSRect) {
+    func show(items: [CompletionItem], anchorRect: NSRect, placement: CompletionPopupPlacement) {
         guard !items.isEmpty else {
             hide()
             return
@@ -1302,11 +1337,13 @@ private final class CompletionController {
         }
         self.items = items
         lastAnchorRect = anchorRect
+        self.placement = placement
 
         containerView?.updateCompletionPopup(
             items: items,
             selectedIndex: selectedIndex,
             anchorRect: anchorRect,
+            placement: placement,
             theme: theme
         )
     }
@@ -1333,6 +1370,7 @@ private final class CompletionController {
             items: items,
             selectedIndex: selectedIndex,
             anchorRect: nextAnchorRect,
+            placement: placement,
             theme: theme
         )
     }
