@@ -360,11 +360,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         func applyHighlighting(in editedRange: NSRange? = nil) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
-            if isApplyingHighlighting {
-                print("[DEBUG] applyHighlighting SKIP: already applying")
-                return
-            }
-            print("[DEBUG] applyHighlighting START, editedRange: \(editedRange.map { String(describing: $0) } ?? "nil"), textStorage length: \(textStorage.length)")
+
 
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
@@ -398,8 +394,6 @@ struct CodeEditorView: NSViewRepresentable {
 
             textStorage.endEditing()
             textView.selectedRanges = selectedRanges
-
-            print("[DEBUG] applyHighlighting DONE, attributes set on range length: \(highlightRange.length)")
 
             if let layoutManager = unsafe textView.layoutManager,
                let textContainer = unsafe textView.textContainer {
