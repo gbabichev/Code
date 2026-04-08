@@ -14,10 +14,6 @@ protocol SyntaxHighlighting {
 /// Beyond this, only the visible/edited range is highlighted
 private let maxFullHighlightSize = 10_000
 
-private func isLocation(_ location: Int, containedIn ranges: [NSRange]) -> Bool {
-    ranges.contains { NSLocationInRange(location, $0) }
-}
-
 private func intersects(_ range: NSRange, with ranges: [NSRange]) -> Bool {
     ranges.contains { NSIntersectionRange(range, $0).length > 0 }
 }
