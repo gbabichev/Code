@@ -235,9 +235,15 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func configureLayout(isWordWrapEnabled: Bool) {
-            guard let textView, let textContainer = unsafe textView.textContainer else { return }
+            guard let textView = textView as? LineClickableTextView,
+                  let textContainer = unsafe textView.textContainer,
+                  let layoutManager = unsafe textView.layoutManager else { return }
 
             textContainer.heightTracksTextView = false
+            
+            // Calculate ~10 lines of extra bottom buffer
+            let lineHeight = layoutManager.defaultLineHeight(for: textView.font ?? NSFont.systemFont(ofSize: 12))
+            textView.extraBottomPadding = lineHeight * 10
 
             if isWordWrapEnabled {
                 textView.isHorizontallyResizable = false
@@ -259,8 +265,9 @@ struct CodeEditorView: NSViewRepresentable {
                 scrollView?.hasHorizontalScroller = true
             }
 
-            unsafe textView.layoutManager?.ensureLayout(for: textContainer)
+            layoutManager.ensureLayout(for: textContainer)
             textView.sizeToFit()
+
             let minimumWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
             let minimumHeight = max((scrollView?.contentSize.height ?? textView.bounds.height), 0)
             if textView.frame.width < minimumWidth {
@@ -439,9 +446,27 @@ final class LineClickableTextView: NSTextView {
     }
     var lineCommentPrefix: String?
     var indentWidth = 4
+    var extraBottomPadding: CGFloat = 0
+    private var isAdjustingFrame = false
     private var shouldTriggerAutomaticCompletion = false
     private var isApplyingAcceptedCompletion = false
     private var completionTimer: Timer?
+
+    override func setFrameSize(_ newSize: NSSize) {
+        guard !isAdjustingFrame else {
+            super.setFrameSize(newSize)
+            return
+        }
+        guard extraBottomPadding > 0 else {
+            super.setFrameSize(newSize)
+            return
+        }
+        isAdjustingFrame = true
+        var adjusted = newSize
+        adjusted.height += extraBottomPadding
+        super.setFrameSize(adjusted)
+        isAdjustingFrame = false
+    }
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
