@@ -139,6 +139,13 @@ struct CodeEditorView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         private static let identifierPattern = try! NSRegularExpression(pattern: #"\b[A-Za-z_][A-Za-z0-9_]*\b"#)
+        private static let pythonFunctionPattern = try! NSRegularExpression(pattern: #"(?m)^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("#)
+        private static let pythonVariablePattern = try! NSRegularExpression(pattern: #"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"#)
+        private static let shellFunctionPattern = try! NSRegularExpression(pattern: #"(?m)^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\(\s*\))?\s*\{"#)
+        private static let shellVariablePattern = try! NSRegularExpression(pattern: #"(?m)(?:^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)="#)
+        private static let shellVariableReferencePattern = try! NSRegularExpression(pattern: #"\$([A-Za-z_][A-Za-z0-9_]*)"#)
+        private static let powerShellFunctionPattern = try! NSRegularExpression(pattern: #"(?im)^\s*function\s+([A-Za-z_][A-Za-z0-9_-]*)\b"#)
+        private static let powerShellVariablePattern = try! NSRegularExpression(pattern: #"\$([A-Za-z_][A-Za-z0-9_]*)"#)
 
         var textBinding: Binding<String>
         var language: EditorLanguage
@@ -422,14 +429,11 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func completionCandidates(in text: String, partial: String, excluding reservedWords: Set<String>) -> [String] {
-            let nsText = text as NSString
             let partialLowercased = partial.lowercased()
             var seen = Set<String>()
             var prefixMatches: [String] = []
 
-            let matches = Self.identifierPattern.matches(in: text, range: NSRange(location: 0, length: nsText.length))
-            for match in matches {
-                let candidate = nsText.substring(with: match.range)
+            for candidate in autocompleteSymbols(in: text, language: language) {
                 guard candidate.count >= 2 else { continue }
                 guard candidate != partial else { continue }
                 guard !reservedWords.contains(candidate) else { continue }
@@ -442,6 +446,186 @@ struct CodeEditorView: NSViewRepresentable {
             }
 
             return prefixMatches.sorted(using: KeyPathComparator(\.self, comparator: .localizedStandard))
+        }
+
+        private func autocompleteSymbols(in text: String, language: EditorLanguage) -> [String] {
+            switch language {
+            case .python:
+                let excludedRanges = pythonCommentAndStringRanges(in: text as NSString)
+                return symbols(
+                    in: text,
+                    using: [
+                        (Self.pythonFunctionPattern, 1),
+                        (Self.pythonVariablePattern, 1)
+                    ],
+                    excluding: excludedRanges
+                )
+            case .shell:
+                let excludedRanges = shellLikeCommentAndStringRanges(in: text as NSString)
+                return symbols(
+                    in: text,
+                    using: [
+                        (Self.shellFunctionPattern, 1),
+                        (Self.shellVariablePattern, 1),
+                        (Self.shellVariableReferencePattern, 1)
+                    ],
+                    excluding: excludedRanges
+                )
+            case .powerShell:
+                let excludedRanges = shellLikeCommentAndStringRanges(in: text as NSString)
+                return symbols(
+                    in: text,
+                    using: [
+                        (Self.powerShellFunctionPattern, 1),
+                        (Self.powerShellVariablePattern, 1)
+                    ],
+                    excluding: excludedRanges
+                )
+            default:
+                let nsText = text as NSString
+                return Self.identifierPattern.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+                    .map { nsText.substring(with: $0.range) }
+            }
+        }
+
+        private func symbols(
+            in text: String,
+            using patterns: [(regex: NSRegularExpression, captureGroup: Int)],
+            excluding excludedRanges: [NSRange]
+        ) -> [String] {
+            let nsText = text as NSString
+            var seen = Set<String>()
+            var results: [String] = []
+
+            for (regex, captureGroup) in patterns {
+                let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+                for match in matches {
+                    guard match.numberOfRanges > captureGroup else { continue }
+                    let captureRange = match.range(at: captureGroup)
+                    guard captureRange.location != NSNotFound, captureRange.length > 0 else { continue }
+                    guard !excludedRanges.contains(where: { NSIntersectionRange($0, captureRange).length > 0 }) else { continue }
+
+                    let candidate = nsText.substring(with: captureRange)
+                    guard seen.insert(candidate).inserted else { continue }
+                    results.append(candidate)
+                }
+            }
+
+            return results
+        }
+
+        private func shellLikeCommentAndStringRanges(in text: NSString) -> [NSRange] {
+            var excludedRanges: [NSRange] = []
+            var index = 0
+            let newline: unichar = 10
+            let hash: unichar = 35
+            let singleQuote: unichar = 39
+            let doubleQuote: unichar = 34
+            let backslash: unichar = 92
+
+            while index < text.length {
+                let character = text.character(at: index)
+
+                if character == hash {
+                    let start = index
+                    while index < text.length, text.character(at: index) != newline {
+                        index += 1
+                    }
+                    excludedRanges.append(NSRange(location: start, length: index - start))
+                    continue
+                }
+
+                if character == singleQuote || character == doubleQuote {
+                    let delimiter = character
+                    let start = index
+                    index += 1
+
+                    while index < text.length {
+                        let current = text.character(at: index)
+                        if current == delimiter {
+                            index += 1
+                            break
+                        }
+                        if delimiter == doubleQuote, current == backslash, index + 1 < text.length {
+                            index += 2
+                            continue
+                        }
+                        index += 1
+                    }
+
+                    excludedRanges.append(NSRange(location: start, length: index - start))
+                    continue
+                }
+
+                index += 1
+            }
+
+            return excludedRanges
+        }
+
+        private func pythonCommentAndStringRanges(in text: NSString) -> [NSRange] {
+            var excludedRanges: [NSRange] = []
+            var index = 0
+            let newline: unichar = 10
+            let hash: unichar = 35
+            let singleQuote: unichar = 39
+            let doubleQuote: unichar = 34
+            let backslash: unichar = 92
+
+            while index < text.length {
+                let character = text.character(at: index)
+
+                if character == hash {
+                    let start = index
+                    while index < text.length, text.character(at: index) != newline {
+                        index += 1
+                    }
+                    excludedRanges.append(NSRange(location: start, length: index - start))
+                    continue
+                }
+
+                if character == singleQuote || character == doubleQuote {
+                    let delimiter = character
+                    let start = index
+                    let isTripleQuoted = index + 2 < text.length
+                        && text.character(at: index + 1) == delimiter
+                        && text.character(at: index + 2) == delimiter
+
+                    index += isTripleQuoted ? 3 : 1
+
+                    while index < text.length {
+                        if isTripleQuoted {
+                            if index + 2 < text.length,
+                               text.character(at: index) == delimiter,
+                               text.character(at: index + 1) == delimiter,
+                               text.character(at: index + 2) == delimiter {
+                                index += 3
+                                break
+                            }
+                            index += 1
+                            continue
+                        }
+
+                        let current = text.character(at: index)
+                        if current == delimiter {
+                            index += 1
+                            break
+                        }
+                        if current == backslash, index + 1 < text.length {
+                            index += 2
+                            continue
+                        }
+                        index += 1
+                    }
+
+                    excludedRanges.append(NSRange(location: start, length: index - start))
+                    continue
+                }
+
+                index += 1
+            }
+
+            return excludedRanges
         }
 
         func handleAutocompleteModeChange() {
