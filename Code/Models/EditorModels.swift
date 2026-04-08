@@ -417,7 +417,14 @@ final class EditorTab: ObservableObject, Identifiable {
     @Published var textEncoding: EditorTextEncoding
     @Published var lineEnding: EditorLineEnding
 
-    @Published var content: String
+    // `content` is NOT @Published — we manually trigger objectWillChange
+    // only when metadata changes so that typing doesn't rebuild the whole UI.
+    var content: String {
+        didSet {
+            // Content changes are silent by default; dirty-state changes
+            // are published explicitly via set(content:notify:).
+        }
+    }
     @Published var isDirty: Bool
     var lastSavedContent: String
     var lastSavedEncoding: EditorTextEncoding
@@ -449,10 +456,24 @@ final class EditorTab: ObservableObject, Identifiable {
         self.isDirty = isDirty
     }
 
+    /// Update content optionally notifying observers.
+    /// Use `notify: false` for per-keystroke updates and `notify: true`
+    /// when the change should propagate to sidebar / tab bar.
+    func setContent(_ newContent: String, notify: Bool = false) {
+        content = newContent
+        refreshDirtyState()
+        if notify {
+            objectWillChange.send()
+        }
+    }
+
     func refreshDirtyState() {
-        isDirty = content != lastSavedContent
+        let newDirty = content != lastSavedContent
             || textEncoding != lastSavedEncoding
             || lineEnding != lastSavedLineEnding
+        if isDirty != newDirty {
+            isDirty = newDirty
+        }
     }
 
     var language: EditorLanguage {

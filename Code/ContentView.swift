@@ -259,13 +259,6 @@ struct ContentView: View {
         .onChange(of: workspace.selectedTabID) { _, _ in
             refreshSearchMatches()
         }
-        .onChange(of: workspace.selectedTab?.content ?? "") { _, _ in
-            // Only refresh search if search panel is actually visible and has a query
-            guard searchController.isPresented, !searchController.query.isEmpty else {
-                return
-            }
-            refreshSearchMatches()
-        }
         .onAppear {
             refreshSearchMatches()
         }
@@ -516,7 +509,8 @@ struct ContentView: View {
             workspace.updateContent(updated, for: tab.id)
             let replacementRange = NSRange(location: selectedRange.location, length: (searchController.replacement as NSString).length)
             DispatchQueue.main.async {
-                select(replacementRange, in: textView)
+                self.select(replacementRange, in: textView)
+                self.refreshSearchMatches()
             }
             findNext(in: tab)
             return
@@ -537,6 +531,7 @@ struct ContentView: View {
             range: fullRange
         )
         workspace.updateContent(updated, for: tab.id)
+        refreshSearchMatches()
     }
 
     private func findMatches(in tab: EditorTab) -> [NSRange] {

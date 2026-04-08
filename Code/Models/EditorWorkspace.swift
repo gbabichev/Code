@@ -226,12 +226,11 @@ final class EditorWorkspace: ObservableObject {
 
     func updateContent(_ content: String, for id: EditorTab.ID) {
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
-        if tab.content == content { return }
-
-        tab.content = content
-        tab.refreshDirtyState()
-        // Don't persist session on every keystroke - let the debounced timer handle it
-        // (persistSession is already called from the objectWillChange observer)
+        // setContent(notify: false) avoids triggering objectWillChange on every keystroke.
+        // The editor view updates directly through the SwiftUI binding.
+        tab.setContent(content, notify: false)
+        // Debounced session persistence — fires after 250ms of inactivity.
+        persistSession()
     }
 
     func saveSelectedTab() async {
@@ -452,9 +451,13 @@ final class EditorWorkspace: ObservableObject {
         }
     }
     private func attachObserver(to tab: EditorTab) {
+        // Only forward changes that affect the dirty state (isDirty is @Published).
+        // Per-keystroke content updates no longer trigger objectWillChange.
         tabObservers[tab.id] = tab.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-            self?.persistSession()
+            Task { @MainActor in
+                self?.objectWillChange.send()
+                self?.persistSession()
+            }
         }
     }
 
