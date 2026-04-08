@@ -14,7 +14,7 @@ struct ContentView: View {
     @EnvironmentObject private var workspace: EditorWorkspace
     @EnvironmentObject private var searchController: EditorSearchController
     @EnvironmentObject private var aboutController: AboutOverlayController
-    @State private var isShowingSettingsPopover = false
+    @EnvironmentObject private var settingsController: SettingsPopoverController
     @State private var isTargetingTabDrop = false
     @State private var cachedSearchMatches: [NSRange] = []
     @State private var toastMessage: String?
@@ -45,11 +45,11 @@ struct ContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button {
-                    isShowingSettingsPopover.toggle()
+                    settingsController.isPresented.toggle()
                 } label: {
                     Image(systemName: "gearshape")
                 }
-                .popover(isPresented: $isShowingSettingsPopover, arrowEdge: .bottom) {
+                .popover(isPresented: $settingsController.isPresented, arrowEdge: .bottom) {
                     SettingsPopoverView()
                         .environmentObject(preferences)
                         .environmentObject(workspace)
@@ -915,7 +915,7 @@ private struct SettingsPopoverView: View {
                         range: Double(AppPreferences.minIndentWidth)...Double(AppPreferences.maxIndentWidth)
                     )
 
-                    Picker("Autocomplete", selection: $preferences.autocompleteMode) {
+                    Picker("Autocomplete (BETA)", selection: $preferences.autocompleteMode) {
                         ForEach(EditorAutocompleteMode.allCases) { mode in
                             Text(mode.title).tag(mode)
                         }

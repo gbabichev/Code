@@ -18,6 +18,7 @@ struct CodeApp: App {
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
     @StateObject private var searchController = EditorSearchController()
     @StateObject private var aboutController = AboutOverlayController()
+    @StateObject private var settingsController = SettingsPopoverController()
     @StateObject private var updateCenter = AppUpdateCenter.shared
 
     var body: some Scene {
@@ -28,6 +29,7 @@ struct CodeApp: App {
                 externalFileRouter: externalFileRouter,
                 searchController: searchController,
                 aboutController: aboutController,
+                settingsController: settingsController,
                 updateCenter: updateCenter
             )
         }
@@ -37,6 +39,7 @@ struct CodeApp: App {
                 preferences: preferences,
                 searchController: searchController,
                 aboutController: aboutController,
+                settingsController: settingsController,
                 updateCenter: updateCenter,
                 openNewWindow: { openWindow(id: "workspace") }
             )
@@ -57,6 +60,7 @@ private struct WorkspaceSceneView: View {
     @ObservedObject var externalFileRouter: ExternalFileRouter
     @ObservedObject var searchController: EditorSearchController
     @ObservedObject var aboutController: AboutOverlayController
+    @ObservedObject var settingsController: SettingsPopoverController
     @ObservedObject var updateCenter: AppUpdateCenter
     @Environment(\.scenePhase) private var scenePhase
     @SceneStorage("workspaceSessionID") private var workspaceSessionID = ""
@@ -68,6 +72,7 @@ private struct WorkspaceSceneView: View {
         externalFileRouter: ExternalFileRouter,
         searchController: EditorSearchController,
         aboutController: AboutOverlayController,
+        settingsController: SettingsPopoverController,
         updateCenter: AppUpdateCenter
     ) {
         self.preferences = preferences
@@ -75,6 +80,7 @@ private struct WorkspaceSceneView: View {
         self.externalFileRouter = externalFileRouter
         self.searchController = searchController
         self.aboutController = aboutController
+        self.settingsController = settingsController
         self.updateCenter = updateCenter
         _bootstrapSessionID = State(initialValue: sessionRegistry.makeSceneBootstrapSessionID())
     }
@@ -88,6 +94,7 @@ private struct WorkspaceSceneView: View {
             .environmentObject(externalFileRouter)
             .environmentObject(searchController)
             .environmentObject(aboutController)
+            .environmentObject(settingsController)
             .environmentObject(updateCenter)
             .onAppear {
                 if workspaceSessionID.isEmpty {
@@ -199,15 +206,32 @@ final class AboutOverlayController: ObservableObject {
     }
 }
 
+@MainActor
+final class SettingsPopoverController: ObservableObject {
+    @Published var isPresented = false
+
+    func present() {
+        isPresented = true
+    }
+}
+
 private struct EditorCommands: Commands {
     @FocusedValue(\.activeEditorWorkspace) private var workspace
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var searchController: EditorSearchController
     @ObservedObject var aboutController: AboutOverlayController
+    @ObservedObject var settingsController: SettingsPopoverController
     @ObservedObject var updateCenter: AppUpdateCenter
     let openNewWindow: () -> Void
 
     var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                settingsController.present()
+            }
+            .keyboardShortcut(",", modifiers: [.command])
+        }
+
         CommandGroup(replacing: .appInfo) {
             Button {
                 aboutController.present()
