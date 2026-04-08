@@ -34,6 +34,7 @@ struct CodeEditorView: NSViewRepresentable {
     let skin: SkinDefinition
     let language: EditorLanguage
     let indentWidth: Int
+    let autocompleteMode: EditorAutocompleteMode
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
 
@@ -43,6 +44,7 @@ struct CodeEditorView: NSViewRepresentable {
             language: language,
             skin: skin,
             indentWidth: indentWidth,
+            autocompleteMode: autocompleteMode,
             editorFont: editorFont,
             editorSemiboldFont: editorSemiboldFont,
             isWordWrapEnabled: isWordWrapEnabled
@@ -86,7 +88,7 @@ struct CodeEditorView: NSViewRepresentable {
         scrollView.contentView.postsBoundsChangedNotifications = true
 
         container.embed(gutterView: context.coordinator.gutterView, scrollView: scrollView)
-        context.coordinator.attach(textView: textView, scrollView: scrollView)
+        context.coordinator.attach(textView: textView, scrollView: scrollView, containerView: container)
         context.coordinator.applyTheme(theme)
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
         _ = context.coordinator.syncWithBindingText(text)
@@ -103,9 +105,11 @@ struct CodeEditorView: NSViewRepresentable {
             || context.coordinator.editorSemiboldFont.fontName != editorSemiboldFont.fontName
             || context.coordinator.editorSemiboldFont.pointSize != editorSemiboldFont.pointSize
         let didWordWrapChange = context.coordinator.isWordWrapEnabled != isWordWrapEnabled
+        let didAutocompleteModeChange = context.coordinator.autocompleteMode != autocompleteMode
         context.coordinator.language = language
         context.coordinator.skin = skin
         context.coordinator.indentWidth = indentWidth
+        context.coordinator.autocompleteMode = autocompleteMode
         context.coordinator.textBinding = $text
         context.coordinator.editorFont = editorFont
         context.coordinator.editorSemiboldFont = editorSemiboldFont
@@ -118,6 +122,9 @@ struct CodeEditorView: NSViewRepresentable {
         // Only reconfigure layout when word wrap state actually changes
         if didWordWrapChange {
             context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
+        }
+        if didAutocompleteModeChange {
+            context.coordinator.handleAutocompleteModeChange()
         }
 
         guard let textView = context.coordinator.textView else { return }
@@ -137,37 +144,61 @@ struct CodeEditorView: NSViewRepresentable {
         var language: EditorLanguage
         var skin: SkinDefinition
         var indentWidth: Int
+        var autocompleteMode: EditorAutocompleteMode
         var editorFont: NSFont
         var editorSemiboldFont: NSFont
         var isWordWrapEnabled: Bool
         weak var textView: NSTextView?
         weak var scrollView: NSScrollView?
+        weak var containerView: EditorContainerView?
         let gutterView = GutterView(frame: .zero)
         private var isApplyingHighlighting = false
         private var sourceText: String
         private(set) var requiresHighlightRefresh = true
         private var deferredHighlightWorkItem: DispatchWorkItem?
+        private let completionController = CompletionController()
 
-        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool) {
+        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool) {
             self.textBinding = textBinding
             self.language = language
             self.skin = skin
             self.indentWidth = indentWidth
+            self.autocompleteMode = autocompleteMode
             self.editorFont = editorFont
             self.editorSemiboldFont = editorSemiboldFont
             self.isWordWrapEnabled = isWordWrapEnabled
             self.sourceText = textBinding.wrappedValue
         }
 
-        func attach(textView: NSTextView, scrollView: NSScrollView) {
+        func attach(textView: NSTextView, scrollView: NSScrollView, containerView: EditorContainerView) {
             self.textView = textView
             self.scrollView = scrollView
+            self.containerView = containerView
             gutterView.textView = textView
             ActiveEditorTextViewRegistry.shared.register(textView)
+            completionController.attach(to: containerView)
 
             if let lineClickableTextView = textView as? LineClickableTextView {
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
                 lineClickableTextView.indentWidth = indentWidth
+                lineClickableTextView.autocompleteModeProvider = { [weak self] in
+                    self?.autocompleteMode ?? .systemDefault
+                }
+                lineClickableTextView.isCompletionVisible = { [weak self] in
+                    self?.completionController.isVisible ?? false
+                }
+                lineClickableTextView.requestCompletionUpdate = { [weak self] in
+                    self?.refreshCompletionItems()
+                }
+                lineClickableTextView.cancelCompletions = { [weak self] in
+                    self?.completionController.hide()
+                }
+                lineClickableTextView.moveCompletionSelection = { [weak self] delta in
+                    self?.completionController.moveSelection(delta: delta) ?? false
+                }
+                lineClickableTextView.acceptSelectedCompletion = { [weak self] in
+                    self?.acceptSelectedCompletion() ?? false
+                }
             }
 
             NotificationCenter.default.addObserver(
@@ -189,6 +220,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             // Don't run highlighting synchronously - defer it entirely
             scheduleDeferredHighlightRefresh()
+            (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
             
             // Only redraw the gutter for current line highlight
             gutterView.needsDisplay = true
@@ -208,6 +240,7 @@ struct CodeEditorView: NSViewRepresentable {
             forPartialWordRange charRange: NSRange,
             indexOfSelectedItem index: UnsafeMutablePointer<Int>?
         ) -> [String] {
+            guard autocompleteMode == .systemDefault else { return [] }
             let source = textView.string as NSString
             guard charRange.location != NSNotFound,
                   NSMaxRange(charRange) <= source.length,
@@ -230,6 +263,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             if isApplyingHighlighting { return }
+            refreshCompletionItems()
             textView?.needsDisplay = true
             gutterView.needsDisplay = true
         }
@@ -298,6 +332,7 @@ struct CodeEditorView: NSViewRepresentable {
             scrollView?.backgroundColor = theme.editorBackgroundColor
             gutterView.theme = theme
             gutterView.needsDisplay = true
+            completionController.theme = CompletionPopupTheme(theme: theme)
         }
 
         func syncWithBindingText(_ text: String) -> Bool {
@@ -383,6 +418,7 @@ struct CodeEditorView: NSViewRepresentable {
                 return
             }
             gutterView.needsDisplay = true
+            completionController.reposition(anchorRect: completionAnchorRect())
         }
 
         private func completionCandidates(in text: String, partial: String, excluding reservedWords: Set<String>) -> [String] {
@@ -406,6 +442,95 @@ struct CodeEditorView: NSViewRepresentable {
             }
 
             return prefixMatches.sorted(using: KeyPathComparator(\.self, comparator: .localizedStandard))
+        }
+
+        func handleAutocompleteModeChange() {
+            guard autocompleteMode == .custom else {
+                completionController.hide()
+                return
+            }
+            refreshCompletionItems()
+        }
+
+        private func refreshCompletionItems() {
+            guard autocompleteMode == .custom,
+                  let lineClickableTextView = textView as? LineClickableTextView else {
+                completionController.hide()
+                return
+            }
+
+            guard let completionState = completionState(for: lineClickableTextView) else {
+                completionController.hide()
+                return
+            }
+
+            completionController.show(items: completionState.items, anchorRect: completionState.anchorRect)
+        }
+
+        private func acceptSelectedCompletion() -> Bool {
+            guard autocompleteMode == .custom,
+                  let lineClickableTextView = textView as? LineClickableTextView,
+                  let selectedItem = completionController.selectedItem else {
+                return false
+            }
+
+            let didApply = lineClickableTextView.applyCompletion(selectedItem.text)
+            if didApply {
+                completionController.hide()
+            }
+            return didApply
+        }
+
+        private func completionState(for textView: LineClickableTextView) -> (items: [CompletionItem], anchorRect: NSRect)? {
+            guard let partialRange = textView.currentPartialWordRange(),
+                  partialRange.length >= 2 else {
+                return nil
+            }
+
+            let source = textView.string as NSString
+            guard NSMaxRange(partialRange) <= source.length else { return nil }
+
+            let partial = source.substring(with: partialRange)
+            let reservedWords = reservedIdentifiers(for: language)
+            let candidates = completionCandidates(in: textView.string, partial: partial, excluding: reservedWords)
+            guard !candidates.isEmpty, let anchorRect = completionAnchorRect() else { return nil }
+            return (candidates.map(CompletionItem.init(text:)), anchorRect)
+        }
+
+        private func completionAnchorRect() -> NSRect? {
+            guard let textView,
+                  let containerView,
+                  let caretRect = caretRectInTextViewCoordinates() else {
+                return nil
+            }
+            return containerView.convert(caretRect, from: textView)
+        }
+
+        private func caretRectInTextViewCoordinates() -> NSRect? {
+            guard let textView,
+                  let layoutManager = unsafe textView.layoutManager,
+                  let textContainer = unsafe textView.textContainer else {
+                return nil
+            }
+
+            let insertionLocation = min(textView.selectedRange().location, (textView.string as NSString).length)
+            let glyphIndex = layoutManager.glyphIndexForCharacter(at: insertionLocation)
+            var glyphRange = NSRange(location: glyphIndex, length: 0)
+            if glyphIndex < layoutManager.numberOfGlyphs {
+                glyphRange.length = 1
+            }
+
+            var caretRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            if caretRect.isEmpty {
+                return textView.visibleRect
+            }
+
+            caretRect.origin.x += textView.textContainerInset.width
+            caretRect.origin.y += textView.textContainerInset.height
+            caretRect.size.width = max(caretRect.width, 2)
+            let lineHeight = layoutManager.defaultLineHeight(for: textView.font ?? .monospacedSystemFont(ofSize: 12, weight: .regular))
+            caretRect.size.height = max(caretRect.height, lineHeight)
+            return caretRect
         }
 
         private func reservedIdentifiers(for language: EditorLanguage) -> Set<String> {
@@ -451,6 +576,12 @@ final class LineClickableTextView: NSTextView {
     private var shouldTriggerAutomaticCompletion = false
     private var isApplyingAcceptedCompletion = false
     private var completionTimer: Timer?
+    var requestCompletionUpdate: (() -> Void)?
+    var cancelCompletions: (() -> Void)?
+    var isCompletionVisible: (() -> Bool)?
+    var moveCompletionSelection: ((Int) -> Bool)?
+    var acceptSelectedCompletion: (() -> Bool)?
+    var autocompleteModeProvider: (() -> EditorAutocompleteMode)?
 
     override func setFrameSize(_ newSize: NSSize) {
         guard !isAdjustingFrame else {
@@ -491,6 +622,9 @@ final class LineClickableTextView: NSTextView {
         }
         if modifiers == [.command], event.charactersIgnoringModifiers == "[" {
             outdentSelection()
+            return
+        }
+        if modifiers.isEmpty, handleCompletionKey(event) {
             return
         }
         super.keyDown(with: event)
@@ -626,6 +760,15 @@ final class LineClickableTextView: NSTextView {
         return didBecomeFirstResponder
     }
 
+    override func resignFirstResponder() -> Bool {
+        let didResignFirstResponder = super.resignFirstResponder()
+        if didResignFirstResponder {
+            cancelCompletionTimer()
+            cancelCompletions?()
+        }
+        return didResignFirstResponder
+    }
+
     override func insertText(_ insertString: Any, replacementRange: NSRange) {
         super.insertText(insertString, replacementRange: replacementRange)
     }
@@ -666,6 +809,12 @@ final class LineClickableTextView: NSTextView {
     }
 
     func notePendingCompletionTrigger(replacementString: String?, affectedRange: NSRange) {
+        guard autocompleteModeProvider?() != .off else {
+            cancelCompletionTimer()
+            cancelCompletions?()
+            return
+        }
+
         guard !isApplyingAcceptedCompletion else {
             cancelCompletionTimer()
             shouldTriggerAutomaticCompletion = false
@@ -688,11 +837,14 @@ final class LineClickableTextView: NSTextView {
         } else {
             cancelCompletionTimer()
             shouldTriggerAutomaticCompletion = false
+            cancelCompletions?()
         }
     }
 
     func performAutomaticCompletionIfNeeded() {
-        // No longer called on every keystroke; completion is timer-driven now
+        if isCompletionVisible?() == true {
+            requestCompletionUpdate?()
+        }
     }
 
     private func scheduleCompletionAfterPause() {
@@ -723,7 +875,14 @@ final class LineClickableTextView: NSTextView {
                   self.currentPartialWordRange()?.length ?? 0 >= 2 else {
                 return
             }
-            self.complete(nil)
+            switch self.autocompleteModeProvider?() ?? .systemDefault {
+            case .off:
+                self.cancelCompletions?()
+            case .systemDefault:
+                self.complete(nil)
+            case .custom:
+                self.requestCompletionUpdate?()
+            }
         }
     }
 
@@ -740,7 +899,7 @@ final class LineClickableTextView: NSTextView {
         return String(line.prefix { $0 == " " || $0 == "\t" })
     }
 
-    private func currentPartialWordRange() -> NSRange? {
+    func currentPartialWordRange() -> NSRange? {
         let nsText = string as NSString
         let selection = selectedRange()
         guard selection.length == 0,
@@ -760,6 +919,49 @@ final class LineClickableTextView: NSTextView {
         let length = selection.location - start
         guard length > 0 else { return nil }
         return NSRange(location: start, length: length)
+    }
+
+    func applyCompletion(_ word: String) -> Bool {
+        guard let partialRange = currentPartialWordRange() else { return false }
+
+        cancelCompletionTimer()
+        isApplyingAcceptedCompletion = true
+        defer {
+            DispatchQueue.main.async { [weak self] in
+                self?.isApplyingAcceptedCompletion = false
+            }
+        }
+
+        guard shouldChangeText(in: partialRange, replacementString: word) else { return false }
+        unsafe textStorage?.beginEditing()
+        unsafe textStorage?.replaceCharacters(in: partialRange, with: word)
+        unsafe textStorage?.endEditing()
+        didChangeText()
+        setSelectedRange(NSRange(location: partialRange.location + (word as NSString).length, length: 0))
+        return true
+    }
+
+    private func handleCompletionKey(_ event: NSEvent) -> Bool {
+        guard isCompletionVisible?() == true else { return false }
+
+        switch event.specialKey {
+        case .upArrow:
+            return moveCompletionSelection?(-1) ?? false
+        case .downArrow:
+            return moveCompletionSelection?(1) ?? false
+        default:
+            break
+        }
+
+        switch event.keyCode {
+        case 36, 48, 76:
+            return acceptSelectedCompletion?() ?? false
+        case 53:
+            cancelCompletions?()
+            return true
+        default:
+            return false
+        }
     }
 
     private func drawCurrentLineHighlight(in dirtyRect: NSRect) {
@@ -807,6 +1009,7 @@ final class EditorContainerView: NSView {
     private let gutterWidth: CGFloat = 56
     private var gutterView: GutterView?
     private var scrollView: NSScrollView?
+    private let completionPopupView = CompletionPopupView()
 
     func embed(gutterView: GutterView, scrollView: NSScrollView) {
         self.gutterView?.removeFromSuperview()
@@ -817,6 +1020,8 @@ final class EditorContainerView: NSView {
 
         addSubview(gutterView)
         addSubview(scrollView)
+        addSubview(completionPopupView)
+        completionPopupView.isHidden = true
     }
 
     override func layout() {
@@ -825,6 +1030,190 @@ final class EditorContainerView: NSView {
         guard let gutterView, let scrollView else { return }
         gutterView.frame = NSRect(x: 0, y: 0, width: gutterWidth, height: bounds.height)
         scrollView.frame = NSRect(x: gutterWidth, y: 0, width: bounds.width - gutterWidth, height: bounds.height)
+        completionPopupView.constrainFrame(to: bounds, minimumX: gutterWidth + 8)
+    }
+
+    fileprivate func updateCompletionPopup(items: [CompletionItem], selectedIndex: Int, anchorRect: NSRect, theme: CompletionPopupTheme) {
+        completionPopupView.theme = theme
+        completionPopupView.items = items
+        completionPopupView.selectedIndex = selectedIndex
+        completionPopupView.sizeToFitContent()
+
+        let popupWidth = completionPopupView.frame.width
+        let popupHeight = completionPopupView.frame.height
+        let minimumX = gutterWidth + 8
+        let maximumX = bounds.maxX - popupWidth - 8
+        let originX = min(max(anchorRect.minX, minimumX), max(minimumX, maximumX))
+        var originY = anchorRect.minY - popupHeight - 4
+
+        if originY < bounds.minY + 8 {
+            originY = min(bounds.maxY - popupHeight - 8, anchorRect.maxY + 4)
+        }
+
+        completionPopupView.frame = NSRect(x: originX, y: originY, width: popupWidth, height: popupHeight)
+        completionPopupView.isHidden = false
+        completionPopupView.needsDisplay = true
+    }
+
+    fileprivate func hideCompletionPopup() {
+        completionPopupView.isHidden = true
+    }
+}
+
+private struct CompletionItem: Equatable, Identifiable {
+    let text: String
+
+    var id: String { text }
+}
+
+private struct CompletionPopupTheme {
+    let backgroundColor: NSColor
+    let borderColor: NSColor
+    let textColor: NSColor
+    let selectedBackgroundColor: NSColor
+    let selectedTextColor: NSColor
+
+    init(theme: SkinTheme) {
+        backgroundColor = theme.editorBackgroundColor.blended(withFraction: 0.08, of: .white) ?? theme.editorBackgroundColor
+        borderColor = theme.gutterBorderColor
+        textColor = theme.baseColor
+        selectedBackgroundColor = theme.selectionColor
+        selectedTextColor = theme.baseColor
+    }
+
+    static let fallback = CompletionPopupTheme(theme: .fallback)
+}
+
+@MainActor
+private final class CompletionController {
+    weak var containerView: EditorContainerView?
+    var theme = CompletionPopupTheme.fallback
+    private(set) var items: [CompletionItem] = []
+    private(set) var selectedIndex = 0
+    private var lastAnchorRect: NSRect?
+
+    var isVisible: Bool {
+        !items.isEmpty
+    }
+
+    var selectedItem: CompletionItem? {
+        guard items.indices.contains(selectedIndex) else { return nil }
+        return items[selectedIndex]
+    }
+
+    func attach(to containerView: EditorContainerView) {
+        self.containerView = containerView
+    }
+
+    func show(items: [CompletionItem], anchorRect: NSRect) {
+        guard !items.isEmpty else {
+            hide()
+            return
+        }
+
+        if self.items != items {
+            selectedIndex = 0
+        } else {
+            selectedIndex = min(selectedIndex, max(items.count - 1, 0))
+        }
+        self.items = items
+        lastAnchorRect = anchorRect
+
+        containerView?.updateCompletionPopup(
+            items: items,
+            selectedIndex: selectedIndex,
+            anchorRect: anchorRect,
+            theme: theme
+        )
+    }
+
+    func hide() {
+        items = []
+        selectedIndex = 0
+        lastAnchorRect = nil
+        containerView?.hideCompletionPopup()
+    }
+
+    func moveSelection(delta: Int) -> Bool {
+        guard !items.isEmpty else { return false }
+        selectedIndex = min(max(selectedIndex + delta, 0), items.count - 1)
+        reposition(anchorRect: nil)
+        return true
+    }
+
+    func reposition(anchorRect: NSRect?) {
+        guard !items.isEmpty, let containerView else { return }
+        let nextAnchorRect = anchorRect ?? lastAnchorRect ?? containerView.bounds.insetBy(dx: 8, dy: 8)
+        lastAnchorRect = nextAnchorRect
+        containerView.updateCompletionPopup(
+            items: items,
+            selectedIndex: selectedIndex,
+            anchorRect: nextAnchorRect,
+            theme: theme
+        )
+    }
+}
+
+private final class CompletionPopupView: NSView {
+    private let rowHeight: CGFloat = 26
+    private let maxVisibleRows = 8
+    var theme = CompletionPopupTheme.fallback {
+        didSet { needsDisplay = true }
+    }
+    var items: [CompletionItem] = [] {
+        didSet { needsDisplay = true }
+    }
+    var selectedIndex = 0 {
+        didSet { needsDisplay = true }
+    }
+
+    override var isFlipped: Bool {
+        true
+    }
+
+    func sizeToFitContent() {
+        let visibleRowCount = max(1, min(items.count, maxVisibleRows))
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        ]
+        let widestLabel = items.map { ($0.text as NSString).size(withAttributes: attributes).width }.max() ?? 120
+        let width = min(max(180, ceil(widestLabel) + 28), 360)
+        frame.size = NSSize(width: width, height: CGFloat(visibleRowCount) * rowHeight + 8)
+    }
+
+    func constrainFrame(to visibleRect: NSRect, minimumX: CGFloat) {
+        guard !isHidden else { return }
+        var nextFrame = frame
+        nextFrame.origin.x = min(max(nextFrame.origin.x, minimumX), max(minimumX, visibleRect.maxX - nextFrame.width - 8))
+        nextFrame.origin.y = min(max(nextFrame.origin.y, visibleRect.minY + 8), max(visibleRect.minY + 8, visibleRect.maxY - nextFrame.height - 8))
+        frame = nextFrame
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let popupBounds = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let backgroundPath = NSBezierPath(roundedRect: popupBounds, xRadius: 8, yRadius: 8)
+        theme.backgroundColor.setFill()
+        backgroundPath.fill()
+        theme.borderColor.setStroke()
+        backgroundPath.lineWidth = 1
+        backgroundPath.stroke()
+
+        let visibleItems = Array(items.prefix(maxVisibleRows))
+        for (index, item) in visibleItems.enumerated() {
+            let rowRect = NSRect(x: 4, y: 4 + CGFloat(index) * rowHeight, width: bounds.width - 8, height: rowHeight)
+            if index == selectedIndex {
+                let selectionPath = NSBezierPath(roundedRect: rowRect, xRadius: 6, yRadius: 6)
+                theme.selectedBackgroundColor.setFill()
+                selectionPath.fill()
+            }
+
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
+                .foregroundColor: index == selectedIndex ? theme.selectedTextColor : theme.textColor
+            ]
+            let textRect = rowRect.insetBy(dx: 10, dy: 5)
+            (item.text as NSString).draw(in: textRect, withAttributes: attributes)
+        }
     }
 }
 

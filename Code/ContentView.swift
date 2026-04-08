@@ -428,6 +428,7 @@ struct ContentView: View {
                     skin: preferences.selectedSkin,
                     language: lang,
                     indentWidth: preferences.indentWidth,
+                    autocompleteMode: preferences.autocompleteMode,
                     editorFont: preferences.editorFont,
                     editorSemiboldFont: preferences.editorSemiboldFont
                 )
@@ -717,6 +718,7 @@ private struct EditorAreaView: View {
     let skin: SkinDefinition
     let language: EditorLanguage
     let indentWidth: Int
+    let autocompleteMode: EditorAutocompleteMode
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
 
@@ -728,6 +730,7 @@ private struct EditorAreaView: View {
                 skin: skin,
                 language: language,
                 indentWidth: indentWidth,
+                autocompleteMode: autocompleteMode,
                 editorFont: editorFont,
                 editorSemiboldFont: editorSemiboldFont
             )
@@ -911,6 +914,13 @@ private struct SettingsPopoverView: View {
                         ),
                         range: Double(AppPreferences.minIndentWidth)...Double(AppPreferences.maxIndentWidth)
                     )
+
+                    Picker("Autocomplete", selection: $preferences.autocompleteMode) {
+                        ForEach(EditorAutocompleteMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                 }
             }
 

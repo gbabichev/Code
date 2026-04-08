@@ -9,6 +9,25 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
+enum EditorAutocompleteMode: String, CaseIterable, Identifiable {
+    case off
+    case systemDefault
+    case custom
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off:
+            "Off"
+        case .systemDefault:
+            "Default"
+        case .custom:
+            "Custom"
+        }
+    }
+}
+
 @MainActor
 final class AppPreferences: ObservableObject {
     static let defaultSkinID = "classic"
@@ -79,6 +98,12 @@ final class AppPreferences: ObservableObject {
         }
     }
 
+    @Published var autocompleteMode: EditorAutocompleteMode {
+        didSet {
+            userDefaults.set(autocompleteMode.rawValue, forKey: Keys.autocompleteMode)
+        }
+    }
+
     @Published private(set) var availableSkins: [SkinDefinition] = []
     @Published private(set) var availableEditorFonts: [String] = []
     @Published var errorMessage: String?
@@ -135,6 +160,13 @@ final class AppPreferences: ObservableObject {
             indentWidth = Self.defaultIndentWidth
         }
 
+        if let storedAutocompleteMode = userDefaults.string(forKey: Keys.autocompleteMode),
+           let autocompleteMode = EditorAutocompleteMode(rawValue: storedAutocompleteMode) {
+            self.autocompleteMode = autocompleteMode
+        } else {
+            autocompleteMode = .systemDefault
+        }
+
         reloadEditorFonts()
         reloadSkins()
 
@@ -146,6 +178,7 @@ final class AppPreferences: ObservableObject {
         userDefaults.set(editorFontSize, forKey: Keys.editorFontSize)
         userDefaults.set(isSidebarVisible, forKey: Keys.isSidebarVisible)
         userDefaults.set(indentWidth, forKey: Keys.indentWidth)
+        userDefaults.set(autocompleteMode.rawValue, forKey: Keys.autocompleteMode)
     }
 
     var selectedSkin: SkinDefinition {
@@ -310,4 +343,5 @@ private enum Keys {
     static let editorFontSize = "preferences.editorFontSize"
     static let isSidebarVisible = "preferences.isSidebarVisible"
     static let indentWidth = "preferences.indentWidth"
+    static let autocompleteMode = "preferences.autocompleteMode"
 }
