@@ -990,10 +990,42 @@ final class LineClickableTextView: NSTextView {
     }
 
     override func insertNewline(_ sender: Any?) {
+        if isCompletionVisible?() == true, acceptSelectedCompletion?() == true {
+            return
+        }
         let indentation = currentLineLeadingWhitespaceForInsertion()
         super.insertNewline(sender)
         guard !indentation.isEmpty else { return }
         super.insertText(indentation, replacementRange: selectedRange())
+    }
+
+    override func insertTab(_ sender: Any?) {
+        if isCompletionVisible?() == true, acceptSelectedCompletion?() == true {
+            return
+        }
+        super.insertTab(sender)
+    }
+
+    override func moveUp(_ sender: Any?) {
+        if isCompletionVisible?() == true, moveCompletionSelection?(-1) == true {
+            return
+        }
+        super.moveUp(sender)
+    }
+
+    override func moveDown(_ sender: Any?) {
+        if isCompletionVisible?() == true, moveCompletionSelection?(1) == true {
+            return
+        }
+        super.moveDown(sender)
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        if isCompletionVisible?() == true {
+            cancelCompletions?()
+            return
+        }
+        super.cancelOperation(sender)
     }
 
     override func paste(_ sender: Any?) {
@@ -1148,18 +1180,7 @@ final class LineClickableTextView: NSTextView {
     private func handleCompletionKey(_ event: NSEvent) -> Bool {
         guard isCompletionVisible?() == true else { return false }
 
-        switch event.specialKey {
-        case .upArrow:
-            return moveCompletionSelection?(-1) ?? false
-        case .downArrow:
-            return moveCompletionSelection?(1) ?? false
-        default:
-            break
-        }
-
         switch event.keyCode {
-        case 36, 48, 76:
-            return acceptSelectedCompletion?() ?? false
         case 53:
             cancelCompletions?()
             return true
