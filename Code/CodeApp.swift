@@ -35,6 +35,7 @@ struct CodeApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
+            SidebarCommands()
             EditorCommands(
                 preferences: preferences,
                 searchController: searchController,
