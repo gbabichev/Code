@@ -15,6 +15,7 @@ struct CodeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var preferences = AppPreferences()
     @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
+    @StateObject private var activeWorkspaceRegistry = ActiveWorkspaceRegistry.shared
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
     @StateObject private var searchController = EditorSearchController()
     @StateObject private var aboutController = AboutOverlayController()
@@ -26,6 +27,7 @@ struct CodeApp: App {
             WorkspaceSceneView(
                 preferences: preferences,
                 sessionRegistry: sessionRegistry,
+                activeWorkspaceRegistry: activeWorkspaceRegistry,
                 externalFileRouter: externalFileRouter,
                 searchController: searchController,
                 aboutController: aboutController,
@@ -42,6 +44,7 @@ struct CodeApp: App {
                 aboutController: aboutController,
                 settingsController: settingsController,
                 updateCenter: updateCenter,
+                activeWorkspaceRegistry: activeWorkspaceRegistry,
                 openNewWindow: { openWindow(id: "workspace") }
             )
         }
@@ -58,6 +61,7 @@ struct CodeApp: App {
 private struct WorkspaceSceneView: View {
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var sessionRegistry: WorkspaceSessionRegistry
+    @ObservedObject var activeWorkspaceRegistry: ActiveWorkspaceRegistry
     @ObservedObject var externalFileRouter: ExternalFileRouter
     @ObservedObject var searchController: EditorSearchController
     @ObservedObject var aboutController: AboutOverlayController
@@ -70,6 +74,7 @@ private struct WorkspaceSceneView: View {
     init(
         preferences: AppPreferences,
         sessionRegistry: WorkspaceSessionRegistry,
+        activeWorkspaceRegistry: ActiveWorkspaceRegistry,
         externalFileRouter: ExternalFileRouter,
         searchController: EditorSearchController,
         aboutController: AboutOverlayController,
@@ -78,6 +83,7 @@ private struct WorkspaceSceneView: View {
     ) {
         self.preferences = preferences
         self.sessionRegistry = sessionRegistry
+        self.activeWorkspaceRegistry = activeWorkspaceRegistry
         self.externalFileRouter = externalFileRouter
         self.searchController = searchController
         self.aboutController = aboutController
@@ -92,6 +98,7 @@ private struct WorkspaceSceneView: View {
         WorkspaceContentView(sessionID: effectiveSessionID)
             .id(effectiveSessionID)
             .environmentObject(preferences)
+            .environmentObject(activeWorkspaceRegistry)
             .environmentObject(externalFileRouter)
             .environmentObject(searchController)
             .environmentObject(aboutController)
@@ -113,6 +120,7 @@ private struct WorkspaceSceneView: View {
 
 private struct WorkspaceContentView: View {
     @StateObject private var workspace: EditorWorkspace
+    @EnvironmentObject private var activeWorkspaceRegistry: ActiveWorkspaceRegistry
     @EnvironmentObject private var externalFileRouter: ExternalFileRouter
 
     init(sessionID: String) {
@@ -130,10 +138,12 @@ private struct WorkspaceContentView: View {
             .focusedSceneValue(\.activeEditorWorkspace, workspace)
             .background(WindowDirtyStateView(isDocumentEdited: workspace.hasDirtyTabs))
             .background(WindowCloseInterceptorView(workspace: workspace))
+            .background(ActiveWorkspaceTrackingView(workspace: workspace))
             .onAppear {
                 openPendingExternalFiles()
             }
             .onDisappear {
+                activeWorkspaceRegistry.clearIfNeeded(workspace)
                 workspace.flushSession()
             }
             .onChange(of: externalFileRouter.pendingRequestID) { _, _ in
@@ -216,6 +226,41 @@ final class SettingsPopoverController: ObservableObject {
     }
 }
 
+@MainActor
+final class ActiveWorkspaceRegistry: ObservableObject {
+    static let shared = ActiveWorkspaceRegistry()
+
+    @Published private(set) var activeWorkspaceID: ObjectIdentifier?
+    private weak var workspaceReference: EditorWorkspace?
+    private var workspaceObserver: AnyCancellable?
+
+    var workspace: EditorWorkspace? {
+        workspaceReference
+    }
+
+    func setActive(_ workspace: EditorWorkspace) {
+        if workspaceReference === workspace {
+            return
+        }
+
+        workspaceObserver = nil
+        workspaceReference = workspace
+        activeWorkspaceID = ObjectIdentifier(workspace)
+        workspaceObserver = workspace.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in
+                self?.objectWillChange.send()
+            }
+        }
+    }
+
+    func clearIfNeeded(_ workspace: EditorWorkspace) {
+        guard workspaceReference === workspace else { return }
+        workspaceObserver = nil
+        workspaceReference = nil
+        activeWorkspaceID = nil
+    }
+}
+
 private struct EditorCommands: Commands {
     @FocusedValue(\.activeEditorWorkspace) private var workspace
     @ObservedObject var preferences: AppPreferences
@@ -223,7 +268,12 @@ private struct EditorCommands: Commands {
     @ObservedObject var aboutController: AboutOverlayController
     @ObservedObject var settingsController: SettingsPopoverController
     @ObservedObject var updateCenter: AppUpdateCenter
+    @ObservedObject var activeWorkspaceRegistry: ActiveWorkspaceRegistry
     let openNewWindow: () -> Void
+
+    private var resolvedWorkspace: EditorWorkspace? {
+        activeWorkspaceRegistry.workspace ?? workspace
+    }
 
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
@@ -250,12 +300,12 @@ private struct EditorCommands: Commands {
 
         CommandGroup(replacing: .newItem) {
             Button {
-                workspace?.createUntitledTab()
+                resolvedWorkspace?.createUntitledTab()
             } label: {
                 Label("New Tab", systemImage: "plus.square.on.square")
             }
             .keyboardShortcut("n", modifiers: [.command])
-            .disabled(workspace == nil)
+            .disabled(resolvedWorkspace == nil)
 
             Button {
                 openNewWindow()
@@ -267,50 +317,50 @@ private struct EditorCommands: Commands {
             Divider()
 
             Button {
-                workspace?.chooseFile()
+                resolvedWorkspace?.chooseFile()
             } label: {
                 Label("Open File...", systemImage: "doc")
             }
             .keyboardShortcut("o", modifiers: [.command])
-            .disabled(workspace == nil)
+            .disabled(resolvedWorkspace == nil)
 
             Button {
-                workspace?.chooseRootFolder()
+                resolvedWorkspace?.chooseRootFolder()
             } label: {
                 Label("Open Folder...", systemImage: "folder")
             }
             .keyboardShortcut("o", modifiers: [.command, .shift])
-            .disabled(workspace == nil)
+            .disabled(resolvedWorkspace == nil)
 
             Button {
-                workspace?.closeFolder()
+                resolvedWorkspace?.closeFolder()
             } label: {
                 Label("Close Folder", systemImage: "folder.badge.minus")
             }
             .keyboardShortcut("w", modifiers: [.command, .shift])
-            .disabled(workspace?.rootFolderURL == nil)
+            .disabled(resolvedWorkspace?.rootFolderURL == nil)
         }
 
         CommandGroup(after: .saveItem) {
             Button {
                 Task {
-                    await workspace?.saveSelectedTab()
+                    await resolvedWorkspace?.saveSelectedTab()
                 }
             } label: {
                 Label("Save", systemImage: "square.and.arrow.down")
             }
             .keyboardShortcut("s", modifiers: [.command])
-            .disabled(workspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil)
 
             Button {
                 Task {
-                    await workspace?.saveSelectedTabAs()
+                    await resolvedWorkspace?.saveSelectedTabAs()
                 }
             } label: {
                 Label("Save As...", systemImage: "square.and.arrow.down.on.square")
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
-            .disabled(workspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .pasteboard) {
@@ -320,7 +370,7 @@ private struct EditorCommands: Commands {
                 Label("Toggle Line Comment", systemImage: "text.append")
             }
             .keyboardShortcut("/", modifiers: [.command])
-            .disabled(workspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil)
 
             Button {
                 ActiveEditorTextViewRegistry.shared.indentSelection()
@@ -328,7 +378,7 @@ private struct EditorCommands: Commands {
                 Label("Indent", systemImage: "increase.indent")
             }
             .keyboardShortcut("]", modifiers: [.command])
-            .disabled(workspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil)
 
             Button {
                 ActiveEditorTextViewRegistry.shared.outdentSelection()
@@ -336,7 +386,7 @@ private struct EditorCommands: Commands {
                 Label("Outdent", systemImage: "decrease.indent")
             }
             .keyboardShortcut("[", modifiers: [.command])
-            .disabled(workspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .textFormatting) {
@@ -378,7 +428,7 @@ private struct EditorCommands: Commands {
                 Label("Find Next", systemImage: "chevron.down")
             }
             .keyboardShortcut("g", modifiers: [.command])
-            .disabled(workspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil)
 
             Button {
                 searchController.findPrevious()
@@ -386,7 +436,7 @@ private struct EditorCommands: Commands {
                 Label("Find Previous", systemImage: "chevron.up")
             }
             .keyboardShortcut("g", modifiers: [.command, .shift])
-            .disabled(workspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil)
 
             Divider()
 
@@ -396,7 +446,7 @@ private struct EditorCommands: Commands {
                 Label("Use Selection for Find", systemImage: "selection.pin.in.out")
             }
             .keyboardShortcut("e", modifiers: [.command])
-            .disabled(workspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .sidebar) {
@@ -472,6 +522,103 @@ private struct WindowCloseInterceptorView: NSViewRepresentable {
     func updateNSView(_ nsView: WindowCloseInterceptingView, context: Context) {
         nsView.workspace = workspace
         nsView.attachIfNeeded()
+    }
+}
+
+private struct ActiveWorkspaceTrackingView: NSViewRepresentable {
+    @ObservedObject var workspace: EditorWorkspace
+    @EnvironmentObject private var activeWorkspaceRegistry: ActiveWorkspaceRegistry
+
+    func makeNSView(context: Context) -> ActiveWorkspaceTrackingNSView {
+        let view = ActiveWorkspaceTrackingNSView()
+        view.registry = activeWorkspaceRegistry
+        view.workspace = workspace
+        return view
+    }
+
+    func updateNSView(_ nsView: ActiveWorkspaceTrackingNSView, context: Context) {
+        nsView.registry = activeWorkspaceRegistry
+        nsView.workspace = workspace
+        nsView.attachIfNeeded()
+    }
+}
+
+private final class ActiveWorkspaceTrackingNSView: NSView {
+    weak var registry: ActiveWorkspaceRegistry?
+    weak var workspace: EditorWorkspace?
+    private weak var observedWindow: NSWindow?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        attachIfNeeded()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    func attachIfNeeded() {
+        guard let window = unsafe self.window else { return }
+        guard observedWindow !== window else { return }
+
+        detachNotifications()
+        observedWindow = window
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowDidBecomeKey),
+            name: NSWindow.didBecomeKeyNotification,
+            object: window
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowDidBecomeMain),
+            name: NSWindow.didBecomeMainNotification,
+            object: window
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowWillClose),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+
+        if window.isKeyWindow || window.isMainWindow {
+            promoteWorkspace()
+        }
+    }
+
+    @objc
+    private func handleWindowDidBecomeKey(_: Notification) {
+        promoteWorkspace()
+    }
+
+    @objc
+    private func handleWindowDidBecomeMain(_: Notification) {
+        promoteWorkspace()
+    }
+
+    @objc
+    private func handleWindowWillClose(_: Notification) {
+        if let workspace {
+            registry?.clearIfNeeded(workspace)
+        }
+    }
+
+    private func promoteWorkspace() {
+        guard let workspace else { return }
+        registry?.setActive(workspace)
+    }
+
+    private func detachNotifications() {
+        if let observedWindow {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: observedWindow)
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeMainNotification, object: observedWindow)
+            NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: observedWindow)
+        } else {
+            NotificationCenter.default.removeObserver(self)
+        }
+        observedWindow = nil
     }
 }
 
