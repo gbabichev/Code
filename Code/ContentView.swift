@@ -10,8 +10,10 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ContentView: View {
+    @Environment(\.openWindow) private var openWindow
     @EnvironmentObject private var preferences: AppPreferences
     @EnvironmentObject private var workspace: EditorWorkspace
+    @EnvironmentObject private var detachedTabTransfer: DetachedTabTransferCoordinator
     @EnvironmentObject private var searchController: EditorSearchController
     @EnvironmentObject private var aboutController: AboutOverlayController
     @EnvironmentObject private var settingsController: SettingsPopoverController
@@ -188,7 +190,8 @@ struct ContentView: View {
                     onClose: requestCloseTab,
                     onCreate: workspace.createUntitledTab,
                     onMove: workspace.moveTab,
-                    onMoveToEnd: workspace.moveTabToEnd
+                    onMoveToEnd: workspace.moveTabToEnd,
+                    onMoveToNewWindow: moveTabToNewWindow
                 )
                 .onDrop(
                     of: [UTType.fileURL.identifier],
@@ -431,6 +434,12 @@ struct ContentView: View {
 
     private func requestCloseTab(_ id: EditorTab.ID) {
         workspace.requestCloseTab(id)
+    }
+
+    private func moveTabToNewWindow(_ id: EditorTab.ID) {
+        guard let tab = workspace.detachTab(id) else { return }
+        detachedTabTransfer.store(tab)
+        openWindow(id: "workspace")
     }
 
     private func handleSearchCommand() {

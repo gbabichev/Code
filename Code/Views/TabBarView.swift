@@ -15,6 +15,7 @@ struct TabBarView: View {
     let onCreate: () -> Void
     let onMove: (EditorTab.ID, EditorTab.ID) -> Void
     let onMoveToEnd: (EditorTab.ID) -> Void
+    let onMoveToNewWindow: (EditorTab.ID) -> Void
     @State private var draggedTabID: EditorTab.ID?
 
     var body: some View {
@@ -28,7 +29,8 @@ struct TabBarView: View {
                             draggedTabID: $draggedTabID,
                             onSelect: onSelect,
                             onClose: onClose,
-                            onMove: onMove
+                            onMove: onMove,
+                            onMoveToNewWindow: onMoveToNewWindow
                         )
                     }
 
@@ -82,6 +84,7 @@ private struct TabItemView: View {
     let onSelect: (EditorTab.ID) -> Void
     let onClose: (EditorTab.ID) -> Void
     let onMove: (EditorTab.ID, EditorTab.ID) -> Void
+    let onMoveToNewWindow: (EditorTab.ID) -> Void
 
     private var selectedBackground: Color {
         Color.accentColor.opacity(0.16)
@@ -130,6 +133,11 @@ private struct TabItemView: View {
                 onSelect(tab.id)
             }
         )
+        .contextMenu {
+            Button("Move to New Window") {
+                onMoveToNewWindow(tab.id)
+            }
+        }
         .onDrag {
             draggedTabID = tab.id
             return NSItemProvider(object: NSString(string: tab.id))

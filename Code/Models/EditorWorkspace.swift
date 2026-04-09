@@ -167,6 +167,39 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
+    func detachTab(_ id: EditorTab.ID) -> EditorTab? {
+        guard let index = openTabs.firstIndex(where: { $0.id == id }) else {
+            return nil
+        }
+
+        let tab = openTabs.remove(at: index)
+        tabObservers[id] = nil
+
+        if selectedTabID == id {
+            selectedTabID = openTabs.last?.id
+        }
+
+        if selectedFileID == tab.fileURL?.path(percentEncoded: false) {
+            selectedFileID = selectedTab?.fileURL?.path(percentEncoded: false)
+        }
+
+        persistSession()
+        return tab
+    }
+
+    func adoptTransferredTab(_ tab: EditorTab) {
+        if shouldReplacePlaceholderTab, let placeholder = openTabs.first {
+            tabObservers[placeholder.id] = nil
+            openTabs.removeAll()
+        }
+
+        attachObserver(to: tab)
+        openTabs.append(tab)
+        selectedTabID = tab.id
+        selectedFileID = tab.fileURL?.path(percentEncoded: false)
+        persistSession()
+    }
+
     func moveTab(_ id: EditorTab.ID, before targetID: EditorTab.ID) {
         guard id != targetID,
               let sourceIndex = openTabs.firstIndex(where: { $0.id == id }),
@@ -459,6 +492,11 @@ final class EditorWorkspace: ObservableObject {
                 self?.persistSession()
             }
         }
+    }
+
+    private var shouldReplacePlaceholderTab: Bool {
+        guard openTabs.count == 1, let tab = openTabs.first else { return false }
+        return tab.fileURL == nil && tab.content.isEmpty && !tab.isDirty
     }
 
     private func loadChildren(of url: URL) -> [FileNode] {

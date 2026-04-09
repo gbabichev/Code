@@ -16,6 +16,7 @@ struct CodeApp: App {
     @StateObject private var preferences = AppPreferences()
     @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
     @StateObject private var activeWorkspaceRegistry = ActiveWorkspaceRegistry.shared
+    @StateObject private var detachedTabTransfer = DetachedTabTransferCoordinator.shared
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
     @StateObject private var searchController = EditorSearchController()
     @StateObject private var aboutController = AboutOverlayController()
@@ -28,6 +29,7 @@ struct CodeApp: App {
                 preferences: preferences,
                 sessionRegistry: sessionRegistry,
                 activeWorkspaceRegistry: activeWorkspaceRegistry,
+                detachedTabTransfer: detachedTabTransfer,
                 externalFileRouter: externalFileRouter,
                 searchController: searchController,
                 aboutController: aboutController,
@@ -62,6 +64,7 @@ private struct WorkspaceSceneView: View {
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var sessionRegistry: WorkspaceSessionRegistry
     @ObservedObject var activeWorkspaceRegistry: ActiveWorkspaceRegistry
+    @ObservedObject var detachedTabTransfer: DetachedTabTransferCoordinator
     @ObservedObject var externalFileRouter: ExternalFileRouter
     @ObservedObject var searchController: EditorSearchController
     @ObservedObject var aboutController: AboutOverlayController
@@ -75,6 +78,7 @@ private struct WorkspaceSceneView: View {
         preferences: AppPreferences,
         sessionRegistry: WorkspaceSessionRegistry,
         activeWorkspaceRegistry: ActiveWorkspaceRegistry,
+        detachedTabTransfer: DetachedTabTransferCoordinator,
         externalFileRouter: ExternalFileRouter,
         searchController: EditorSearchController,
         aboutController: AboutOverlayController,
@@ -84,6 +88,7 @@ private struct WorkspaceSceneView: View {
         self.preferences = preferences
         self.sessionRegistry = sessionRegistry
         self.activeWorkspaceRegistry = activeWorkspaceRegistry
+        self.detachedTabTransfer = detachedTabTransfer
         self.externalFileRouter = externalFileRouter
         self.searchController = searchController
         self.aboutController = aboutController
@@ -99,6 +104,7 @@ private struct WorkspaceSceneView: View {
             .id(effectiveSessionID)
             .environmentObject(preferences)
             .environmentObject(activeWorkspaceRegistry)
+            .environmentObject(detachedTabTransfer)
             .environmentObject(externalFileRouter)
             .environmentObject(searchController)
             .environmentObject(aboutController)
@@ -121,6 +127,7 @@ private struct WorkspaceSceneView: View {
 private struct WorkspaceContentView: View {
     @StateObject private var workspace: EditorWorkspace
     @EnvironmentObject private var activeWorkspaceRegistry: ActiveWorkspaceRegistry
+    @EnvironmentObject private var detachedTabTransfer: DetachedTabTransferCoordinator
     @EnvironmentObject private var externalFileRouter: ExternalFileRouter
 
     init(sessionID: String) {
@@ -140,6 +147,7 @@ private struct WorkspaceContentView: View {
             .background(WindowCloseInterceptorView(workspace: workspace))
             .background(ActiveWorkspaceTrackingView(workspace: workspace))
             .onAppear {
+                adoptDetachedTabIfNeeded()
                 openPendingExternalFiles()
             }
             .onDisappear {
@@ -158,6 +166,11 @@ private struct WorkspaceContentView: View {
         for url in urls {
             workspace.openFile(url)
         }
+    }
+
+    private func adoptDetachedTabIfNeeded() {
+        guard let tab = detachedTabTransfer.consumePendingTab() else { return }
+        workspace.adoptTransferredTab(tab)
     }
 }
 
@@ -205,6 +218,23 @@ final class ExternalFileRouter: ObservableObject {
         }
 
         return files
+    }
+}
+
+@MainActor
+final class DetachedTabTransferCoordinator: ObservableObject {
+    static let shared = DetachedTabTransferCoordinator()
+
+    private var pendingTab: EditorTab?
+
+    func store(_ tab: EditorTab) {
+        pendingTab = tab
+    }
+
+    func consumePendingTab() -> EditorTab? {
+        let tab = pendingTab
+        pendingTab = nil
+        return tab
     }
 }
 
