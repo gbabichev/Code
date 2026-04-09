@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  Lightweight macOS editor for quick file edits, scripts, and small tasks.
+  Lightweight macOS editor for quick file edits, scripts, and side-by-side work.
 </p>
 
 <p align="center">
@@ -24,10 +24,11 @@ Code is a small macOS-only editor built for the moments when a full IDE feels ex
 ## Features
 
 - Folder browser in the sidebar
-- Multiple tabs and multi-window support
+- Multiple tabs, split view, and multi-window support
 - Session recovery across relaunch, including unsaved work
 - Syntax highlighting for Shell, PowerShell, and Python
 - Lightweight autocomplete for in-file functions and variables
+- In-editor find and replace
 - Status bar tools for line count, encoding, line endings, Finder, Terminal, and file URL copying
 - JSON-backed syntax skin system with import/export
 
