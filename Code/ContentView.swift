@@ -186,12 +186,13 @@ struct ContentView: View {
                     tabs: workspace.openTabs,
                     selectedTabID: workspace.selectedTabID,
                     isDropTargeted: isTargetingTabDrop,
-                    onSelect: { workspace.selectedTabID = $0 },
+                    onSelect: { workspace.selectTab($0) },
                     onClose: requestCloseTab,
                     onCreate: workspace.createUntitledTab,
                     onMove: workspace.moveTab,
                     onMoveToEnd: workspace.moveTabToEnd,
-                    onMoveToNewWindow: moveTabToNewWindow
+                    onMoveToNewWindow: moveTabToNewWindow,
+                    onOpenInSplitView: workspace.openTabInSplitView
                 )
                 .onDrop(
                     of: [UTType.fileURL.identifier],
@@ -415,19 +416,54 @@ struct ContentView: View {
 
     private var editorArea: some View {
         Group {
-            if let tab = workspace.selectedTab {
-                let binding = selectedTabBinding(tab)
-                let lang = tab.language
-                EditorAreaView(
-                    text: binding,
-                    isWordWrapEnabled: preferences.isWordWrapEnabled,
-                    skin: preferences.selectedSkin,
-                    language: lang,
-                    indentWidth: preferences.indentWidth,
-                    autocompleteMode: preferences.autocompleteMode,
-                    editorFont: preferences.editorFont,
-                    editorSemiboldFont: preferences.editorSemiboldFont
-                )
+            if let primaryTab = workspace.primaryTab {
+                if let secondaryTab = workspace.secondaryTab {
+                    HSplitView {
+                        EditorSplitPaneView(
+                            title: primaryTab.title,
+                            isFocused: workspace.focusedPane == .primary,
+                            showsCloseButton: false,
+                            text: selectedTabBinding(primaryTab),
+                            isWordWrapEnabled: preferences.isWordWrapEnabled,
+                            skin: preferences.selectedSkin,
+                            language: primaryTab.language,
+                            indentWidth: preferences.indentWidth,
+                            autocompleteMode: preferences.autocompleteMode,
+                            editorFont: preferences.editorFont,
+                            editorSemiboldFont: preferences.editorSemiboldFont,
+                            onFocus: { workspace.focusPane(.primary) },
+                            onClose: {}
+                        )
+
+                        EditorSplitPaneView(
+                            title: secondaryTab.title,
+                            isFocused: workspace.focusedPane == .secondary,
+                            showsCloseButton: true,
+                            text: selectedTabBinding(secondaryTab),
+                            isWordWrapEnabled: preferences.isWordWrapEnabled,
+                            skin: preferences.selectedSkin,
+                            language: secondaryTab.language,
+                            indentWidth: preferences.indentWidth,
+                            autocompleteMode: preferences.autocompleteMode,
+                            editorFont: preferences.editorFont,
+                            editorSemiboldFont: preferences.editorSemiboldFont,
+                            onFocus: { workspace.focusPane(.secondary) },
+                            onClose: { workspace.closeSplitView() }
+                        )
+                    }
+                } else {
+                    EditorAreaView(
+                        text: selectedTabBinding(primaryTab),
+                        isWordWrapEnabled: preferences.isWordWrapEnabled,
+                        skin: preferences.selectedSkin,
+                        language: primaryTab.language,
+                        indentWidth: preferences.indentWidth,
+                        autocompleteMode: preferences.autocompleteMode,
+                        editorFont: preferences.editorFont,
+                        editorSemiboldFont: preferences.editorSemiboldFont,
+                        onFocus: { workspace.focusPane(.primary) }
+                    )
+                }
             }
         }
     }
@@ -725,6 +761,7 @@ private struct EditorAreaView: View {
     let autocompleteMode: EditorAutocompleteMode
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
+    let onFocus: () -> Void
 
     var body: some View {
         ZStack {
@@ -736,9 +773,71 @@ private struct EditorAreaView: View {
                 indentWidth: indentWidth,
                 autocompleteMode: autocompleteMode,
                 editorFont: editorFont,
-                editorSemiboldFont: editorSemiboldFont
+                editorSemiboldFont: editorSemiboldFont,
+                onDidFocus: onFocus
             )
         }
+    }
+}
+
+private struct EditorSplitPaneView: View {
+    let title: String
+    let isFocused: Bool
+    let showsCloseButton: Bool
+    let text: Binding<String>
+    let isWordWrapEnabled: Bool
+    let skin: SkinDefinition
+    let language: EditorLanguage
+    let indentWidth: Int
+    let autocompleteMode: EditorAutocompleteMode
+    let editorFont: NSFont
+    let editorSemiboldFont: NSFont
+    let onFocus: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                if showsCloseButton {
+                    Button {
+                        onClose()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Close Split")
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .underPageBackgroundColor))
+
+            Divider()
+
+            EditorAreaView(
+                text: text,
+                isWordWrapEnabled: isWordWrapEnabled,
+                skin: skin,
+                language: language,
+                indentWidth: indentWidth,
+                autocompleteMode: autocompleteMode,
+                editorFont: editorFont,
+                editorSemiboldFont: editorSemiboldFont,
+                onFocus: onFocus
+            )
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                onFocus()
+            }
+        )
     }
 }
 

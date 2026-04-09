@@ -37,6 +37,7 @@ struct CodeEditorView: NSViewRepresentable {
     let autocompleteMode: EditorAutocompleteMode
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
+    let onDidFocus: () -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -47,7 +48,8 @@ struct CodeEditorView: NSViewRepresentable {
             autocompleteMode: autocompleteMode,
             editorFont: editorFont,
             editorSemiboldFont: editorSemiboldFont,
-            isWordWrapEnabled: isWordWrapEnabled
+            isWordWrapEnabled: isWordWrapEnabled,
+            onDidFocus: onDidFocus
         )
     }
 
@@ -115,6 +117,7 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.textBinding = $text
         context.coordinator.editorFont = editorFont
         context.coordinator.editorSemiboldFont = editorSemiboldFont
+        context.coordinator.onDidFocus = onDidFocus
 
         if didLanguageChange || didSkinChange || didFontChange {
             let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
@@ -130,7 +133,9 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         guard let textView = context.coordinator.textView else { return }
-        ActiveEditorTextViewRegistry.shared.register(textView)
+        if unsafe textView.window?.firstResponder as? NSTextView === textView {
+            ActiveEditorTextViewRegistry.shared.register(textView)
+        }
         let didTextChange = context.coordinator.syncWithBindingText(text)
         if didLanguageChange || didSkinChange || didFontChange || didTextChange || context.coordinator.requiresHighlightRefresh {
             context.coordinator.applyHighlighting()
@@ -155,6 +160,7 @@ struct CodeEditorView: NSViewRepresentable {
         var editorFont: NSFont
         var editorSemiboldFont: NSFont
         var isWordWrapEnabled: Bool
+        var onDidFocus: () -> Void
         weak var textView: NSTextView?
         weak var scrollView: NSScrollView?
         weak var containerView: EditorContainerView?
@@ -165,7 +171,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingEditedRange: NSRange?
         private let completionController = CompletionController()
 
-        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool) {
+        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
             self.textBinding = textBinding
             self.language = language
             self.skin = skin
@@ -174,6 +180,7 @@ struct CodeEditorView: NSViewRepresentable {
             self.editorFont = editorFont
             self.editorSemiboldFont = editorSemiboldFont
             self.isWordWrapEnabled = isWordWrapEnabled
+            self.onDidFocus = onDidFocus
             self.sourceText = textBinding.wrappedValue
         }
 
@@ -182,7 +189,6 @@ struct CodeEditorView: NSViewRepresentable {
             self.scrollView = scrollView
             self.containerView = containerView
             gutterView.textView = textView
-            ActiveEditorTextViewRegistry.shared.register(textView)
             completionController.attach(to: containerView)
 
             if let lineClickableTextView = textView as? LineClickableTextView {
@@ -205,6 +211,9 @@ struct CodeEditorView: NSViewRepresentable {
                 }
                 lineClickableTextView.acceptSelectedCompletion = { [weak self] in
                     self?.acceptSelectedCompletion() ?? false
+                }
+                lineClickableTextView.didBecomeActive = { [weak self] in
+                    self?.onDidFocus()
                 }
             }
 
@@ -779,6 +788,7 @@ final class LineClickableTextView: NSTextView {
     var moveCompletionSelection: ((Int) -> Bool)?
     var acceptSelectedCompletion: (() -> Bool)?
     var autocompleteModeProvider: (() -> EditorAutocompleteMode)?
+    var didBecomeActive: (() -> Void)?
 
     override func setFrameSize(_ newSize: NSSize) {
         guard !isAdjustingFrame else {
@@ -803,11 +813,13 @@ final class LineClickableTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         ActiveEditorTextViewRegistry.shared.register(self)
+        didBecomeActive?()
         super.mouseDown(with: event)
     }
 
     override func keyDown(with event: NSEvent) {
         ActiveEditorTextViewRegistry.shared.register(self)
+        didBecomeActive?()
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if modifiers == [.command], event.charactersIgnoringModifiers == "/" {
             toggleLineComment()
@@ -953,6 +965,7 @@ final class LineClickableTextView: NSTextView {
         let didBecomeFirstResponder = super.becomeFirstResponder()
         if didBecomeFirstResponder {
             ActiveEditorTextViewRegistry.shared.register(self)
+            didBecomeActive?()
         }
         return didBecomeFirstResponder
     }

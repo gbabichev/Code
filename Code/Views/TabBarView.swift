@@ -16,6 +16,7 @@ struct TabBarView: View {
     let onMove: (EditorTab.ID, EditorTab.ID) -> Void
     let onMoveToEnd: (EditorTab.ID) -> Void
     let onMoveToNewWindow: (EditorTab.ID) -> Void
+    let onOpenInSplitView: (EditorTab.ID) -> Void
     @State private var draggedTabID: EditorTab.ID?
 
     var body: some View {
@@ -30,7 +31,8 @@ struct TabBarView: View {
                             onSelect: onSelect,
                             onClose: onClose,
                             onMove: onMove,
-                            onMoveToNewWindow: onMoveToNewWindow
+                            onMoveToNewWindow: onMoveToNewWindow,
+                            onOpenInSplitView: onOpenInSplitView
                         )
                     }
 
@@ -85,6 +87,7 @@ private struct TabItemView: View {
     let onClose: (EditorTab.ID) -> Void
     let onMove: (EditorTab.ID, EditorTab.ID) -> Void
     let onMoveToNewWindow: (EditorTab.ID) -> Void
+    let onOpenInSplitView: (EditorTab.ID) -> Void
 
     private var selectedBackground: Color {
         Color.accentColor.opacity(0.16)
@@ -134,6 +137,12 @@ private struct TabItemView: View {
             }
         )
         .contextMenu {
+            Button("Open in Split View") {
+                onOpenInSplitView(tab.id)
+            }
+
+            Divider()
+
             Button("Move to New Window") {
                 onMoveToNewWindow(tab.id)
             }

@@ -10,10 +10,18 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class EditorWorkspace: ObservableObject {
+    enum EditorPane: String {
+        case primary
+        case secondary
+    }
+
     @Published private(set) var rootFolderURL: URL?
     @Published private(set) var fileTree: [FileNode] = []
     @Published private(set) var openTabs: [EditorTab] = []
     @Published var selectedTabID: EditorTab.ID?
+    @Published private(set) var primaryTabID: EditorTab.ID?
+    @Published private(set) var secondaryTabID: EditorTab.ID?
+    @Published private(set) var focusedPane: EditorPane = .primary
     @Published var selectedFileID: FileNode.ID?
     @Published var errorMessage: String?
     @Published var pendingTabClose: PendingTabClose?
@@ -43,6 +51,20 @@ final class EditorWorkspace: ObservableObject {
         return openTabs.first(where: { $0.id == selectedTabID })
     }
 
+    var primaryTab: EditorTab? {
+        guard let primaryTabID else { return nil }
+        return openTabs.first(where: { $0.id == primaryTabID })
+    }
+
+    var secondaryTab: EditorTab? {
+        guard let secondaryTabID else { return nil }
+        return openTabs.first(where: { $0.id == secondaryTabID })
+    }
+
+    var isSplitViewVisible: Bool {
+        secondaryTabID != nil
+    }
+
     var hasDirtyTabs: Bool {
         openTabs.contains(where: \.isDirty)
     }
@@ -69,8 +91,16 @@ final class EditorWorkspace: ObservableObject {
         )
         attachObserver(to: tab)
         openTabs.append(tab)
-        selectedTabID = tab.id
-        selectedFileID = nil
+        if primaryTabID == nil {
+            primaryTabID = tab.id
+            focusedPane = .primary
+        } else if focusedPane == .secondary, secondaryTabID != nil {
+            secondaryTabID = tab.id
+        } else {
+            primaryTabID = tab.id
+            focusedPane = .primary
+        }
+        syncActiveSelection()
         persistSession()
     }
 
@@ -109,6 +139,9 @@ final class EditorWorkspace: ObservableObject {
         fileTree = []
         openTabs.removeAll()
         tabObservers.removeAll()
+        primaryTabID = nil
+        secondaryTabID = nil
+        focusedPane = .primary
         selectedTabID = nil
         selectedFileID = nil
         pendingTabClose = nil
@@ -131,7 +164,7 @@ final class EditorWorkspace: ObservableObject {
         selectedFileID = url.path(percentEncoded: false)
 
         if let existing = openTabs.first(where: { $0.fileURL == url }) {
-            selectedTabID = existing.id
+            selectTab(existing.id)
             persistSession()
             return
         }
@@ -149,7 +182,7 @@ final class EditorWorkspace: ObservableObject {
             )
             attachObserver(to: tab)
             openTabs.append(tab)
-            selectedTabID = tab.id
+            selectTab(tab.id, persist: false)
             persistSession()
         } catch {
             errorMessage = "Failed to open \(url.lastPathComponent): \(error.localizedDescription)"
@@ -157,47 +190,97 @@ final class EditorWorkspace: ObservableObject {
     }
 
     func closeTab(_ id: EditorTab.ID) {
-        openTabs.removeAll { $0.id == id }
-        tabObservers[id] = nil
-
-        if selectedTabID == id {
-            selectedTabID = openTabs.last?.id
-        }
-
+        _ = removeTab(id, persist: false)
         persistSession()
     }
 
     func detachTab(_ id: EditorTab.ID) -> EditorTab? {
-        guard let index = openTabs.firstIndex(where: { $0.id == id }) else {
-            return nil
-        }
-
-        let tab = openTabs.remove(at: index)
-        tabObservers[id] = nil
-
-        if selectedTabID == id {
-            selectedTabID = openTabs.last?.id
-        }
-
-        if selectedFileID == tab.fileURL?.path(percentEncoded: false) {
-            selectedFileID = selectedTab?.fileURL?.path(percentEncoded: false)
-        }
-
+        let tab = removeTab(id, persist: false)
         persistSession()
         return tab
     }
 
     func adoptTransferredTab(_ tab: EditorTab) {
-        if shouldReplacePlaceholderTab, let placeholder = openTabs.first {
-            tabObservers[placeholder.id] = nil
-            openTabs.removeAll()
-        }
-
+        openTabs.forEach { tabObservers[$0.id] = nil }
+        openTabs.removeAll()
         attachObserver(to: tab)
         openTabs.append(tab)
-        selectedTabID = tab.id
-        selectedFileID = tab.fileURL?.path(percentEncoded: false)
+        primaryTabID = tab.id
+        secondaryTabID = nil
+        focusedPane = .primary
+        syncActiveSelection()
         persistSession()
+    }
+
+    func openTabInSplitView(_ id: EditorTab.ID) {
+        guard tab(withID: id) != nil else { return }
+
+        if primaryTabID == nil {
+            primaryTabID = id
+            focusedPane = .primary
+        } else if primaryTabID == id {
+            guard let candidate = openTabs.first(where: { $0.id != id }) else {
+                syncActiveSelection()
+                return
+            }
+            secondaryTabID = candidate.id
+            focusedPane = .secondary
+        } else {
+            secondaryTabID = id
+            focusedPane = .secondary
+        }
+
+        syncActiveSelection()
+        persistSession()
+    }
+
+    func closeSplitView() {
+        secondaryTabID = nil
+        focusedPane = .primary
+        syncActiveSelection()
+        persistSession()
+    }
+
+    func focusPane(_ pane: EditorPane) {
+        DispatchQueue.main.async { [weak self] in
+            self?.applyFocusPane(pane)
+        }
+    }
+
+    private func applyFocusPane(_ pane: EditorPane) {
+        if pane == .secondary, secondaryTabID == nil {
+            focusedPane = .primary
+        } else {
+            focusedPane = pane
+        }
+        syncActiveSelection()
+    }
+
+    func selectTab(_ id: EditorTab.ID, persist: Bool = true) {
+        guard tab(withID: id) != nil else { return }
+
+        if primaryTabID == id {
+            focusedPane = .primary
+        } else if secondaryTabID == id {
+            focusedPane = .secondary
+        } else {
+            switch focusedPane {
+            case .primary:
+                primaryTabID = id
+            case .secondary:
+                if secondaryTabID != nil {
+                    secondaryTabID = id
+                } else {
+                    primaryTabID = id
+                    focusedPane = .primary
+                }
+            }
+        }
+
+        syncActiveSelection()
+        if persist {
+            persistSession()
+        }
     }
 
     func moveTab(_ id: EditorTab.ID, before targetID: EditorTab.ID) {
@@ -398,7 +481,7 @@ final class EditorWorkspace: ObservableObject {
         let snapshot = EditorSessionSnapshot(
             rootFolderPath: rootFolderURL?.path(percentEncoded: false),
             selectedFilePath: selectedFileID,
-            selectedTabPath: selectedTabID,
+            selectedTabPath: primaryTabID,
             tabs: openTabs.map {
                 EditorTabSnapshot(
                     id: $0.id,
@@ -478,10 +561,13 @@ final class EditorWorkspace: ObservableObject {
         openTabs = restoredTabs
         selectedFileID = snapshot.selectedFilePath
         if let preferredID = snapshot.selectedTabPath, restoredTabs.contains(where: { $0.id == preferredID }) {
-            selectedTabID = preferredID
+            primaryTabID = preferredID
         } else {
-            selectedTabID = restoredTabs.first?.id
+            primaryTabID = restoredTabs.first?.id
         }
+        secondaryTabID = nil
+        focusedPane = .primary
+        syncActiveSelection()
     }
     private func attachObserver(to tab: EditorTab) {
         // Only forward changes that affect the dirty state (isDirty is @Published).
@@ -497,6 +583,49 @@ final class EditorWorkspace: ObservableObject {
     private var shouldReplacePlaceholderTab: Bool {
         guard openTabs.count == 1, let tab = openTabs.first else { return false }
         return tab.fileURL == nil && tab.content.isEmpty && !tab.isDirty
+    }
+
+    @discardableResult
+    private func removeTab(_ id: EditorTab.ID, persist: Bool) -> EditorTab? {
+        guard let index = openTabs.firstIndex(where: { $0.id == id }) else {
+            return nil
+        }
+
+        let removedTab = openTabs.remove(at: index)
+        tabObservers[id] = nil
+
+        if primaryTabID == id {
+            if let secondaryTabID {
+                primaryTabID = secondaryTabID
+                self.secondaryTabID = nil
+            } else {
+                primaryTabID = openTabs.last?.id
+            }
+            focusedPane = .primary
+        } else if secondaryTabID == id {
+            secondaryTabID = nil
+            focusedPane = .primary
+        }
+
+        if selectedFileID == removedTab.fileURL?.path(percentEncoded: false) {
+            selectedFileID = selectedTab?.fileURL?.path(percentEncoded: false)
+        }
+
+        syncActiveSelection()
+        if persist {
+            persistSession()
+        }
+        return removedTab
+    }
+
+    private func syncActiveSelection() {
+        if focusedPane == .secondary, let secondaryTabID {
+            selectedTabID = secondaryTabID
+        } else {
+            focusedPane = .primary
+            selectedTabID = primaryTabID
+        }
+        selectedFileID = selectedTab?.fileURL?.path(percentEncoded: false)
     }
 
     private func loadChildren(of url: URL) -> [FileNode] {

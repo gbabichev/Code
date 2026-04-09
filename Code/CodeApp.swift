@@ -275,7 +275,10 @@ final class ActiveWorkspaceRegistry: ObservableObject {
 
         workspaceObserver = nil
         workspaceReference = workspace
-        activeWorkspaceID = ObjectIdentifier(workspace)
+        DispatchQueue.main.async { [weak self, weak workspace] in
+            guard let self, let workspace, self.workspaceReference === workspace else { return }
+            self.activeWorkspaceID = ObjectIdentifier(workspace)
+        }
         workspaceObserver = workspace.objectWillChange.sink { [weak self] _ in
             Task { @MainActor in
                 self?.objectWillChange.send()
@@ -287,7 +290,9 @@ final class ActiveWorkspaceRegistry: ObservableObject {
         guard workspaceReference === workspace else { return }
         workspaceObserver = nil
         workspaceReference = nil
-        activeWorkspaceID = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.activeWorkspaceID = nil
+        }
     }
 }
 
