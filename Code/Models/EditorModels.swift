@@ -31,9 +31,36 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
     case powerShell
     case xml
     case json
-    case plist
 
     var id: String { rawValue }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        switch rawValue {
+        case "plainText":
+            self = .plainText
+        case "shell":
+            self = .shell
+        case "dotenv":
+            self = .dotenv
+        case "python":
+            self = .python
+        case "powerShell":
+            self = .powerShell
+        case "xml", "plist":
+            self = .xml
+        case "json":
+            self = .json
+        default:
+            self = .plainText
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 
     static func infer(from url: URL) -> EditorLanguage {
         let shellExtensions = ["sh", "bash", "zsh", "ksh", "command"]
@@ -60,7 +87,7 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
             return .powerShell
         }
 
-        if ["xml", "xsl", "xsd", "plist"].contains(url.pathExtension.lowercased()) {
+        if ["xml", "xsl", "xsd", "plist", "mobileconfig"].contains(url.pathExtension.lowercased()) {
             return .xml
         }
 
@@ -79,7 +106,7 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .shell, .dotenv, .python, .powerShell:
             return "#"
-        case .plainText, .xml, .json, .plist:
+        case .plainText, .xml, .json:
             return nil
         }
     }
@@ -100,8 +127,6 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
             "XML"
         case .json:
             "JSON"
-        case .plist:
-            "Property List"
         }
     }
 }

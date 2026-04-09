@@ -454,6 +454,7 @@ struct XMLSyntaxHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
     private static let tagRegex = try! NSRegularExpression(pattern: #"<\/?[A-Za-z_:][A-Za-z0-9_:\.-]*"#)
+    private static let tagDelimiterRegex = try! NSRegularExpression(pattern: #"/?>"#)
     private static let attributeRegex = try! NSRegularExpression(pattern: #"\s([A-Za-z_:][A-Za-z0-9_:\.-]*)\s*="#)
     private static let numberRegex = try! NSRegularExpression(pattern: #"\b-?\d+\.?\d*\b"#)
     private static let booleanRegex = try! NSRegularExpression(pattern: #"(?m)\b(true|false)\b"#)
@@ -477,6 +478,11 @@ struct XMLSyntaxHighlighter: SyntaxHighlighting {
         }
 
         for match in Self.tagRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: commentRanges + stringRanges) {
+            storage.addAttributes(theme.keywordAttributes, range: match.range)
+        }
+
+        for match in Self.tagDelimiterRegex.matches(in: text, range: highlightRange)
         where !intersects(match.range, with: commentRanges + stringRanges) {
             storage.addAttributes(theme.keywordAttributes, range: match.range)
         }
@@ -721,7 +727,7 @@ enum SyntaxHighlighterFactory {
             return PythonSyntaxHighlighter(theme: theme)
         case .powerShell:
             return PowerShellSyntaxHighlighter(theme: theme)
-        case .xml, .plist:
+        case .xml:
             return XMLSyntaxHighlighter(theme: theme)
         case .json:
             return JSONSyntaxHighlighter(theme: theme)
