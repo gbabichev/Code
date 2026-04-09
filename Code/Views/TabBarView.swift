@@ -18,35 +18,53 @@ struct TabBarView: View {
     @State private var draggedTabID: EditorTab.ID?
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(tabs) { tab in
-                    TabItemView(
-                        tab: tab,
-                        isSelected: tab.id == selectedTabID,
-                        draggedTabID: $draggedTabID,
-                        onSelect: onSelect,
-                        onClose: onClose,
-                        onMove: onMove
-                    )
-                }
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(tabs) { tab in
+                        TabItemView(
+                            tab: tab,
+                            isSelected: tab.id == selectedTabID,
+                            draggedTabID: $draggedTabID,
+                            onSelect: onSelect,
+                            onClose: onClose,
+                            onMove: onMove
+                        )
+                    }
 
-                Color.clear
-                    .frame(width: 28, height: 34)
-                    .contentShape(Rectangle())
-                    .onDrop(of: [UTType.plainText], delegate: TabDropToEndDelegate(
-                        draggedTabID: $draggedTabID,
-                        onMoveToEnd: onMoveToEnd
-                    ))
+                    Color.clear
+                        .frame(width: 28, height: 34)
+                        .contentShape(Rectangle())
+                        .onDrop(of: [UTType.plainText], delegate: TabDropToEndDelegate(
+                            draggedTabID: $draggedTabID,
+                            onMoveToEnd: onMoveToEnd
+                        ))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+
+            Button(action: onCreate) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(RoundedRectangle(cornerRadius: 8))
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.6))
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+                    }
+            }
+            .buttonStyle(.plain)
+            .help("New Tab")
+            .padding(.trailing, 12)
         }
         .background(Color(nsColor: .controlBackgroundColor))
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) {
-            onCreate()
-        }
         .overlay {
             RoundedRectangle(cornerRadius: 10)
                 .strokeBorder(Color.accentColor.opacity(isDropTargeted ? 0.9 : 0), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
