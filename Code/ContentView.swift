@@ -421,7 +421,6 @@ struct ContentView: View {
                     HSplitView {
                         EditorSplitPaneView(
                             title: primaryTab.title,
-                            isFocused: workspace.focusedPane == .primary,
                             showsCloseButton: false,
                             text: selectedTabBinding(primaryTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
@@ -437,7 +436,6 @@ struct ContentView: View {
 
                         EditorSplitPaneView(
                             title: secondaryTab.title,
-                            isFocused: workspace.focusedPane == .secondary,
                             showsCloseButton: true,
                             text: selectedTabBinding(secondaryTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
@@ -782,7 +780,6 @@ private struct EditorAreaView: View {
 
 private struct EditorSplitPaneView: View {
     let title: String
-    let isFocused: Bool
     let showsCloseButton: Bool
     let text: Binding<String>
     let isWordWrapEnabled: Bool

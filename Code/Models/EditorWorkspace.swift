@@ -61,10 +61,6 @@ final class EditorWorkspace: ObservableObject {
         return openTabs.first(where: { $0.id == secondaryTabID })
     }
 
-    var isSplitViewVisible: Bool {
-        secondaryTabID != nil
-    }
-
     var hasDirtyTabs: Bool {
         openTabs.contains(where: \.isDirty)
     }
@@ -578,11 +574,6 @@ final class EditorWorkspace: ObservableObject {
                 self?.persistSession()
             }
         }
-    }
-
-    private var shouldReplacePlaceholderTab: Bool {
-        guard openTabs.count == 1, let tab = openTabs.first else { return false }
-        return tab.fileURL == nil && tab.content.isEmpty && !tab.isDirty
     }
 
     @discardableResult
