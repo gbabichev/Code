@@ -421,7 +421,7 @@ struct ContentView: View {
                     HSplitView {
                         EditorSplitPaneView(
                             title: primaryTab.title,
-                            showsCloseButton: false,
+                            showsCloseButton: true,
                             text: selectedTabBinding(primaryTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
                             skin: preferences.selectedSkin,
@@ -431,7 +431,7 @@ struct ContentView: View {
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
                             onFocus: { workspace.focusPane(.primary) },
-                            onClose: {}
+                            onClose: { workspace.removeTabFromSplitView(primaryTab.id) }
                         )
 
                         EditorSplitPaneView(
@@ -446,7 +446,7 @@ struct ContentView: View {
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
                             onFocus: { workspace.focusPane(.secondary) },
-                            onClose: { workspace.closeSplitView() }
+                            onClose: { workspace.removeTabFromSplitView(secondaryTab.id) }
                         )
                     }
                 } else {
@@ -795,27 +795,41 @@ private struct EditorSplitPaneView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
                 Text(title)
-                    .font(.caption.weight(.semibold))
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.primary.opacity(0.82))
                     .lineLimit(1)
 
                 Spacer(minLength: 0)
 
-                if showsCloseButton {
-                    Button {
-                        onClose()
-                    } label: {
+                Group {
+                    if showsCloseButton {
+                        Button {
+                            onClose()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 18, height: 18)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Remove from Split View")
+                    } else {
                         Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.clear)
+                            .frame(width: 18, height: 18)
+                            .accessibilityHidden(true)
                     }
-                    .buttonStyle(.borderless)
-                    .help("Close Split")
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(nsColor: .underPageBackgroundColor))
-
-            Divider()
+            .background(Color(nsColor: .controlBackgroundColor))
 
             EditorAreaView(
                 text: text,

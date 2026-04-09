@@ -237,6 +237,21 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
+    func removeTabFromSplitView(_ id: EditorTab.ID) {
+        guard primaryTabID == id || secondaryTabID == id else { return }
+
+        if primaryTabID == id, let secondaryTabID {
+            primaryTabID = secondaryTabID
+            self.secondaryTabID = nil
+        } else if secondaryTabID == id {
+            secondaryTabID = nil
+        }
+
+        focusedPane = .primary
+        syncActiveSelection()
+        persistSession()
+    }
+
     func focusPane(_ pane: EditorPane) {
         DispatchQueue.main.async { [weak self] in
             self?.applyFocusPane(pane)
