@@ -384,6 +384,11 @@ struct PendingTabClose: Identifiable, Equatable {
     let fileName: String
 }
 
+struct PendingWindowClose: Identifiable {
+    let id = UUID()
+    let dirtyTabNames: [String]
+}
+
 struct EditorSessionSnapshot: Codable {
     let rootFolderPath: String?
     let selectedFilePath: String?

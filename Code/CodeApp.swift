@@ -396,6 +396,16 @@ private struct EditorCommands: Commands {
             }
             .keyboardShortcut("s", modifiers: [.command, .shift])
             .disabled(resolvedWorkspace?.selectedTab == nil)
+
+            Divider()
+
+            Button {
+                resolvedWorkspace?.requestCloseSelectedTab()
+            } label: {
+                Label("Close Tab", systemImage: "xmark")
+            }
+            .keyboardShortcut("w", modifiers: [.command])
+            .disabled(resolvedWorkspace?.selectedTab == nil)
         }
 
         CommandGroup(after: .pasteboard) {
@@ -661,6 +671,7 @@ private final class WindowCloseInterceptingView: NSView {
     weak var workspace: EditorWorkspace?
     private let delegateProxy = WindowCloseDelegateProxy()
     private weak var observedWindow: NSWindow?
+    private var commandWMonitor: Any?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -671,22 +682,51 @@ private final class WindowCloseInterceptingView: NSView {
         guard let window = unsafe self.window else { return }
         guard observedWindow !== window else { return }
 
+        detachCommandWMonitor()
         observedWindow = window
         unsafe delegateProxy.originalDelegate = window.delegate
-        delegateProxy.shouldAllowWindowClose = { [weak self] in
+        delegateProxy.shouldAllowWindowClose = { [weak self] _ in
             guard let self, let workspace = self.workspace else { return true }
-            guard workspace.selectedTab != nil else { return true }
 
-            workspace.requestCloseSelectedTab()
-            return false
+            if workspace.hasDirtyTabs {
+                workspace.requestWindowClose { [weak self] in
+                    guard let self, let window = self.observedWindow else { return }
+                    self.delegateProxy.performDeferredWindowClose(for: window)
+                }
+                return false
+            }
+
+            return true
         }
         window.delegate = delegateProxy
+        commandWMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            guard self.isCommandW(event) else { return event }
+            guard self.observedWindow?.isKeyWindow == true else { return event }
+            guard let workspace = self.workspace, workspace.selectedTab != nil else { return event }
+
+            workspace.requestCloseSelectedTab()
+            return nil
+        }
+    }
+
+    private func detachCommandWMonitor() {
+        if let commandWMonitor {
+            NSEvent.removeMonitor(commandWMonitor)
+            self.commandWMonitor = nil
+        }
+    }
+
+    private func isCommandW(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags == [.command] && event.charactersIgnoringModifiers?.lowercased() == "w"
     }
 }
 
 private final class WindowCloseDelegateProxy: NSObject, NSWindowDelegate {
     nonisolated(unsafe) weak var originalDelegate: (NSObjectProtocol & NSWindowDelegate)?
-    var shouldAllowWindowClose: (() -> Bool)?
+    var shouldAllowWindowClose: ((NSWindow) -> Bool)?
+    private var shouldBypassNextClose = false
 
     nonisolated override func responds(to aSelector: Selector!) -> Bool {
         super.responds(to: aSelector) || (unsafe originalDelegate?.responds(to: aSelector) ?? false)
@@ -701,11 +741,26 @@ private final class WindowCloseDelegateProxy: NSObject, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard shouldAllowWindowClose?() ?? true else {
+        if shouldBypassNextClose {
+            shouldBypassNextClose = false
+            return unsafe originalDelegate?.windowShouldClose?(sender) ?? true
+        }
+
+        guard shouldAllowWindowClose?(sender) ?? true else {
             return false
         }
 
         return unsafe originalDelegate?.windowShouldClose?(sender) ?? true
+    }
+
+    func performDeferredWindowClose(for window: NSWindow) {
+        shouldBypassNextClose = true
+        DispatchQueue.main.async {
+            window.performClose(nil)
+            if window.isVisible {
+                window.close()
+            }
+        }
     }
 }
 

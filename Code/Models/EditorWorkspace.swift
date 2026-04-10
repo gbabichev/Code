@@ -25,12 +25,14 @@ final class EditorWorkspace: ObservableObject {
     @Published var selectedFileID: FileNode.ID?
     @Published var errorMessage: String?
     @Published var pendingTabClose: PendingTabClose?
+    @Published var pendingWindowClose: PendingWindowClose?
 
     private let fileManager: FileManager
     private let sessionStore: SessionStore
     private var tabObservers: [String: AnyCancellable] = [:]
     private var persistSessionTimer: Timer?
     private var persistSessionThrottled = false
+    private var pendingWindowCloseAction: (@MainActor () -> Void)?
 
     init(
         fileManager: FileManager = .default,
@@ -141,6 +143,8 @@ final class EditorWorkspace: ObservableObject {
         selectedTabID = nil
         selectedFileID = nil
         pendingTabClose = nil
+        pendingWindowClose = nil
+        pendingWindowCloseAction = nil
         errorMessage = nil
         createUntitledTab()
     }
@@ -226,13 +230,6 @@ final class EditorWorkspace: ObservableObject {
             focusedPane = .secondary
         }
 
-        syncActiveSelection()
-        persistSession()
-    }
-
-    func closeSplitView() {
-        secondaryTabID = nil
-        focusedPane = .primary
         syncActiveSelection()
         persistSession()
     }
@@ -349,6 +346,57 @@ final class EditorWorkspace: ObservableObject {
 
     func cancelPendingTabClose() {
         pendingTabClose = nil
+    }
+
+    func requestWindowClose(performClose: @escaping @MainActor () -> Void) {
+        if hasDirtyTabs {
+            pendingWindowCloseAction = performClose
+            pendingWindowClose = PendingWindowClose(
+                dirtyTabNames: openTabs.filter(\.isDirty).map(\.title)
+            )
+            return
+        }
+
+        flushSession()
+        performClose()
+    }
+
+    func confirmPendingWindowCloseSave() async {
+        guard pendingWindowClose != nil else { return }
+
+        let dirtyTabIDs = openTabs.filter(\.isDirty).map(\.id)
+        for id in dirtyTabIDs {
+            await saveTab(id: id)
+            guard let tab = tab(withID: id), !tab.isDirty, errorMessage == nil else {
+                cancelPendingWindowClose()
+                return
+            }
+        }
+
+        let closeAction = pendingWindowCloseAction
+        pendingWindowClose = nil
+        pendingWindowCloseAction = nil
+        flushSession()
+        closeAction?()
+    }
+
+    func confirmPendingWindowCloseDiscard() {
+        guard pendingWindowClose != nil else { return }
+
+        for tab in openTabs where tab.isDirty {
+            discardChanges(for: tab)
+        }
+
+        let closeAction = pendingWindowCloseAction
+        pendingWindowClose = nil
+        pendingWindowCloseAction = nil
+        flushSession()
+        closeAction?()
+    }
+
+    func cancelPendingWindowClose() {
+        pendingWindowClose = nil
+        pendingWindowCloseAction = nil
     }
 
     func updateContent(_ content: String, for id: EditorTab.ID) {
@@ -589,6 +637,12 @@ final class EditorWorkspace: ObservableObject {
                 self?.persistSession()
             }
         }
+    }
+
+    private func discardChanges(for tab: EditorTab) {
+        tab.textEncoding = tab.lastSavedEncoding
+        tab.lineEnding = tab.lastSavedLineEnding
+        tab.setContent(tab.lastSavedContent, notify: true)
     }
 
     @discardableResult

@@ -80,6 +80,21 @@ struct ContentView: View {
         } message: { pending in
             Text("Do you want to save the changes you made to \(pending.fileName)?")
         }
+        .alert("Save Changes Before Closing Window?", isPresented: pendingWindowCloseBinding, presenting: workspace.pendingWindowClose) { _ in
+            Button("Save") {
+                Task {
+                    await workspace.confirmPendingWindowCloseSave()
+                }
+            }
+            Button("Discard", role: .destructive) {
+                workspace.confirmPendingWindowCloseDiscard()
+            }
+            Button("Cancel", role: .cancel) {
+                workspace.cancelPendingWindowClose()
+            }
+        } message: { pending in
+            Text(pendingWindowCloseMessage(for: pending))
+        }
         .alert("Editor Error", isPresented: errorBinding) {
             Button("OK") {
                 workspace.errorMessage = nil
@@ -719,6 +734,25 @@ struct ContentView: View {
                 }
             }
         )
+    }
+
+    private var pendingWindowCloseBinding: Binding<Bool> {
+        Binding(
+            get: { workspace.pendingWindowClose != nil },
+            set: { newValue in
+                if !newValue {
+                    workspace.cancelPendingWindowClose()
+                }
+            }
+        )
+    }
+
+    private func pendingWindowCloseMessage(for pending: PendingWindowClose) -> String {
+        if pending.dirtyTabNames.count == 1, let name = pending.dirtyTabNames.first {
+            return "Do you want to save the changes you made to \(name) before closing this window?"
+        }
+
+        return "Do you want to save the changes you made to \(pending.dirtyTabNames.count) tabs before closing this window?"
     }
 
     private var errorBinding: Binding<Bool> {
