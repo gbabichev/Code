@@ -25,6 +25,7 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable {
 
 enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
     case plainText
+    case markdown
     case shell
     case dotenv
     case python
@@ -40,6 +41,8 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         switch rawValue {
         case "plainText":
             self = .plainText
+        case "markdown":
+            self = .markdown
         case "shell":
             self = .shell
         case "dotenv":
@@ -75,6 +78,10 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         }
 
         let lastPathComponent = url.lastPathComponent.lowercased()
+        if ["md", "markdown"].contains(url.pathExtension.lowercased()) {
+            return .markdown
+        }
+
         if lastPathComponent == ".env" || lastPathComponent.hasPrefix(".env.") {
             return .dotenv
         }
@@ -106,7 +113,7 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .shell, .dotenv, .python, .powerShell:
             return "#"
-        case .plainText, .xml, .json:
+        case .plainText, .markdown, .xml, .json:
             return nil
         }
     }
@@ -115,6 +122,8 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .plainText:
             "Plain Text"
+        case .markdown:
+            "Markdown"
         case .shell:
             "Shell"
         case .dotenv:

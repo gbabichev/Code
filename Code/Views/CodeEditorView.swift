@@ -764,7 +764,7 @@ struct CodeEditorView: NSViewRepresentable {
                     "break", "continue", "return", "function", "filter", "param", "begin",
                     "process", "end", "trap", "throw", "try", "catch", "finally", "class"
                 ]
-            case .xml, .json:
+            case .markdown, .xml, .json:
                 return []
             }
         }

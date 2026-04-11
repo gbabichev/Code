@@ -37,6 +37,123 @@ struct PlainTextHighlighter: SyntaxHighlighting {
     }
 }
 
+struct MarkdownSyntaxHighlighter: SyntaxHighlighting {
+    let theme: SkinTheme
+
+    private static let headingRegex = try! NSRegularExpression(
+        pattern: #"(?m)^(#{1,6}\s+.*)$"#
+    )
+    private static let headingMarkerRegex = try! NSRegularExpression(
+        pattern: #"(?m)^(#{1,6})"#
+    )
+    private static let blockquoteRegex = try! NSRegularExpression(
+        pattern: #"(?m)^\s*>.*$"#
+    )
+    private static let listMarkerRegex = try! NSRegularExpression(
+        pattern: #"(?m)^(\s*(?:[-*+]|\d+\.)\s+)"#
+    )
+    private static let linkRegex = try! NSRegularExpression(
+        pattern: #"\[[^\]\n]+\]\([^) \n]+(?: [^)]+)?\)"#
+    )
+    private static let inlineCodeRegex = try! NSRegularExpression(
+        pattern: #"`[^`\n]+`"#
+    )
+    private static let htmlCommentRegex = try! NSRegularExpression(
+        pattern: #"<!--[\s\S]*?-->"#
+    )
+
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
+        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+
+        if range != nil, highlightRange.length >= maxFullHighlightSize {
+            storage.setAttributes(theme.baseAttributes, range: highlightRange)
+            return
+        }
+
+        storage.setAttributes(theme.baseAttributes, range: highlightRange)
+
+        let nsText = text as NSString
+        let fencedCodeRanges = fencedCodeBlockRanges(in: nsText, within: highlightRange)
+
+        for fencedRange in fencedCodeRanges {
+            storage.addAttributes(theme.stringAttributes, range: fencedRange)
+        }
+
+        for match in Self.htmlCommentRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: fencedCodeRanges) {
+            storage.addAttributes(theme.commentAttributes, range: match.range)
+        }
+
+        for match in Self.headingRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: fencedCodeRanges) {
+            storage.addAttributes(theme.commandAttributes, range: match.range)
+        }
+
+        for match in Self.headingMarkerRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: fencedCodeRanges) {
+            storage.addAttributes(theme.keywordAttributes, range: match.range)
+        }
+
+        for match in Self.blockquoteRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: fencedCodeRanges) {
+            storage.addAttributes(theme.commentAttributes, range: match.range)
+        }
+
+        for match in Self.listMarkerRegex.matches(in: text, range: highlightRange)
+        where match.numberOfRanges > 1 && !intersects(match.range(at: 1), with: fencedCodeRanges) {
+            storage.addAttributes(theme.keywordAttributes, range: match.range(at: 1))
+        }
+
+        for match in Self.linkRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: fencedCodeRanges) {
+            storage.addAttributes(theme.builtinAttributes, range: match.range)
+        }
+
+        for match in Self.inlineCodeRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: fencedCodeRanges) {
+            storage.addAttributes(theme.stringAttributes, range: match.range)
+        }
+    }
+
+    private func fencedCodeBlockRanges(in text: NSString, within range: NSRange) -> [NSRange] {
+        var ranges: [NSRange] = []
+        var index = lineStart(in: text, at: range.location)
+        var fenceStart: Int?
+        var fenceDelimiter: String?
+
+        while index < NSMaxRange(range) {
+            let lineRange = NSRange(location: index, length: max(0, lineEnd(in: text, at: index) - index))
+            let line = text.substring(with: lineRange)
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if fenceStart == nil {
+                if trimmed.hasPrefix("```") {
+                    fenceStart = index
+                    fenceDelimiter = "```"
+                } else if trimmed.hasPrefix("~~~") {
+                    fenceStart = index
+                    fenceDelimiter = "~~~"
+                }
+            } else if let activeFenceStart = fenceStart,
+                      let activeFenceDelimiter = fenceDelimiter,
+                      trimmed.hasPrefix(activeFenceDelimiter) {
+                ranges.append(NSRange(location: activeFenceStart, length: NSMaxRange(lineRange) - activeFenceStart))
+                fenceStart = nil
+                fenceDelimiter = nil
+            }
+
+            index = NSMaxRange(lineRange)
+        }
+
+        if let fenceStart {
+            ranges.append(NSRange(location: fenceStart, length: NSMaxRange(range) - fenceStart))
+        }
+
+        return ranges
+    }
+}
+
 struct ShellSyntaxHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
@@ -719,6 +836,8 @@ enum SyntaxHighlighterFactory {
         let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: semiboldFont)
 
         switch language {
+        case .markdown:
+            return MarkdownSyntaxHighlighter(theme: theme)
         case .shell:
             return ShellSyntaxHighlighter(theme: theme)
         case .dotenv:
