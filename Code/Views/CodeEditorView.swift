@@ -31,6 +31,10 @@ final class ActiveEditorTextViewRegistry {
 private struct GutterLineIndex {
     private var lineStarts: [Int] = [0]
 
+    var lineCount: Int {
+        max(lineStarts.count, 1)
+    }
+
     mutating func rebuild(with text: NSString) {
         lineStarts = [0]
         guard text.length > 0 else { return }
@@ -1498,10 +1502,14 @@ final class LineClickableTextView: NSTextView {
 }
 
 final class EditorContainerView: NSView {
-    private let gutterWidth: CGFloat = 56
+    private let minimumGutterWidth: CGFloat = 56
     private var gutterView: GutterView?
     private var scrollView: NSScrollView?
     private let completionPopupView = CompletionPopupView()
+
+    private var gutterWidth: CGFloat {
+        max(minimumGutterWidth, gutterView?.preferredWidth ?? minimumGutterWidth)
+    }
 
     func embed(gutterView: GutterView, scrollView: NSScrollView) {
         self.gutterView?.removeFromSuperview()
@@ -1730,9 +1738,20 @@ private final class CompletionPopupView: NSView {
 final class GutterView: NSView {
     weak var textView: NSTextView?
     var theme = SkinTheme.fallback {
-        didSet { needsDisplay = true }
+        didSet {
+            updatePreferredWidth()
+            needsDisplay = true
+        }
     }
     private var lineIndex = GutterLineIndex()
+    private let minimumWidth: CGFloat = 56
+    private(set) var preferredWidth: CGFloat = 56 {
+        didSet {
+            guard abs(preferredWidth - oldValue) >= 0.5 else { return }
+            superview?.needsLayout = true
+            needsDisplay = true
+        }
+    }
     
     // Cache for scroll offset to avoid redundant redraws
     var lastClipOrigin: CGPoint = .zero
@@ -1772,7 +1791,10 @@ final class GutterView: NSView {
             var lineGlyphRange = NSRange()
             let lineRect = unsafe layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineGlyphRange)
             let characterIndex = layoutManager.characterIndexForGlyph(at: lineGlyphRange.location)
-            let lineNumber = lineNumber(atCharacterIndex: characterIndex, textLength: textLength)
+            let logicalLineRange = text.lineRange(for: NSRange(location: min(characterIndex, textLength), length: 0))
+            let logicalLineStart = logicalLineRange.location
+            let lineNumber = lineNumber(atCharacterIndex: logicalLineStart, textLength: textLength)
+            let isFirstVisualFragmentForLine = characterIndex == logicalLineStart
             let y = lineRect.minY - clipOrigin.y + textView.textContainerInset.height
             let height = max(lineRect.height, layoutManager.defaultLineHeight(for: textView.font ?? theme.font))
 
@@ -1786,8 +1808,10 @@ final class GutterView: NSView {
                 .foregroundColor: lineNumber == selectedLine ? theme.gutterCurrentLineNumberColor : theme.gutterTextColor,
                 .paragraphStyle: paragraph
             ]
-            let label = NSAttributedString(string: "\(lineNumber)", attributes: attributes)
-            label.draw(in: NSRect(x: 16, y: y + 1, width: bounds.width - 24, height: height))
+            if isFirstVisualFragmentForLine {
+                let label = NSAttributedString(string: "\(lineNumber)", attributes: attributes)
+                label.draw(in: NSRect(x: 12, y: y + 1, width: bounds.width - 18, height: height))
+            }
 
             glyphIndex = NSMaxRange(lineGlyphRange)
         }
@@ -1805,11 +1829,13 @@ final class GutterView: NSView {
 
     func rebuildLineIndex(for text: NSString) {
         lineIndex.rebuild(with: text)
+        updatePreferredWidth()
         needsDisplay = true
     }
 
     func applyLineIndexEdit(range: NSRange, replacement: NSString) {
         lineIndex.applyEdit(range: range, replacement: replacement)
+        updatePreferredWidth()
         needsDisplay = true
     }
 
@@ -1819,6 +1845,14 @@ final class GutterView: NSView {
 
     private func lineNumber(atCharacterIndex characterIndex: Int, textLength: Int) -> Int {
         lineIndex.lineNumber(atCharacterIndex: characterIndex, textLength: textLength)
+    }
+
+    private func updatePreferredWidth() {
+        let digitCount = max(String(lineIndex.lineCount).count, 3)
+        let sample = String(repeating: "8", count: digitCount) as NSString
+        let attributes: [NSAttributedString.Key: Any] = [.font: theme.font]
+        let textWidth = ceil(sample.size(withAttributes: attributes).width)
+        preferredWidth = max(minimumWidth, textWidth + 22)
     }
 
 
@@ -1849,6 +1883,6 @@ final class GutterView: NSView {
             .paragraphStyle: paragraph
         ]
         let label = NSAttributedString(string: "\(lineNumber)", attributes: attributes)
-        label.draw(in: NSRect(x: 16, y: y + 1, width: bounds.width - 24, height: height))
+        label.draw(in: NSRect(x: 12, y: y + 1, width: bounds.width - 18, height: height))
     }
 }
