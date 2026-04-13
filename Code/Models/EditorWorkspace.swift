@@ -551,7 +551,7 @@ final class EditorWorkspace: ObservableObject {
                     lineEnding: $0.lineEnding,
                     lastSavedEncoding: $0.lastSavedEncoding,
                     lastSavedLineEnding: $0.lastSavedLineEnding,
-                    content: $0.content,
+                    content: ($0.fileURL != nil && !$0.isDirty) ? "" : $0.content,
                     isDirty: $0.isDirty
                 )
             }
@@ -584,14 +584,15 @@ final class EditorWorkspace: ObservableObject {
                 )
                 let currentEncoding = item.encoding ?? diskContents.encoding
                 let currentLineEnding = item.lineEnding ?? diskContents.lineEnding
+                let restoredContent = item.isDirty ? item.content : diskContents.content
                 let tab = EditorTab(
                     id: item.id ?? url.path(percentEncoded: false),
                     fileURL: url,
                     languageOverride: item.languageOverride,
                     textEncoding: currentEncoding,
                     lineEnding: currentLineEnding,
-                    content: item.content,
-                    lastSavedContent: item.isDirty ? diskContents.content : item.content,
+                    content: restoredContent,
+                    lastSavedContent: diskContents.content,
                     lastSavedEncoding: item.isDirty ? diskContents.encoding : currentEncoding,
                     lastSavedLineEnding: item.isDirty ? diskContents.lineEnding : currentLineEnding,
                     isDirty: item.isDirty

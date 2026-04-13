@@ -28,6 +28,99 @@ final class ActiveEditorTextViewRegistry {
     }
 }
 
+private struct GutterLineIndex {
+    private var lineStarts: [Int] = [0]
+
+    mutating func rebuild(with text: NSString) {
+        lineStarts = [0]
+        guard text.length > 0 else { return }
+
+        var location = 0
+        while location < text.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+
+            if lineEnd >= text.length {
+                if lineEnd > contentsEnd {
+                    lineStarts.append(text.length)
+                }
+                break
+            }
+
+            lineStarts.append(lineEnd)
+            location = lineEnd
+        }
+    }
+
+    mutating func applyEdit(range: NSRange, replacement: NSString) {
+        let lowerBound = upperBound(of: range.location)
+        let upperBound = upperBound(of: NSMaxRange(range))
+        if lowerBound < upperBound {
+            lineStarts.removeSubrange(lowerBound..<upperBound)
+        }
+
+        let insertedLineStarts = Self.lineStarts(in: replacement, offset: range.location)
+        if !insertedLineStarts.isEmpty {
+            lineStarts.insert(contentsOf: insertedLineStarts, at: lowerBound)
+        }
+
+        let delta = replacement.length - range.length
+        if delta != 0 {
+            let shiftStart = lowerBound + insertedLineStarts.count
+            for index in shiftStart..<lineStarts.count {
+                lineStarts[index] += delta
+            }
+        }
+    }
+
+    func lineNumber(atCharacterIndex characterIndex: Int, textLength: Int) -> Int {
+        let clampedIndex = min(max(characterIndex, 0), textLength)
+        return max(upperBound(of: clampedIndex), 1)
+    }
+
+    private func upperBound(of value: Int) -> Int {
+        var lower = 0
+        var upper = lineStarts.count
+
+        while lower < upper {
+            let mid = (lower + upper) / 2
+            if lineStarts[mid] <= value {
+                lower = mid + 1
+            } else {
+                upper = mid
+            }
+        }
+
+        return lower
+    }
+
+    private static func lineStarts(in text: NSString, offset: Int) -> [Int] {
+        guard text.length > 0 else { return [] }
+
+        var starts: [Int] = []
+        var location = 0
+
+        while location < text.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+
+            if lineEnd >= text.length {
+                if lineEnd > contentsEnd {
+                    starts.append(offset + text.length)
+                }
+                break
+            }
+
+            starts.append(offset + lineEnd)
+            location = lineEnd
+        }
+
+        return starts
+    }
+}
+
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
     let isWordWrapEnabled: Bool
@@ -97,7 +190,12 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
         _ = context.coordinator.syncWithBindingText(text)
         DispatchQueue.main.async {
-            context.coordinator.applyHighlighting()
+            context.coordinator.enableNonContiguousLayout()
+            if isSyntaxHighlightingEnabled {
+                context.coordinator.applyHighlighting()
+            } else {
+                context.coordinator.markHighlightingCurrent()
+            }
         }
 
         return container
@@ -128,7 +226,6 @@ struct CodeEditorView: NSViewRepresentable {
             context.coordinator.applyTheme(theme)
         }
 
-        // Only reconfigure layout when word wrap state actually changes
         if didWordWrapChange {
             context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
         }
@@ -147,6 +244,7 @@ struct CodeEditorView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
+        private static let largeDocumentSyntaxThreshold = 50_000
         private static let identifierPattern = try! NSRegularExpression(pattern: #"\b[A-Za-z_][A-Za-z0-9_]*\b"#)
         private static let pythonFunctionPattern = try! NSRegularExpression(pattern: #"(?m)^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("#)
         private static let pythonVariablePattern = try! NSRegularExpression(pattern: #"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"#)
@@ -174,6 +272,8 @@ struct CodeEditorView: NSViewRepresentable {
         private var sourceText: String
         private(set) var requiresHighlightRefresh = true
         private var pendingEditedRange: NSRange?
+        private var pendingTextEdit: (range: NSRange, replacement: NSString)?
+        private var pendingVisibleRangeHighlightWorkItem: DispatchWorkItem?
         private let completionController = CompletionController()
 
         init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
@@ -195,6 +295,7 @@ struct CodeEditorView: NSViewRepresentable {
             self.scrollView = scrollView
             self.containerView = containerView
             gutterView.textView = textView
+            gutterView.rebuildLineIndex(for: textView.string as NSString)
             completionController.attach(to: containerView)
 
             if let lineClickableTextView = textView as? LineClickableTextView {
@@ -240,6 +341,13 @@ struct CodeEditorView: NSViewRepresentable {
             sourceText = textView.string
             textBinding.wrappedValue = sourceText
 
+            if let pendingTextEdit {
+                gutterView.applyLineIndexEdit(range: pendingTextEdit.range, replacement: pendingTextEdit.replacement)
+                self.pendingTextEdit = nil
+            } else {
+                gutterView.rebuildLineIndex(for: sourceText as NSString)
+            }
+
             // Live highlighting on the exact edited range — no debounce needed
             let editedRange = pendingEditedRange
             pendingEditedRange = nil
@@ -252,6 +360,7 @@ struct CodeEditorView: NSViewRepresentable {
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
             // Capture the exact range being edited for live highlighting
             pendingEditedRange = affectedCharRange
+            pendingTextEdit = (range: affectedCharRange, replacement: (replacementString ?? "") as NSString)
             (textView as? LineClickableTextView)?.notePendingCompletionTrigger(
                 replacementString: replacementString,
                 affectedRange: affectedCharRange
@@ -369,8 +478,19 @@ struct CodeEditorView: NSViewRepresentable {
 
             sourceText = text
             textView.string = text
+            gutterView.rebuildLineIndex(for: text as NSString)
             requiresHighlightRefresh = true
             return true
+        }
+
+        func enableNonContiguousLayout() {
+            if let layoutManager = unsafe textView?.layoutManager {
+                layoutManager.allowsNonContiguousLayout = true
+            }
+        }
+
+        func markHighlightingCurrent() {
+            requiresHighlightRefresh = false
         }
 
         func applyHighlighting(in editedRange: NSRange? = nil) {
@@ -392,6 +512,11 @@ struct CodeEditorView: NSViewRepresentable {
                 let end = min(range.location + range.length + expansion, textStorage.length)
                 highlightRange = NSRange(location: start, length: end - start)
                 requestedHighlightRange = highlightRange
+            } else if isSyntaxHighlightingEnabled,
+                      shouldUseVisibleRangeSyntaxHighlighting(for: textStorage.length) {
+                let visibleRange = visibleCharacterRange() ?? NSRange(location: 0, length: min(5000, textStorage.length))
+                highlightRange = visibleRange
+                requestedHighlightRange = visibleRange
             } else {
                 // Full-document pass (initial load, theme/language change)
                 highlightRange = NSRange(location: 0, length: textStorage.length)
@@ -414,7 +539,9 @@ struct CodeEditorView: NSViewRepresentable {
             textStorage.endEditing()
             textView.selectedRanges = selectedRanges
 
-            if let layoutManager = unsafe textView.layoutManager,
+            let shouldForceLayoutForHighlightedRange = editedRange != nil || highlightRange.length <= 100_000
+            if shouldForceLayoutForHighlightedRange,
+               let layoutManager = unsafe textView.layoutManager,
                let textContainer = unsafe textView.textContainer {
                 layoutManager.invalidateDisplay(forCharacterRange: highlightRange)
                 let glyphRange = unsafe layoutManager.glyphRange(forCharacterRange: highlightRange, actualCharacterRange: nil)
@@ -437,7 +564,49 @@ struct CodeEditorView: NSViewRepresentable {
                 return
             }
             gutterView.needsDisplay = true
-            completionController.reposition(anchorRect: completionAnchor()?.rect)
+            scheduleVisibleRangeHighlightIfNeeded()
+            if completionController.isVisible {
+                completionController.reposition(anchorRect: completionAnchor()?.rect)
+            }
+        }
+
+        private func shouldUseVisibleRangeSyntaxHighlighting(for textLength: Int) -> Bool {
+            isSyntaxHighlightingEnabled && textLength > Self.largeDocumentSyntaxThreshold
+        }
+
+        private func scheduleVisibleRangeHighlightIfNeeded() {
+            guard let textView,
+                  shouldUseVisibleRangeSyntaxHighlighting(for: textView.string.utf16.count) else {
+                pendingVisibleRangeHighlightWorkItem?.cancel()
+                pendingVisibleRangeHighlightWorkItem = nil
+                return
+            }
+
+            pendingVisibleRangeHighlightWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.applyHighlighting(in: self.visibleCharacterRange())
+            }
+            pendingVisibleRangeHighlightWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+        }
+
+        private func visibleCharacterRange() -> NSRange? {
+            guard let textView,
+                  let scrollView,
+                  let layoutManager = unsafe textView.layoutManager,
+                  let textContainer = unsafe textView.textContainer else {
+                return nil
+            }
+
+            let expandedVisibleRect = scrollView.contentView.bounds.insetBy(dx: 0, dy: -400)
+            let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: expandedVisibleRect, in: textContainer)
+            guard visibleGlyphRange.location != NSNotFound else { return nil }
+
+            let characterRange = layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
+            let text = textView.string as NSString
+            guard characterRange.location != NSNotFound, characterRange.location <= text.length else { return nil }
+            return text.lineRange(for: characterRange)
         }
 
         private func completionCandidates(in text: String, partial: String, excluding reservedWords: Set<String>) -> [String] {
@@ -782,9 +951,7 @@ struct CodeEditorView: NSViewRepresentable {
 }
 
 final class LineClickableTextView: NSTextView {
-    var currentLineHighlightColor: NSColor = .clear {
-        didSet { needsDisplay = true }
-    }
+    var currentLineHighlightColor: NSColor = .clear
     var lineCommentPrefix: String?
     var indentWidth = 4
     var extraBottomPadding: CGFloat = 0
@@ -814,11 +981,6 @@ final class LineClickableTextView: NSTextView {
         adjusted.height += extraBottomPadding
         super.setFrameSize(adjusted)
         isAdjustingFrame = false
-    }
-
-    override func drawBackground(in rect: NSRect) {
-        super.drawBackground(in: rect)
-        drawCurrentLineHighlight(in: rect)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -1209,45 +1371,6 @@ final class LineClickableTextView: NSTextView {
         }
     }
 
-    private func drawCurrentLineHighlight(in dirtyRect: NSRect) {
-        guard currentLineHighlightColor.alphaComponent > 0,
-              let layoutManager = unsafe layoutManager else {
-            return
-        }
-
-        let highlightRect = currentLineHighlightRect(layoutManager: layoutManager)
-        guard highlightRect.intersects(dirtyRect) else { return }
-
-        currentLineHighlightColor.setFill()
-        highlightRect.fill()
-    }
-
-    private func currentLineHighlightRect(layoutManager: NSLayoutManager) -> NSRect {
-        let insertionLocation = min(selectedRange().location, string.count)
-
-        if insertionLocation == string.count, !layoutManager.extraLineFragmentRect.isEmpty {
-            let extraRect = layoutManager.extraLineFragmentRect
-            return NSRect(
-                x: 0,
-                y: extraRect.minY + textContainerInset.height,
-                width: bounds.width,
-                height: extraRect.height
-            )
-        }
-
-        let glyphIndex = layoutManager.glyphIndexForCharacter(at: insertionLocation)
-        let lineRect = unsafe layoutManager.lineFragmentRect(
-            forGlyphAt: glyphIndex,
-            effectiveRange: nil,
-            withoutAdditionalLayout: true
-        )
-        return NSRect(
-            x: 0,
-            y: lineRect.minY + textContainerInset.height,
-            width: bounds.width,
-            height: lineRect.height
-        )
-    }
 }
 
 final class EditorContainerView: NSView {
@@ -1485,6 +1608,7 @@ final class GutterView: NSView {
     var theme = SkinTheme.fallback {
         didSet { needsDisplay = true }
     }
+    private var lineIndex = GutterLineIndex()
     
     // Cache for scroll offset to avoid redundant redraws
     var lastClipOrigin: CGPoint = .zero
@@ -1512,19 +1636,19 @@ final class GutterView: NSView {
         let visibleRect = NSRect(origin: clipOrigin, size: scrollView.contentView.bounds.size)
         let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
         let text = textView.string as NSString
-        let selectedLine = selectedLineNumber(in: textView)
+        let textLength = text.length
+        let selectedLine = selectedLineNumber(in: textView, textLength: textLength)
 
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .right
 
         var glyphIndex = visibleGlyphRange.location
-        var lineNumber = lineNumber(atGlyphIndex: glyphIndex, layoutManager: layoutManager, text: text)
 
         while glyphIndex < NSMaxRange(visibleGlyphRange), glyphIndex < layoutManager.numberOfGlyphs {
             var lineGlyphRange = NSRange()
             let lineRect = unsafe layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &lineGlyphRange)
             let characterIndex = layoutManager.characterIndexForGlyph(at: lineGlyphRange.location)
-            let lineRange = text.lineRange(for: NSRange(location: characterIndex, length: 0))
+            let lineNumber = lineNumber(atCharacterIndex: characterIndex, textLength: textLength)
             let y = lineRect.minY - clipOrigin.y + textView.textContainerInset.height
             let height = max(lineRect.height, layoutManager.defaultLineHeight(for: textView.font ?? theme.font))
 
@@ -1542,53 +1666,35 @@ final class GutterView: NSView {
             label.draw(in: NSRect(x: 16, y: y + 1, width: bounds.width - 24, height: height))
 
             glyphIndex = NSMaxRange(lineGlyphRange)
-            lineNumber += lineCount(in: lineRange, text: text)
         }
 
         drawExtraLineFragmentIfNeeded(
             layoutManager: layoutManager,
             clipOrigin: clipOrigin,
             selectedLine: selectedLine,
-            lineNumber: lineNumber
+            lineNumber: lineNumber(atCharacterIndex: textLength, textLength: textLength)
         )
         
         // Update cache
         lastClipOrigin = clipOrigin
     }
 
-    private func selectedLineNumber(in textView: NSTextView) -> Int {
-        let text = textView.string as NSString
-        return lineNumber(atCharacterIndex: min(textView.selectedRange().location, text.length), text: text)
+    func rebuildLineIndex(for text: NSString) {
+        lineIndex.rebuild(with: text)
+        needsDisplay = true
     }
 
-    private func lineNumber(atGlyphIndex glyphIndex: Int, layoutManager: NSLayoutManager, text: NSString) -> Int {
-        let characterIndex = min(layoutManager.characterIndexForGlyph(at: glyphIndex), text.length)
-        return lineNumber(atCharacterIndex: characterIndex, text: text)
+    func applyLineIndexEdit(range: NSRange, replacement: NSString) {
+        lineIndex.applyEdit(range: range, replacement: replacement)
+        needsDisplay = true
     }
 
-    private func lineNumber(atCharacterIndex characterIndex: Int, text: NSString) -> Int {
-        if characterIndex <= 0 { return 1 }
-
-        var count = 1
-        var searchRange = NSRange(location: 0, length: min(characterIndex, text.length))
-        while searchRange.length > 0 {
-            let newlineRange = text.range(of: "\n", options: [], range: searchRange)
-            if newlineRange.location == NSNotFound { break }
-            count += 1
-            let next = NSMaxRange(newlineRange)
-            searchRange = NSRange(location: next, length: max(0, characterIndex - next))
-        }
-        return count
+    private func selectedLineNumber(in textView: NSTextView, textLength: Int) -> Int {
+        lineNumber(atCharacterIndex: textView.selectedRange().location, textLength: textLength)
     }
 
-    private func lineCount(in lineRange: NSRange, text: NSString) -> Int {
-        let substring = text.substring(with: lineRange)
-        let newlineCount = substring.reduce(into: 0) { count, character in
-            if character == "\n" {
-                count += 1
-            }
-        }
-        return max(newlineCount, 1)
+    private func lineNumber(atCharacterIndex characterIndex: Int, textLength: Int) -> Int {
+        lineIndex.lineNumber(atCharacterIndex: characterIndex, textLength: textLength)
     }
 
 
