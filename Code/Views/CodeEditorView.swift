@@ -130,6 +130,8 @@ private struct GutterLineIndex {
 }
 
 struct CodeEditorView: NSViewRepresentable {
+    static let largeFileWordWrapThreshold = 100_000
+
     @Binding var text: String
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
@@ -160,6 +162,7 @@ struct CodeEditorView: NSViewRepresentable {
         let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
         let container = EditorContainerView()
         let textView = LineClickableTextView()
+        let effectiveWordWrapEnabled = Self.effectiveWordWrapEnabled(requested: isWordWrapEnabled, textLength: (text as NSString).length)
 
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -185,7 +188,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = !isWordWrapEnabled
+        scrollView.hasHorizontalScroller = !effectiveWordWrapEnabled
         scrollView.borderType = .noBorder
         scrollView.backgroundColor = theme.editorBackgroundColor
         scrollView.drawsBackground = true
@@ -195,7 +198,9 @@ struct CodeEditorView: NSViewRepresentable {
         container.embed(gutterView: context.coordinator.gutterView, scrollView: scrollView)
         context.coordinator.attach(textView: textView, scrollView: scrollView, containerView: container)
         context.coordinator.applyTheme(theme)
-        context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
+        context.coordinator.requestedWordWrapEnabled = isWordWrapEnabled
+        context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
+        context.coordinator.configureLayout(isWordWrapEnabled: effectiveWordWrapEnabled)
         _ = context.coordinator.syncWithBindingText(text)
         DispatchQueue.main.async {
             context.coordinator.enableNonContiguousLayout()
@@ -210,13 +215,14 @@ struct CodeEditorView: NSViewRepresentable {
     }
 
     func updateNSView(_ container: EditorContainerView, context: Context) {
+        let effectiveWordWrapEnabled = Self.effectiveWordWrapEnabled(requested: isWordWrapEnabled, textLength: (text as NSString).length)
         let didLanguageChange = context.coordinator.language != language
         let didSkinChange = context.coordinator.skin != skin
         let didFontChange = context.coordinator.editorFont.fontName != editorFont.fontName
             || context.coordinator.editorFont.pointSize != editorFont.pointSize
             || context.coordinator.editorSemiboldFont.fontName != editorSemiboldFont.fontName
             || context.coordinator.editorSemiboldFont.pointSize != editorSemiboldFont.pointSize
-        let didWordWrapChange = context.coordinator.isWordWrapEnabled != isWordWrapEnabled
+        let didWordWrapChange = context.coordinator.isWordWrapEnabled != effectiveWordWrapEnabled
         let didAutocompleteModeChange = context.coordinator.autocompleteMode != autocompleteMode
         let didSyntaxHighlightingChange = context.coordinator.isSyntaxHighlightingEnabled != isSyntaxHighlightingEnabled
         context.coordinator.language = language
@@ -224,6 +230,8 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.indentWidth = indentWidth
         context.coordinator.autocompleteMode = autocompleteMode
         context.coordinator.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
+        context.coordinator.requestedWordWrapEnabled = isWordWrapEnabled
+        context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
         context.coordinator.textBinding = $text
         context.coordinator.editorFont = editorFont
         context.coordinator.editorSemiboldFont = editorSemiboldFont
@@ -235,7 +243,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         if didWordWrapChange {
-            context.coordinator.configureLayout(isWordWrapEnabled: isWordWrapEnabled)
+            context.coordinator.configureLayout(isWordWrapEnabled: effectiveWordWrapEnabled)
         }
         if didAutocompleteModeChange {
             context.coordinator.handleAutocompleteModeChange()
@@ -249,6 +257,10 @@ struct CodeEditorView: NSViewRepresentable {
         if didLanguageChange || didSkinChange || didFontChange || didTextChange || didSyntaxHighlightingChange || context.coordinator.requiresHighlightRefresh {
             context.coordinator.applyHighlighting()
         }
+    }
+
+    private static func effectiveWordWrapEnabled(requested: Bool, textLength: Int) -> Bool {
+        requested && textLength <= largeFileWordWrapThreshold
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -275,6 +287,7 @@ struct CodeEditorView: NSViewRepresentable {
         var isSyntaxHighlightingEnabled: Bool
         var editorFont: NSFont
         var editorSemiboldFont: NSFont
+        var requestedWordWrapEnabled: Bool
         var isWordWrapEnabled: Bool
         var onDidFocus: () -> Void
         weak var textView: NSTextView?
@@ -305,6 +318,7 @@ struct CodeEditorView: NSViewRepresentable {
             self.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
             self.editorFont = editorFont
             self.editorSemiboldFont = editorSemiboldFont
+            self.requestedWordWrapEnabled = isWordWrapEnabled
             self.isWordWrapEnabled = isWordWrapEnabled
             self.onDidFocus = onDidFocus
             self.sourceText = textBinding.wrappedValue

@@ -20,6 +20,7 @@ struct ContentView: View {
     @State private var isTargetingTabDrop = false
     @State private var cachedSearchMatches: [NSRange] = []
     @State private var toastMessage: String?
+    @State private var dismissedLargeFileWordWrapBannerTabIDs: Set<EditorTab.ID> = []
     @FocusState private var focusedSearchField: SearchField?
 
     enum SearchField: Hashable {
@@ -429,12 +430,26 @@ struct ContentView: View {
         )
     }
 
+    private func largeFileWordWrapBannerDismissedBinding(for tabID: EditorTab.ID) -> Binding<Bool> {
+        Binding(
+            get: { dismissedLargeFileWordWrapBannerTabIDs.contains(tabID) },
+            set: { isDismissed in
+                if isDismissed {
+                    dismissedLargeFileWordWrapBannerTabIDs.insert(tabID)
+                } else {
+                    dismissedLargeFileWordWrapBannerTabIDs.remove(tabID)
+                }
+            }
+        )
+    }
+
     private var editorArea: some View {
         Group {
             if let primaryTab = workspace.primaryTab {
                 if let secondaryTab = workspace.secondaryTab {
                     HSplitView {
                         EditorSplitPaneView(
+                            isLargeFileWordWrapBannerDismissed: largeFileWordWrapBannerDismissedBinding(for: primaryTab.id),
                             title: primaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(primaryTab),
@@ -451,6 +466,7 @@ struct ContentView: View {
                         )
 
                         EditorSplitPaneView(
+                            isLargeFileWordWrapBannerDismissed: largeFileWordWrapBannerDismissedBinding(for: secondaryTab.id),
                             title: secondaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(secondaryTab),
@@ -468,6 +484,7 @@ struct ContentView: View {
                     }
                 } else {
                     EditorAreaView(
+                        isLargeFileWordWrapBannerDismissed: largeFileWordWrapBannerDismissedBinding(for: primaryTab.id),
                         text: selectedTabBinding(primaryTab),
                         isWordWrapEnabled: preferences.isWordWrapEnabled,
                         isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
@@ -788,6 +805,7 @@ struct ContentView: View {
 
 // MARK: - Editor Area View (extracted to help compiler type-checking)
 private struct EditorAreaView: View {
+    let isLargeFileWordWrapBannerDismissed: Binding<Bool>
     let text: Binding<String>
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
@@ -799,8 +817,37 @@ private struct EditorAreaView: View {
     let editorSemiboldFont: NSFont
     let onFocus: () -> Void
 
+    private var showsLargeFileWordWrapBanner: Bool {
+        isWordWrapEnabled
+            && !isLargeFileWordWrapBannerDismissed.wrappedValue
+            && (text.wrappedValue as NSString).length > CodeEditorView.largeFileWordWrapThreshold
+    }
+
     var body: some View {
-        ZStack {
+        VStack(spacing: 0) {
+            if showsLargeFileWordWrapBanner {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .bold))
+                    Text("Word wrap is disabled for this file because it is too large.")
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                    Button {
+                        isLargeFileWordWrapBannerDismissed.wrappedValue = true
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(0.9))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .foregroundStyle(.white)
+                .background(Color.red.opacity(0.92))
+            }
+
             CodeEditorView(
                 text: text,
                 isWordWrapEnabled: isWordWrapEnabled,
@@ -818,6 +865,7 @@ private struct EditorAreaView: View {
 }
 
 private struct EditorSplitPaneView: View {
+    let isLargeFileWordWrapBannerDismissed: Binding<Bool>
     let title: String
     let showsCloseButton: Bool
     let text: Binding<String>
@@ -872,6 +920,7 @@ private struct EditorSplitPaneView: View {
             .background(Color(nsColor: .controlBackgroundColor))
 
             EditorAreaView(
+                isLargeFileWordWrapBannerDismissed: isLargeFileWordWrapBannerDismissed,
                 text: text,
                 isWordWrapEnabled: isWordWrapEnabled,
                 isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
