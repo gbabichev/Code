@@ -245,6 +245,9 @@ struct CodeEditorView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         private static let largeDocumentSyntaxThreshold = 50_000
+        private static let backgroundHighlightChunkSize = 4_000
+        private static let backgroundHighlightDelay: TimeInterval = 0.03
+        private static let initialBackgroundHighlightDelay: TimeInterval = 0.2
         private static let identifierPattern = try! NSRegularExpression(pattern: #"\b[A-Za-z_][A-Za-z0-9_]*\b"#)
         private static let pythonFunctionPattern = try! NSRegularExpression(pattern: #"(?m)^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("#)
         private static let pythonVariablePattern = try! NSRegularExpression(pattern: #"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"#)
@@ -274,6 +277,9 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingEditedRange: NSRange?
         private var pendingTextEdit: (range: NSRange, replacement: NSString)?
         private var pendingVisibleRangeHighlightWorkItem: DispatchWorkItem?
+        private var pendingBackgroundHighlightWorkItem: DispatchWorkItem?
+        private var backgroundHighlightNextLocation: Int?
+        private var backgroundHighlightStartedAt: Date?
         private let completionController = CompletionController()
 
         init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
@@ -490,16 +496,15 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func markHighlightingCurrent() {
+            cancelBackgroundHighlighting()
             requiresHighlightRefresh = false
         }
 
         func applyHighlighting(in editedRange: NSRange? = nil) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
-            let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
-
-            isApplyingHighlighting = true
-            let selectedRanges = textView.selectedRanges
-            textStorage.beginEditing()
+            if editedRange == nil, isSyntaxHighlightingEnabled {
+                backgroundHighlightStartedAt = Date()
+            }
 
             // When an edited range is provided (live typing), only highlight
             // a small window around the cursor. For large files, shrink it
@@ -523,6 +528,51 @@ struct CodeEditorView: NSViewRepresentable {
                 requestedHighlightRange = nil
             }
 
+            let shouldForceLayoutForHighlightedRange = editedRange != nil || highlightRange.length <= 100_000
+            applyHighlightingPass(
+                highlightRange: highlightRange,
+                requestedHighlightRange: requestedHighlightRange,
+                shouldForceLayoutForHighlightedRange: shouldForceLayoutForHighlightedRange
+            )
+
+            if editedRange == nil {
+                if isSyntaxHighlightingEnabled,
+                   shouldUseVisibleRangeSyntaxHighlighting(for: textStorage.length) {
+                    scheduleBackgroundHighlightIfNeeded(resetProgress: true)
+                } else if isSyntaxHighlightingEnabled {
+                    logSyntaxHighlightingCompleted(totalLength: textStorage.length, mode: "full")
+                }
+            }
+        }
+
+        private func applyHighlightingToVisibleRange(_ range: NSRange) {
+            applyHighlightingPass(
+                highlightRange: range,
+                requestedHighlightRange: range,
+                shouldForceLayoutForHighlightedRange: false
+            )
+        }
+
+        private func applyBackgroundHighlightChunk(_ range: NSRange) {
+            applyHighlightingPass(
+                highlightRange: range,
+                requestedHighlightRange: range,
+                shouldForceLayoutForHighlightedRange: false
+            )
+        }
+
+        private func applyHighlightingPass(
+            highlightRange: NSRange,
+            requestedHighlightRange: NSRange?,
+            shouldForceLayoutForHighlightedRange: Bool
+        ) {
+            guard let textView, let textStorage = unsafe textView.textStorage else { return }
+            let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
+
+            isApplyingHighlighting = true
+            let selectedRanges = textView.selectedRanges
+            textStorage.beginEditing()
+
             if isSyntaxHighlightingEnabled {
                 SyntaxHighlighterFactory.makeHighlighter(
                     for: language,
@@ -539,7 +589,6 @@ struct CodeEditorView: NSViewRepresentable {
             textStorage.endEditing()
             textView.selectedRanges = selectedRanges
 
-            let shouldForceLayoutForHighlightedRange = editedRange != nil || highlightRange.length <= 100_000
             if shouldForceLayoutForHighlightedRange,
                let layoutManager = unsafe textView.layoutManager,
                let textContainer = unsafe textView.textContainer {
@@ -548,6 +597,7 @@ struct CodeEditorView: NSViewRepresentable {
                 let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
                 textView.setNeedsDisplay(rect)
             } else {
+                unsafe textView.layoutManager?.invalidateDisplay(forCharacterRange: highlightRange)
                 textView.needsDisplay = true
             }
 
@@ -576,7 +626,8 @@ struct CodeEditorView: NSViewRepresentable {
 
         private func scheduleVisibleRangeHighlightIfNeeded() {
             guard let textView,
-                  shouldUseVisibleRangeSyntaxHighlighting(for: textView.string.utf16.count) else {
+                  let textLength = unsafe textView.textStorage?.length,
+                  shouldUseVisibleRangeSyntaxHighlighting(for: textLength) else {
                 pendingVisibleRangeHighlightWorkItem?.cancel()
                 pendingVisibleRangeHighlightWorkItem = nil
                 return
@@ -585,10 +636,81 @@ struct CodeEditorView: NSViewRepresentable {
             pendingVisibleRangeHighlightWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self else { return }
-                self.applyHighlighting(in: self.visibleCharacterRange())
+                guard let visibleRange = self.visibleCharacterRange() else { return }
+                self.applyHighlightingToVisibleRange(visibleRange)
             }
             pendingVisibleRangeHighlightWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+        }
+
+        private func scheduleBackgroundHighlightIfNeeded(resetProgress: Bool) {
+            guard let textView,
+                  let textLength = unsafe textView.textStorage?.length,
+                  shouldUseVisibleRangeSyntaxHighlighting(for: textLength) else {
+                cancelBackgroundHighlighting()
+                return
+            }
+
+            if resetProgress || backgroundHighlightNextLocation == nil || backgroundHighlightNextLocation == 0 {
+                backgroundHighlightNextLocation = 0
+            } else {
+                backgroundHighlightNextLocation = min(backgroundHighlightNextLocation ?? 0, textLength)
+            }
+
+            pendingBackgroundHighlightWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.performBackgroundHighlightChunk()
+            }
+            pendingBackgroundHighlightWorkItem = workItem
+            let delay = resetProgress ? Self.initialBackgroundHighlightDelay : Self.backgroundHighlightDelay
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+
+        private func performBackgroundHighlightChunk() {
+            guard let textView,
+                  let textLength = unsafe textView.textStorage?.length,
+                  shouldUseVisibleRangeSyntaxHighlighting(for: textLength) else {
+                cancelBackgroundHighlighting()
+                return
+            }
+
+            let nextLocation = min(max(backgroundHighlightNextLocation ?? 0, 0), textLength)
+            guard nextLocation < textLength else {
+                pendingBackgroundHighlightWorkItem = nil
+                return
+            }
+
+            let chunkLength = min(Self.backgroundHighlightChunkSize, textLength - nextLocation)
+            let chunkRange = NSRange(location: nextLocation, length: chunkLength)
+            backgroundHighlightNextLocation = nextLocation + chunkLength
+            applyBackgroundHighlightChunk(chunkRange)
+
+            if (backgroundHighlightNextLocation ?? textLength) < textLength {
+                scheduleBackgroundHighlightIfNeeded(resetProgress: false)
+            } else {
+                pendingBackgroundHighlightWorkItem = nil
+                logSyntaxHighlightingCompleted(totalLength: textLength, mode: "background")
+            }
+        }
+
+        private func cancelBackgroundHighlighting() {
+            pendingBackgroundHighlightWorkItem?.cancel()
+            pendingBackgroundHighlightWorkItem = nil
+            backgroundHighlightNextLocation = nil
+            backgroundHighlightStartedAt = nil
+        }
+
+        private func logSyntaxHighlightingCompleted(totalLength: Int, mode: String) {
+            #if DEBUG
+            let durationText: String
+            if let backgroundHighlightStartedAt {
+                durationText = String(format: " duration=%.2fs", Date().timeIntervalSince(backgroundHighlightStartedAt))
+            } else {
+                durationText = ""
+            }
+            print("[SyntaxHighlighting] done mode=\(mode) language=\(language.title) chars=\(totalLength)\(durationText)")
+            #endif
+            backgroundHighlightStartedAt = nil
         }
 
         private func visibleCharacterRange() -> NSRange? {
@@ -978,7 +1100,9 @@ final class LineClickableTextView: NSTextView {
         }
         isAdjustingFrame = true
         var adjusted = newSize
-        adjusted.height += extraBottomPadding
+        if abs(newSize.height - frame.height) >= 0.5 {
+            adjusted.height += extraBottomPadding
+        }
         super.setFrameSize(adjusted)
         isAdjustingFrame = false
     }

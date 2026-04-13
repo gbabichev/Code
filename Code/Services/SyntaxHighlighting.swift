@@ -64,7 +64,9 @@ struct MarkdownSyntaxHighlighter: SyntaxHighlighting {
 
     func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: storage.length)
-        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        let nsText = text as NSString
+        let highlightRange = highlightedRange(for: range, in: nsText, fallback: fullRange)
+        let scanRange = range == nil ? highlightRange : contextualScanRange(for: highlightRange, in: nsText, expansion: 32_768)
 
         if range != nil, highlightRange.length >= maxFullHighlightSize {
             storage.setAttributes(theme.baseAttributes, range: highlightRange)
@@ -73,16 +75,20 @@ struct MarkdownSyntaxHighlighter: SyntaxHighlighting {
 
         storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        let nsText = text as NSString
-        let fencedCodeRanges = fencedCodeBlockRanges(in: nsText, within: highlightRange)
+        let fencedCodeRanges = fencedCodeBlockRanges(in: nsText, within: scanRange)
+        let htmlCommentRanges = Self.htmlCommentRegex.matches(in: text, range: scanRange)
+            .map(\.range)
+            .filter { NSIntersectionRange($0, highlightRange).length > 0 }
 
         for fencedRange in fencedCodeRanges {
-            storage.addAttributes(theme.stringAttributes, range: fencedRange)
+            let visibleRange = NSIntersectionRange(fencedRange, highlightRange)
+            guard visibleRange.length > 0 else { continue }
+            storage.addAttributes(theme.stringAttributes, range: visibleRange)
         }
 
-        for match in Self.htmlCommentRegex.matches(in: text, range: highlightRange)
-        where !intersects(match.range, with: fencedCodeRanges) {
-            storage.addAttributes(theme.commentAttributes, range: match.range)
+        for commentRange in htmlCommentRanges
+        where !intersects(commentRange, with: fencedCodeRanges) {
+            storage.addAttributes(theme.commentAttributes, range: commentRange)
         }
 
         for match in Self.headingRegex.matches(in: text, range: highlightRange)
@@ -409,7 +415,9 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
 
     func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: storage.length)
-        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        let nsText = text as NSString
+        let highlightRange = highlightedRange(for: range, in: nsText, fallback: fullRange)
+        let scanRange = range == nil ? highlightRange : contextualScanRange(for: highlightRange, in: nsText)
 
         // Only limit range when a specific edit range was provided (not during force/full highlighting)
         if range != nil, highlightRange.length >= maxFullHighlightSize {
@@ -420,11 +428,11 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
         storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         // Detect comments FIRST so quotes inside comments don't get matched as strings
-        let commentRanges = Self.commentRegex.matches(in: text, range: fullRange)
+        let commentRanges = Self.commentRegex.matches(in: text, range: scanRange)
             .map(\.range)
             .filter { NSIntersectionRange($0, highlightRange).length > 0 }
 
-        let stringRanges = Self.stringRegex.matches(in: text, range: fullRange)
+        let stringRanges = Self.stringRegex.matches(in: text, range: scanRange)
             .map(\.range)
             .filter { range in
                 NSIntersectionRange(range, highlightRange).length > 0
@@ -488,7 +496,9 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
 
     func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: storage.length)
-        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+        let nsText = text as NSString
+        let highlightRange = highlightedRange(for: range, in: nsText, fallback: fullRange)
+        let scanRange = range == nil ? highlightRange : contextualScanRange(for: highlightRange, in: nsText)
 
         // Only limit range when a specific edit range was provided (not during force/full highlighting)
         if range != nil, highlightRange.length >= maxFullHighlightSize {
@@ -499,16 +509,16 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
         storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
         // Detect comments FIRST so quotes inside comments don't get matched as strings
-        let blockCommentRanges = Self.blockCommentRegex.matches(in: text, range: fullRange)
+        let blockCommentRanges = Self.blockCommentRegex.matches(in: text, range: scanRange)
             .map(\.range)
             .filter { NSIntersectionRange($0, highlightRange).length > 0 }
-        let lineCommentRanges = Self.lineCommentRegex.matches(in: text, range: fullRange)
+        let lineCommentRanges = Self.lineCommentRegex.matches(in: text, range: scanRange)
             .map(\.range)
             .filter { NSIntersectionRange($0, highlightRange).length > 0 }
         let commentRanges = blockCommentRanges + lineCommentRanges
 
         // Detect strings, excluding anything inside comments
-        let stringRanges = Self.stringRegex.matches(in: text, range: fullRange)
+        let stringRanges = Self.stringRegex.matches(in: text, range: scanRange)
             .map(\.range)
             .filter { range in
                 NSIntersectionRange(range, highlightRange).length > 0
@@ -555,6 +565,15 @@ private func highlightedRange(for editedRange: NSRange?, in text: NSString, fall
     let clampedLength = min(editedRange.length, text.length - editedRange.location)
     let clampedRange = NSRange(location: editedRange.location, length: clampedLength)
     return expandedLineRange(for: clampedRange, in: text)
+}
+
+private func contextualScanRange(for range: NSRange, in text: NSString, expansion: Int = 4_096) -> NSRange {
+    guard text.length > 0 else { return NSRange(location: 0, length: 0) }
+
+    let start = max(range.location - expansion, 0)
+    let end = min(NSMaxRange(range) + expansion, text.length)
+    let expandedRange = NSRange(location: start, length: end - start)
+    return expandedLineRange(for: expandedRange, in: text)
 }
 
 private func expandedLineRange(for range: NSRange, in text: NSString) -> NSRange {
