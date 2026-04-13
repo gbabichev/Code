@@ -17,7 +17,7 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 - `Code/Models/EditorModels.swift`
   Core models, editor session snapshot, tab metadata, manual language overrides, skin schema models, theme derivation, and language inference.
 - `Code/Views/CodeEditorView.swift`
-  `NSTextView` bridge for editing, wrapping, syntax highlighting, identifier autocomplete, and the custom gutter container.
+  `NSTextView` bridge for editing, wrapping, syntax highlighting, identifier autocomplete, deferred large-file model sync, and the custom gutter container.
 - `Code/Views/FileTreeView.swift`
   Sidebar filesystem tree with live dirty indicators on files and folders.
 - `Code/Views/TabBarView.swift`
@@ -44,9 +44,9 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 ## Editor Behavior Notes
 
 - `EditorWorkspace` is window-local. Open folders, open tabs, selected files, and unsaved buffers should not leak across windows. Global presentation settings belong in `AppPreferences`.
-- The editor uses a custom `EditorContainerView` with two sibling views: a fixed-width `GutterView` on the left and the `NSScrollView`/`NSTextView` editor on the right. Do not reintroduce `NSRulerView` unless there is a specific reason; it previously caused layout and painting issues.
+- The editor uses a custom `EditorContainerView` with two sibling views: a `GutterView` on the left and the `NSScrollView`/`NSTextView` editor on the right. Do not reintroduce `NSRulerView` unless there is a specific reason; it previously caused layout and painting issues.
 - Word wrap is controlled in `CodeEditorView.Coordinator.configureLayout(isWordWrapEnabled:)`. Wrap mode must change both scroller visibility and text-container sizing; hiding the horizontal scroller alone is not enough.
-- The gutter highlights the current line and shows line numbers, including the trailing empty line via `extraLineFragmentRect`. The code area itself currently does not paint a current-line background because earlier approaches interfered with skin rendering.
+- The gutter highlights the current line and shows line numbers, including the trailing empty line via `extraLineFragmentRect`. Gutter width is dynamic based on digit count, and wrapped visual fragments should only draw a line number on the first fragment of a logical line. The code area itself currently does not paint a current-line background because earlier approaches interfered with skin rendering.
 - Sidebar dirty dots are recursive: file rows are dirty when the matching open tab is dirty, and folder rows are dirty when any descendant file is dirty.
 - The bottom status bar is document-scoped. Line count, encoding, line-ending, and language controls reflect the selected tab. Encoding and line-ending changes should update save behavior for that tab, while language selection is a per-tab editor override used for syntax highlighting.
 - The status bar also contains file actions for opening the parent folder in Finder and copying the file URL. The language menu should keep `Auto Detect` as the default path and layer explicit overrides on top.
@@ -54,6 +54,15 @@ This repo is a macOS-only Swift 6 editor prototype. Keep the implementation simp
 - `File > Close Folder` is a per-window reset action. It should clear the current workspace state, remove the root folder and open file tabs for that window, and return the window to a fresh untitled tab without touching global app preferences.
 - `EditorWorkspace.attachObserver(to:)` forwards nested `EditorTab.objectWillChange` events through `workspace.objectWillChange.send()`. That is what keeps sidebar and other workspace-driven views live when tab dirty state changes.
 - Autocomplete is currently buffer-local and identifier-based through `NSTextView` completion hooks. Keep it focused on variables/functions/symbols already present in the document unless there is a deliberate decision to widen the scope.
+
+## Large File Performance Notes
+
+- Large-file regressions usually come from whole-document work on scroll, open, or typing, not from `NSTextView` itself. Avoid full-buffer scans, full regex passes, `string.count`/line counting, or forced whole-document layout inside scroll, draw, selection, or per-keystroke paths.
+- Syntax highlighting for large documents is viewport-first. Initial open should highlight only visible text, scrolling should highlight newly visible text, and any optional offscreen fill should happen incrementally without blocking responsiveness.
+- Partial highlighters must honor the requested range. Do not scan the full document when asked to color a small region; multiline constructs may use a bounded contextual scan, but whole-file regex passes will bring back beachballs.
+- With syntax highlighting off, typing should not reapply base attributes on every keystroke.
+- For large files, `CodeEditorView` treats the `NSTextView` as the hot editing path and defers SwiftUI/model sync until the user pauses. Save paths must flush any pending editor-to-model sync before reading tab content.
+- `LineClickableTextView.setFrameSize(_:)` has extra bottom padding logic; keep it idempotent. Non-idempotent size adjustment can create endless layout churn and idle CPU burn.
 
 ## Follow-up Guidance
 

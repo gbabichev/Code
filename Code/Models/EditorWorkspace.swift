@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class EditorWorkspace: ObservableObject {
+    private static let largeFileTypingThreshold = 100_000
+
     enum EditorPane: String {
         case primary
         case secondary
@@ -31,8 +33,8 @@ final class EditorWorkspace: ObservableObject {
     private let sessionStore: SessionStore
     private var tabObservers: [String: AnyCancellable] = [:]
     private var persistSessionTimer: Timer?
-    private var persistSessionThrottled = false
     private var pendingWindowCloseAction: (@MainActor () -> Void)?
+    private var pendingDirtyStateRecheckTabIDs = Set<EditorTab.ID>()
 
     init(
         fileManager: FileManager = .default,
@@ -401,19 +403,27 @@ final class EditorWorkspace: ObservableObject {
 
     func updateContent(_ content: String, for id: EditorTab.ID) {
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
-        // setContent(notify: false) avoids triggering objectWillChange on every keystroke.
-        // The editor view updates directly through the SwiftUI binding.
-        tab.setContent(content, notify: false)
+        // Large dirty files should not re-compare the entire buffer on every keypress.
+        let shouldUseDeferredDirtyCheck = tab.isDirty && content.utf16.count > Self.largeFileTypingThreshold
+        EditorDebugTrace.log("EditorWorkspace.updateContent tab=\(id) chars=\(content.utf16.count) deferredDirtyCheck=\(shouldUseDeferredDirtyCheck)")
+        tab.setContent(content, notify: false, exactDirtyCheck: !shouldUseDeferredDirtyCheck)
+        if shouldUseDeferredDirtyCheck {
+            pendingDirtyStateRecheckTabIDs.insert(tab.id)
+        } else {
+            pendingDirtyStateRecheckTabIDs.remove(tab.id)
+        }
         // Debounced session persistence — fires after 250ms of inactivity.
         persistSession()
     }
 
     func saveSelectedTab() async {
+        ActiveEditorTextViewRegistry.shared.flushPendingModelSync()
         guard let tab = selectedTab else { return }
         await saveTab(id: tab.id)
     }
 
     func saveSelectedTabAs() async {
+        ActiveEditorTextViewRegistry.shared.flushPendingModelSync()
         guard let tab = selectedTab else { return }
         await saveTab(id: tab.id, forceSavePanel: true)
     }
@@ -423,6 +433,7 @@ final class EditorWorkspace: ObservableObject {
     }
 
     func saveTab(id: EditorTab.ID, forceSavePanel: Bool) async {
+        ActiveEditorTextViewRegistry.shared.flushPendingModelSync()
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
 
         let destinationURL: URL
@@ -522,21 +533,21 @@ final class EditorWorkspace: ObservableObject {
     }
 
     func persistSession() {
-        // Debounce: flush to disk after 250ms of inactivity
-        guard !persistSessionThrottled else { return }
-        persistSessionThrottled = true
-
+        // Real debounce: wait for 250ms of inactivity before writing session state.
+        EditorDebugTrace.log("EditorWorkspace.persistSession schedule")
         persistSessionTimer?.invalidate()
         persistSessionTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.flushSession()
-                self?.persistSessionThrottled = false
             }
         }
     }
 
     /// Immediately write session state to disk (used on app termination)
     func flushSession() {
+        EditorDebugTrace.log("EditorWorkspace.flushSession begin")
+        reconcilePendingDirtyStates()
+
         let snapshot = EditorSessionSnapshot(
             rootFolderPath: rootFolderURL?.path(percentEncoded: false),
             selectedFilePath: selectedFileID,
@@ -557,6 +568,18 @@ final class EditorWorkspace: ObservableObject {
             }
         )
         sessionStore.save(snapshot)
+        EditorDebugTrace.log("EditorWorkspace.flushSession end tabs=\(openTabs.count)")
+    }
+
+    private func reconcilePendingDirtyStates() {
+        guard !pendingDirtyStateRecheckTabIDs.isEmpty else { return }
+
+        for id in pendingDirtyStateRecheckTabIDs {
+            guard let tab = openTabs.first(where: { $0.id == id }) else { continue }
+            tab.refreshDirtyState(exactContentCheck: true)
+        }
+
+        pendingDirtyStateRecheckTabIDs.removeAll()
     }
 
     private func restoreSession() {

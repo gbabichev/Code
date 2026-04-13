@@ -26,6 +26,10 @@ final class ActiveEditorTextViewRegistry {
     func outdentSelection() {
         (textView as? LineClickableTextView)?.outdentSelection()
     }
+
+    func flushPendingModelSync() {
+        (textView as? LineClickableTextView)?.flushPendingModelSync?()
+    }
 }
 
 private struct GutterLineIndex {
@@ -43,7 +47,7 @@ private struct GutterLineIndex {
         while location < text.length {
             var lineEnd = 0
             var contentsEnd = 0
-            text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+            unsafe text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
 
             if lineEnd >= text.length {
                 if lineEnd > contentsEnd {
@@ -108,7 +112,7 @@ private struct GutterLineIndex {
         while location < text.length {
             var lineEnd = 0
             var contentsEnd = 0
-            text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+            unsafe text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
 
             if lineEnd >= text.length {
                 if lineEnd > contentsEnd {
@@ -249,6 +253,8 @@ struct CodeEditorView: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         private static let largeDocumentSyntaxThreshold = 50_000
+        private static let largeFileDeferredBindingThreshold = 100_000
+        private static let largeFileDeferredBindingDelay: TimeInterval = 0.35
         private static let backgroundHighlightChunkSize = 4_000
         private static let backgroundHighlightDelay: TimeInterval = 0.03
         private static let initialBackgroundHighlightDelay: TimeInterval = 0.2
@@ -277,7 +283,11 @@ struct CodeEditorView: NSViewRepresentable {
         let gutterView = GutterView(frame: .zero)
         private var isApplyingHighlighting = false
         private var sourceText: String
+        private var lastSyncedBindingText: String
         private(set) var requiresHighlightRefresh = true
+        private var activeKeystrokeTraceID: Int?
+        private var suppressNextBindingSync = false
+        private var pendingBindingSyncWorkItem: DispatchWorkItem?
         private var pendingEditedRange: NSRange?
         private var pendingTextEdit: (range: NSRange, replacement: NSString)?
         private var pendingVisibleRangeHighlightWorkItem: DispatchWorkItem?
@@ -298,6 +308,7 @@ struct CodeEditorView: NSViewRepresentable {
             self.isWordWrapEnabled = isWordWrapEnabled
             self.onDidFocus = onDidFocus
             self.sourceText = textBinding.wrappedValue
+            self.lastSyncedBindingText = textBinding.wrappedValue
         }
 
         func attach(textView: NSTextView, scrollView: NSScrollView, containerView: EditorContainerView) {
@@ -329,6 +340,9 @@ struct CodeEditorView: NSViewRepresentable {
                 lineClickableTextView.acceptSelectedCompletion = { [weak self] in
                     self?.acceptSelectedCompletion() ?? false
                 }
+                lineClickableTextView.flushPendingModelSync = { [weak self] in
+                    self?.flushPendingBindingSync()
+                }
                 lineClickableTextView.didBecomeActive = { [weak self] in
                     self?.onDidFocus()
                 }
@@ -348,8 +362,13 @@ struct CodeEditorView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
-            sourceText = textView.string
-            textBinding.wrappedValue = sourceText
+            updateSourceTextAfterEdit(textView: textView)
+            EditorDebugTrace.log("Coordinator.textDidChange begin chars=\((sourceText as NSString).length)", eventID: activeKeystrokeTraceID)
+            if shouldDeferBindingSync(for: (sourceText as NSString).length) {
+                schedulePendingBindingSync()
+            } else {
+                flushPendingBindingSync()
+            }
 
             if let pendingTextEdit {
                 gutterView.applyLineIndexEdit(range: pendingTextEdit.range, replacement: pendingTextEdit.replacement)
@@ -361,14 +380,23 @@ struct CodeEditorView: NSViewRepresentable {
             // Live highlighting on the exact edited range — no debounce needed
             let editedRange = pendingEditedRange
             pendingEditedRange = nil
-            applyHighlighting(in: editedRange)
+            if isSyntaxHighlightingEnabled {
+                applyHighlighting(in: editedRange)
+            } else {
+                EditorDebugTrace.log("Coordinator.textDidChange syntaxHighlighting=off", eventID: activeKeystrokeTraceID)
+                markHighlightingCurrent()
+            }
 
             (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
             gutterView.needsDisplay = true
+            EditorDebugTrace.log("Coordinator.textDidChange end", eventID: activeKeystrokeTraceID)
+            EditorDebugTrace.endKeystroke(eventID: activeKeystrokeTraceID)
+            activeKeystrokeTraceID = nil
         }
 
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
             // Capture the exact range being edited for live highlighting
+            activeKeystrokeTraceID = EditorDebugTrace.beginKeystroke(replacementString: replacementString, range: affectedCharRange)
             pendingEditedRange = affectedCharRange
             pendingTextEdit = (range: affectedCharRange, replacement: (replacementString ?? "") as NSString)
             (textView as? LineClickableTextView)?.notePendingCompletionTrigger(
@@ -376,6 +404,24 @@ struct CodeEditorView: NSViewRepresentable {
                 affectedRange: affectedCharRange
             )
             return true
+        }
+
+        private func updateSourceTextAfterEdit(textView: NSTextView) {
+            if let pendingTextEdit {
+                let currentText = sourceText as NSString
+                let affectedRange = pendingTextEdit.range
+                if affectedRange.location != NSNotFound,
+                   NSMaxRange(affectedRange) <= currentText.length {
+                    let updated = NSMutableString(string: sourceText)
+                    updated.replaceCharacters(in: affectedRange, with: pendingTextEdit.replacement as String)
+                    sourceText = updated as String
+                    EditorDebugTrace.log("Coordinator.updateSourceTextAfterEdit incremental chars=\(updated.length)", eventID: activeKeystrokeTraceID)
+                    return
+                }
+            }
+
+            sourceText = textView.string
+            EditorDebugTrace.log("Coordinator.updateSourceTextAfterEdit fallback chars=\((sourceText as NSString).length)", eventID: activeKeystrokeTraceID)
         }
 
         func textView(
@@ -480,17 +526,57 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func syncWithBindingText(_ text: String) -> Bool {
+            if suppressNextBindingSync {
+                EditorDebugTrace.log("Coordinator.syncWithBindingText suppressed")
+                lastSyncedBindingText = text
+                suppressNextBindingSync = false
+                return false
+            }
+
             guard let textView else {
                 sourceText = text
+                lastSyncedBindingText = text
+                return false
+            }
+            if pendingBindingSyncWorkItem != nil, text == lastSyncedBindingText {
+                EditorDebugTrace.log("Coordinator.syncWithBindingText staleDeferredSkip")
                 return false
             }
             guard sourceText != text || textView.string != text else { return false }
 
+            pendingBindingSyncWorkItem?.cancel()
+            pendingBindingSyncWorkItem = nil
+            EditorDebugTrace.log("Coordinator.syncWithBindingText apply chars=\((text as NSString).length)")
             sourceText = text
+            lastSyncedBindingText = text
             textView.string = text
             gutterView.rebuildLineIndex(for: text as NSString)
             requiresHighlightRefresh = true
             return true
+        }
+
+        private func shouldDeferBindingSync(for textLength: Int) -> Bool {
+            textLength > Self.largeFileDeferredBindingThreshold
+        }
+
+        private func schedulePendingBindingSync() {
+            EditorDebugTrace.log("Coordinator.schedulePendingBindingSync chars=\((sourceText as NSString).length)", eventID: activeKeystrokeTraceID)
+            pendingBindingSyncWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.flushPendingBindingSync()
+            }
+            pendingBindingSyncWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.largeFileDeferredBindingDelay, execute: workItem)
+        }
+
+        private func flushPendingBindingSync() {
+            guard sourceText != lastSyncedBindingText || pendingBindingSyncWorkItem != nil else { return }
+            EditorDebugTrace.log("Coordinator.flushPendingBindingSync chars=\((sourceText as NSString).length)", eventID: activeKeystrokeTraceID)
+            pendingBindingSyncWorkItem?.cancel()
+            pendingBindingSyncWorkItem = nil
+            suppressNextBindingSync = true
+            lastSyncedBindingText = sourceText
+            textBinding.wrappedValue = sourceText
         }
 
         func enableNonContiguousLayout() {
@@ -500,12 +586,14 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func markHighlightingCurrent() {
+            EditorDebugTrace.log("Coordinator.markHighlightingCurrent", eventID: activeKeystrokeTraceID)
             cancelBackgroundHighlighting()
             requiresHighlightRefresh = false
         }
 
         func applyHighlighting(in editedRange: NSRange? = nil) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
+            EditorDebugTrace.log("Coordinator.applyHighlighting editedRange=\(editedRange?.location ?? -1):\(editedRange?.length ?? 0) syntax=\(isSyntaxHighlightingEnabled)", eventID: activeKeystrokeTraceID)
             if editedRange == nil, isSyntaxHighlightingEnabled {
                 backgroundHighlightStartedAt = Date()
             }
@@ -572,6 +660,7 @@ struct CodeEditorView: NSViewRepresentable {
         ) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
             let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
+            let startedAt = CFAbsoluteTimeGetCurrent()
 
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
@@ -608,6 +697,10 @@ struct CodeEditorView: NSViewRepresentable {
             gutterView.needsDisplay = true
             isApplyingHighlighting = false
             requiresHighlightRefresh = false
+            if activeKeystrokeTraceID != nil {
+                let durationMS = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+                EditorDebugTrace.log("Coordinator.applyHighlightingPass done range=\(highlightRange.location):\(highlightRange.length) durationMs=\(durationMS)", eventID: activeKeystrokeTraceID)
+            }
         }
 
         @objc
@@ -708,7 +801,7 @@ struct CodeEditorView: NSViewRepresentable {
             #if DEBUG
             let durationText: String
             if let backgroundHighlightStartedAt {
-                durationText = String(format: " duration=%.2fs", Date().timeIntervalSince(backgroundHighlightStartedAt))
+                durationText = unsafe String(format: " duration=%.2fs", Date().timeIntervalSince(backgroundHighlightStartedAt))
             } else {
                 durationText = ""
             }
@@ -729,7 +822,7 @@ struct CodeEditorView: NSViewRepresentable {
             let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: expandedVisibleRect, in: textContainer)
             guard visibleGlyphRange.location != NSNotFound else { return nil }
 
-            let characterRange = layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
+            let characterRange = unsafe layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
             let text = textView.string as NSString
             guard characterRange.location != NSNotFound, characterRange.location <= text.length else { return nil }
             return text.lineRange(for: characterRange)
@@ -1091,6 +1184,7 @@ final class LineClickableTextView: NSTextView {
     var moveCompletionSelection: ((Int) -> Bool)?
     var acceptSelectedCompletion: (() -> Bool)?
     var autocompleteModeProvider: (() -> EditorAutocompleteMode)?
+    var flushPendingModelSync: (() -> Void)?
     var didBecomeActive: (() -> Void)?
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -1748,7 +1842,7 @@ final class GutterView: NSView {
     private(set) var preferredWidth: CGFloat = 56 {
         didSet {
             guard abs(preferredWidth - oldValue) >= 0.5 else { return }
-            superview?.needsLayout = true
+            unsafe superview?.needsLayout = true
             needsDisplay = true
         }
     }
