@@ -38,6 +38,7 @@ final class AppPreferences: ObservableObject {
     static let defaultIndentWidth = 4
     static let minIndentWidth = 1
     static let maxIndentWidth = 8
+    static let defaultSyntaxHighlightingEnabled = true
 
     @Published var isWordWrapEnabled: Bool {
         didSet {
@@ -104,6 +105,12 @@ final class AppPreferences: ObservableObject {
         }
     }
 
+    @Published var isSyntaxHighlightingEnabled: Bool {
+        didSet {
+            userDefaults.set(isSyntaxHighlightingEnabled, forKey: Keys.isSyntaxHighlightingEnabled)
+        }
+    }
+
     @Published private(set) var availableSkins: [SkinDefinition] = []
     @Published private(set) var availableEditorFonts: [String] = []
     @Published var errorMessage: String?
@@ -167,6 +174,12 @@ final class AppPreferences: ObservableObject {
             autocompleteMode = .systemDefault
         }
 
+        if userDefaults.object(forKey: Keys.isSyntaxHighlightingEnabled) != nil {
+            isSyntaxHighlightingEnabled = userDefaults.bool(forKey: Keys.isSyntaxHighlightingEnabled)
+        } else {
+            isSyntaxHighlightingEnabled = Self.defaultSyntaxHighlightingEnabled
+        }
+
         reloadEditorFonts()
         reloadSkins()
 
@@ -179,6 +192,7 @@ final class AppPreferences: ObservableObject {
         userDefaults.set(isSidebarVisible, forKey: Keys.isSidebarVisible)
         userDefaults.set(indentWidth, forKey: Keys.indentWidth)
         userDefaults.set(autocompleteMode.rawValue, forKey: Keys.autocompleteMode)
+        userDefaults.set(isSyntaxHighlightingEnabled, forKey: Keys.isSyntaxHighlightingEnabled)
     }
 
     var selectedSkin: SkinDefinition {
@@ -344,4 +358,5 @@ private enum Keys {
     static let isSidebarVisible = "preferences.isSidebarVisible"
     static let indentWidth = "preferences.indentWidth"
     static let autocompleteMode = "preferences.autocompleteMode"
+    static let isSyntaxHighlightingEnabled = "preferences.isSyntaxHighlightingEnabled"
 }

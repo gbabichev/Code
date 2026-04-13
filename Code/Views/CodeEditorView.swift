@@ -31,6 +31,7 @@ final class ActiveEditorTextViewRegistry {
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
     let isWordWrapEnabled: Bool
+    let isSyntaxHighlightingEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
     let indentWidth: Int
@@ -46,6 +47,7 @@ struct CodeEditorView: NSViewRepresentable {
             skin: skin,
             indentWidth: indentWidth,
             autocompleteMode: autocompleteMode,
+            isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
             editorFont: editorFont,
             editorSemiboldFont: editorSemiboldFont,
             isWordWrapEnabled: isWordWrapEnabled,
@@ -110,10 +112,12 @@ struct CodeEditorView: NSViewRepresentable {
             || context.coordinator.editorSemiboldFont.pointSize != editorSemiboldFont.pointSize
         let didWordWrapChange = context.coordinator.isWordWrapEnabled != isWordWrapEnabled
         let didAutocompleteModeChange = context.coordinator.autocompleteMode != autocompleteMode
+        let didSyntaxHighlightingChange = context.coordinator.isSyntaxHighlightingEnabled != isSyntaxHighlightingEnabled
         context.coordinator.language = language
         context.coordinator.skin = skin
         context.coordinator.indentWidth = indentWidth
         context.coordinator.autocompleteMode = autocompleteMode
+        context.coordinator.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
         context.coordinator.textBinding = $text
         context.coordinator.editorFont = editorFont
         context.coordinator.editorSemiboldFont = editorSemiboldFont
@@ -137,7 +141,7 @@ struct CodeEditorView: NSViewRepresentable {
             ActiveEditorTextViewRegistry.shared.register(textView)
         }
         let didTextChange = context.coordinator.syncWithBindingText(text)
-        if didLanguageChange || didSkinChange || didFontChange || didTextChange || context.coordinator.requiresHighlightRefresh {
+        if didLanguageChange || didSkinChange || didFontChange || didTextChange || didSyntaxHighlightingChange || context.coordinator.requiresHighlightRefresh {
             context.coordinator.applyHighlighting()
         }
     }
@@ -157,6 +161,7 @@ struct CodeEditorView: NSViewRepresentable {
         var skin: SkinDefinition
         var indentWidth: Int
         var autocompleteMode: EditorAutocompleteMode
+        var isSyntaxHighlightingEnabled: Bool
         var editorFont: NSFont
         var editorSemiboldFont: NSFont
         var isWordWrapEnabled: Bool
@@ -171,12 +176,13 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingEditedRange: NSRange?
         private let completionController = CompletionController()
 
-        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
+        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
             self.textBinding = textBinding
             self.language = language
             self.skin = skin
             self.indentWidth = indentWidth
             self.autocompleteMode = autocompleteMode
+            self.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
             self.editorFont = editorFont
             self.editorSemiboldFont = editorSemiboldFont
             self.isWordWrapEnabled = isWordWrapEnabled
@@ -369,7 +375,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         func applyHighlighting(in editedRange: NSRange? = nil) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
-
+            let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
 
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
@@ -392,13 +398,17 @@ struct CodeEditorView: NSViewRepresentable {
                 requestedHighlightRange = nil
             }
 
-            SyntaxHighlighterFactory.makeHighlighter(
-                for: language,
-                skin: skin,
-                editorFont: editorFont,
-                semiboldFont: editorSemiboldFont
-            )
-            .apply(to: textStorage, text: textView.string, in: requestedHighlightRange)
+            if isSyntaxHighlightingEnabled {
+                SyntaxHighlighterFactory.makeHighlighter(
+                    for: language,
+                    skin: skin,
+                    editorFont: editorFont,
+                    semiboldFont: editorSemiboldFont
+                )
+                .apply(to: textStorage, text: textView.string, in: requestedHighlightRange)
+            } else {
+                textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
+            }
             textStorage.edited(.editedAttributes, range: highlightRange, changeInLength: 0)
 
             textStorage.endEditing()

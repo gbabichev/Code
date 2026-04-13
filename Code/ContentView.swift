@@ -439,6 +439,7 @@ struct ContentView: View {
                             showsCloseButton: true,
                             text: selectedTabBinding(primaryTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
+                            isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
                             skin: preferences.selectedSkin,
                             language: primaryTab.language,
                             indentWidth: preferences.indentWidth,
@@ -454,6 +455,7 @@ struct ContentView: View {
                             showsCloseButton: true,
                             text: selectedTabBinding(secondaryTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
+                            isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
                             skin: preferences.selectedSkin,
                             language: secondaryTab.language,
                             indentWidth: preferences.indentWidth,
@@ -468,6 +470,7 @@ struct ContentView: View {
                     EditorAreaView(
                         text: selectedTabBinding(primaryTab),
                         isWordWrapEnabled: preferences.isWordWrapEnabled,
+                        isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
                         skin: preferences.selectedSkin,
                         language: primaryTab.language,
                         indentWidth: preferences.indentWidth,
@@ -787,6 +790,7 @@ struct ContentView: View {
 private struct EditorAreaView: View {
     let text: Binding<String>
     let isWordWrapEnabled: Bool
+    let isSyntaxHighlightingEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
     let indentWidth: Int
@@ -800,6 +804,7 @@ private struct EditorAreaView: View {
             CodeEditorView(
                 text: text,
                 isWordWrapEnabled: isWordWrapEnabled,
+                isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
                 skin: skin,
                 language: language,
                 indentWidth: indentWidth,
@@ -817,6 +822,7 @@ private struct EditorSplitPaneView: View {
     let showsCloseButton: Bool
     let text: Binding<String>
     let isWordWrapEnabled: Bool
+    let isSyntaxHighlightingEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
     let indentWidth: Int
@@ -868,6 +874,7 @@ private struct EditorSplitPaneView: View {
             EditorAreaView(
                 text: text,
                 isWordWrapEnabled: isWordWrapEnabled,
+                isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
                 skin: skin,
                 language: language,
                 indentWidth: indentWidth,
@@ -1062,6 +1069,16 @@ private struct SettingsPopoverView: View {
                         ),
                         range: Double(AppPreferences.minIndentWidth)...Double(AppPreferences.maxIndentWidth)
                     )
+
+                    Toggle(isOn: $preferences.isSyntaxHighlightingEnabled) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Syntax Highlighting")
+                            Text("Colorize tokens in editor buffers")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
 
                     Picker("Autocomplete (BETA)", selection: $preferences.autocompleteMode) {
                         ForEach(EditorAutocompleteMode.allCases) { mode in
