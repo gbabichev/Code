@@ -908,7 +908,6 @@ struct SkinTheme {
     let stringColor: NSColor
     let commentColor: NSColor
     let commandColor: NSColor
-    let currentLineColor: NSColor
     let selectionColor: NSColor
     let gutterBackgroundColor: NSColor
     let gutterBorderColor: NSColor

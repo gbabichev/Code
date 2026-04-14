@@ -301,7 +301,6 @@ struct SkinDefinition: Codable, Identifiable, Hashable {
             stringColor: palette.string.resolveColor(),
             commentColor: palette.comment.resolveColor(),
             commandColor: palette.command.resolveColor(),
-            currentLineColor: editor.background.mixed(with: editor.foreground, fraction: 0.08, overlayAlpha: 0.20),
             selectionColor: editor.foreground.withAlpha(0.15),
             gutterBackgroundColor: backgroundColor,
             gutterBorderColor: editor.foreground.withAlpha(0.10),

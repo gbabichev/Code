@@ -198,7 +198,6 @@ struct CodeEditorView: NSViewRepresentable {
         container.embed(gutterView: context.coordinator.gutterView, scrollView: scrollView)
         context.coordinator.attach(textView: textView, scrollView: scrollView, containerView: container)
         context.coordinator.applyTheme(theme)
-        context.coordinator.requestedWordWrapEnabled = isWordWrapEnabled
         context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
         context.coordinator.configureLayout(isWordWrapEnabled: effectiveWordWrapEnabled)
         _ = context.coordinator.syncWithBindingText(text)
@@ -230,7 +229,6 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.indentWidth = indentWidth
         context.coordinator.autocompleteMode = autocompleteMode
         context.coordinator.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
-        context.coordinator.requestedWordWrapEnabled = isWordWrapEnabled
         context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
         context.coordinator.textBinding = $text
         context.coordinator.editorFont = editorFont
@@ -287,7 +285,6 @@ struct CodeEditorView: NSViewRepresentable {
         var isSyntaxHighlightingEnabled: Bool
         var editorFont: NSFont
         var editorSemiboldFont: NSFont
-        var requestedWordWrapEnabled: Bool
         var isWordWrapEnabled: Bool
         var onDidFocus: () -> Void
         weak var textView: NSTextView?
@@ -318,7 +315,6 @@ struct CodeEditorView: NSViewRepresentable {
             self.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
             self.editorFont = editorFont
             self.editorSemiboldFont = editorSemiboldFont
-            self.requestedWordWrapEnabled = isWordWrapEnabled
             self.isWordWrapEnabled = isWordWrapEnabled
             self.onDidFocus = onDidFocus
             self.sourceText = textBinding.wrappedValue
@@ -529,7 +525,6 @@ struct CodeEditorView: NSViewRepresentable {
                 .foregroundColor: theme.baseColor
             ]
             if let lineClickableTextView = textView as? LineClickableTextView {
-                lineClickableTextView.currentLineHighlightColor = theme.currentLineColor
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
                 lineClickableTextView.indentWidth = indentWidth
             }
@@ -1184,7 +1179,6 @@ struct CodeEditorView: NSViewRepresentable {
 }
 
 final class LineClickableTextView: NSTextView {
-    var currentLineHighlightColor: NSColor = .clear
     var lineCommentPrefix: String?
     var indentWidth = 4
     var extraBottomPadding: CGFloat = 0
