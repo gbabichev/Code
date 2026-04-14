@@ -1057,7 +1057,7 @@ private struct SettingsPopoverView: View {
 
             settingsSection(
                 title: "Appearance",
-                caption: "Window-wide presentation and theme behavior"
+                caption: "Window-wide theme and color presentation"
             ) {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker("Theme", selection: $preferences.appTheme) {
@@ -1069,21 +1069,32 @@ private struct SettingsPopoverView: View {
 
                     Divider()
 
-                    Toggle(isOn: $preferences.isWordWrapEnabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Word Wrap")
-                            Text("Wrap long lines inside the editor")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    HStack {
+                        Picker("Syntax Skin", selection: $preferences.selectedSkinID) {
+                            ForEach(preferences.availableSkins) { skin in
+                                Text(skin.name).tag(skin.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .accessibilityLabel("Syntax Skin")
+
+                        Button("Import…") {
+                            preferences.importSkin()
+                        }
+
+                        Button("Export") {
+                            Task {
+                                await preferences.exportSelectedSkin()
+                            }
                         }
                     }
-                    .toggleStyle(.switch)
+                    .frame(maxWidth: .infinity)
                 }
             }
 
             settingsSection(
-                title: "Editor",
-                caption: "Typeface and editing defaults"
+                title: "Editing",
+                caption: "Typeface and editing behavior"
             ) {
                 VStack(alignment: .leading, spacing: 14) {
                     Picker("Editor Font", selection: $preferences.editorFontName) {
@@ -1119,15 +1130,25 @@ private struct SettingsPopoverView: View {
                         range: Double(AppPreferences.minIndentWidth)...Double(AppPreferences.maxIndentWidth)
                     )
 
-                    Toggle(isOn: $preferences.isSyntaxHighlightingEnabled) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Syntax Highlighting")
-                            Text("Colorize tokens in editor buffers")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                    SettingsRow(
+                        "Word Wrap",
+                        systemImage: "text.justify.left",
+                        subtitle: "Wrap long sentences to a new line."
+                    ) {
+                        Toggle(isOn: $preferences.isWordWrapEnabled) {
                         }
+                        .toggleStyle(.switch)
                     }
-                    .toggleStyle(.switch)
+
+                    SettingsRow(
+                        "Syntax Highlighting",
+                        systemImage: "paintbrush",
+                        subtitle: "BETA. Color variables, functions, etc."
+                    ) {
+                        Toggle(isOn: $preferences.isSyntaxHighlightingEnabled) {
+                        }
+                        .toggleStyle(.switch)
+                    }
 
                     Picker("Autocomplete (BETA)", selection: $preferences.autocompleteMode) {
                         ForEach(EditorAutocompleteMode.allCases) { mode in
@@ -1138,31 +1159,6 @@ private struct SettingsPopoverView: View {
                 }
             }
 
-            settingsSection(
-                title: "Syntax Skin",
-                caption: "Color theme used for token highlighting"
-            ) {
-                VStack(alignment: .leading, spacing: 14) {
-                    Picker("Syntax Highlighting Skin", selection: $preferences.selectedSkinID) {
-                        ForEach(preferences.availableSkins) { skin in
-                            Text(skin.name).tag(skin.id)
-                        }
-                    }
-                    .pickerStyle(.menu)
-
-                    HStack(spacing: 8) {
-                        Button("Import…") {
-                            preferences.importSkin()
-                        }
-
-                        Button("Export Current…") {
-                            Task {
-                                await preferences.exportSelectedSkin()
-                            }
-                        }
-                    }
-                }
-            }
         }
         .padding(18)
         .frame(width: 400)
