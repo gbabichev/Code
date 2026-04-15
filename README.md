@@ -25,10 +25,15 @@ Code is a small macOS-only editor built for the moments when a full IDE feels ex
 
 - Folder browser in the sidebar
 - Multiple tabs, split view, and multi-window support
+- Finder `Open With` support for quick edits from Finder
+- Open files by drag and drop, single-file open, or full folder open
+- Per-window `Close Folder` reset and open-in-new-window workflow
 - Session recovery across relaunch, including unsaved work
-- Syntax highlighting for Shell, PowerShell, and Python
+- Syntax highlighting for Shell, PowerShell, Python, Markdown, XML, JSON, and property list files
 - Lightweight autocomplete for in-file functions and variables
 - In-editor find and replace
+- Settings for theme, skin, font, indent width, word wrap, and syntax highlighting
+- Large-file optimizations, including viewport-first highlighting and huge-file wrap safeguards
 - Status bar tools for line count, encoding, line endings, Finder, Terminal, and file URL copying
 - JSON-backed syntax skin system with import/export
 
