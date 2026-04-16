@@ -378,6 +378,16 @@ private struct EditorCommands: Commands {
 
         CommandGroup(after: .saveItem) {
             Button {
+                resolvedWorkspace?.reopenLastClosedTab()
+            } label: {
+                Label("Reopen Closed Tab", systemImage: "arrow.uturn.backward")
+            }
+            .keyboardShortcut("t", modifiers: [.command, .shift])
+            .disabled(!(resolvedWorkspace?.canReopenClosedTab ?? false))
+
+            Divider()
+
+            Button {
                 Task {
                     await resolvedWorkspace?.saveSelectedTab()
                 }

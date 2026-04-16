@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class EditorWorkspace: ObservableObject {
     private static let largeFileTypingThreshold = 100_000
+    private static let maxRecentlyClosedTabs = 20
 
     enum EditorPane: String {
         case primary
@@ -35,6 +36,7 @@ final class EditorWorkspace: ObservableObject {
     private var persistSessionTimer: Timer?
     private var pendingWindowCloseAction: (@MainActor () -> Void)?
     private var pendingDirtyStateRecheckTabIDs = Set<EditorTab.ID>()
+    private var recentlyClosedTabs: [ClosedTabState] = []
 
     init(
         fileManager: FileManager = .default,
@@ -139,6 +141,7 @@ final class EditorWorkspace: ObservableObject {
         fileTree = []
         openTabs.removeAll()
         tabObservers.removeAll()
+        recentlyClosedTabs.removeAll()
         primaryTabID = nil
         secondaryTabID = nil
         focusedPane = .primary
@@ -191,8 +194,43 @@ final class EditorWorkspace: ObservableObject {
         }
     }
 
-    func closeTab(_ id: EditorTab.ID) {
+    func closeTab(_ id: EditorTab.ID, preserveUnsavedChangesForReopen: Bool = true) {
+        guard let closedState = closedTabState(for: id, preserveUnsavedChanges: preserveUnsavedChangesForReopen) else {
+            return
+        }
+
+        recentlyClosedTabs.append(closedState)
+        if recentlyClosedTabs.count > Self.maxRecentlyClosedTabs {
+            recentlyClosedTabs.removeFirst(recentlyClosedTabs.count - Self.maxRecentlyClosedTabs)
+        }
+
         _ = removeTab(id, persist: false)
+        persistSession()
+    }
+
+    var canReopenClosedTab: Bool {
+        !recentlyClosedTabs.isEmpty
+    }
+
+    func reopenLastClosedTab() {
+        guard let closedState = recentlyClosedTabs.popLast() else { return }
+
+        let tab = EditorTab(
+            fileURL: closedState.fileURL,
+            languageOverride: closedState.languageOverride,
+            textEncoding: closedState.textEncoding,
+            lineEnding: closedState.lineEnding,
+            customTitle: closedState.customTitle,
+            content: closedState.content,
+            lastSavedContent: closedState.lastSavedContent,
+            lastSavedEncoding: closedState.lastSavedEncoding,
+            lastSavedLineEnding: closedState.lastSavedLineEnding,
+            isDirty: closedState.isDirty
+        )
+
+        attachObserver(to: tab)
+        openTabs.append(tab)
+        selectTab(tab.id, persist: false)
         persistSession()
     }
 
@@ -342,7 +380,7 @@ final class EditorWorkspace: ObservableObject {
 
     func confirmPendingTabCloseDiscard() {
         guard let pendingTabClose else { return }
-        closeTab(pendingTabClose.id)
+        closeTab(pendingTabClose.id, preserveUnsavedChangesForReopen: false)
         self.pendingTabClose = nil
     }
 
@@ -669,6 +707,38 @@ final class EditorWorkspace: ObservableObject {
         tab.setContent(tab.lastSavedContent, notify: true)
     }
 
+    private func closedTabState(for id: EditorTab.ID, preserveUnsavedChanges: Bool) -> ClosedTabState? {
+        guard let tab = tab(withID: id) else { return nil }
+
+        if preserveUnsavedChanges {
+            return ClosedTabState(
+                fileURL: tab.fileURL,
+                customTitle: tab.customTitle,
+                languageOverride: tab.languageOverride,
+                textEncoding: tab.textEncoding,
+                lineEnding: tab.lineEnding,
+                content: tab.content,
+                lastSavedContent: tab.lastSavedContent,
+                lastSavedEncoding: tab.lastSavedEncoding,
+                lastSavedLineEnding: tab.lastSavedLineEnding,
+                isDirty: tab.isDirty
+            )
+        }
+
+        return ClosedTabState(
+            fileURL: tab.fileURL,
+            customTitle: tab.customTitle,
+            languageOverride: tab.languageOverride,
+            textEncoding: tab.lastSavedEncoding,
+            lineEnding: tab.lastSavedLineEnding,
+            content: tab.lastSavedContent,
+            lastSavedContent: tab.lastSavedContent,
+            lastSavedEncoding: tab.lastSavedEncoding,
+            lastSavedLineEnding: tab.lastSavedLineEnding,
+            isDirty: false
+        )
+    }
+
     @discardableResult
     private func removeTab(_ id: EditorTab.ID, persist: Bool) -> EditorTab? {
         guard let index = openTabs.firstIndex(where: { $0.id == id }) else {
@@ -814,4 +884,17 @@ final class EditorWorkspace: ObservableObject {
             userInfo: [NSLocalizedDescriptionKey: "Unsupported text encoding for \(fileName)."]
         )
     }
+}
+
+private struct ClosedTabState {
+    let fileURL: URL?
+    let customTitle: String?
+    let languageOverride: EditorLanguage?
+    let textEncoding: EditorTextEncoding
+    let lineEnding: EditorLineEnding
+    let content: String
+    let lastSavedContent: String
+    let lastSavedEncoding: EditorTextEncoding
+    let lastSavedLineEnding: EditorLineEnding
+    let isDirty: Bool
 }
