@@ -62,7 +62,7 @@ struct ContentView: View {
             ToolbarItem(placement: .status) {
                 Button("Code") {
                 }
-                .buttonStyle(.glass)
+                .modifier(GlassStyleIfAvailable())
             }
         }
         .preferredColorScheme(preferredColorScheme)
@@ -1222,6 +1222,16 @@ private struct SettingsPopoverView: View {
 
             Stepper("", value: value, in: range, step: 1)
                 .labelsHidden()
+        }
+    }
+}
+
+struct GlassStyleIfAvailable: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.buttonStyle(.glass)
+        } else {
+            content
         }
     }
 }

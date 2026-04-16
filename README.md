@@ -39,7 +39,7 @@ Code is a small macOS-only editor built for the moments when a full IDE feels ex
 
 ## 🖥️ Install & Minimum Requirements
 
-- macOS 26.0 or later  
+- macOS 14.0 or later  
 - Apple Silicon & Intel
 - ~10 MB free disk space  
 
