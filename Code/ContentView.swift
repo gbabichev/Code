@@ -96,6 +96,16 @@ struct ContentView: View {
         } message: { pending in
             Text(pendingWindowCloseMessage(for: pending))
         }
+        .alert("Reload File From Disk?", isPresented: pendingFileRefreshBinding, presenting: workspace.pendingFileRefresh) { _ in
+            Button("Refresh", role: .destructive) {
+                workspace.confirmPendingFileRefresh()
+            }
+            Button("Cancel", role: .cancel) {
+                workspace.cancelPendingFileRefresh()
+            }
+        } message: { pending in
+            Text("Refreshing \(pending.fileName) will discard unsaved changes and reload the file from disk.")
+        }
         .alert("Editor Error", isPresented: errorBinding) {
             Button("OK") {
                 workspace.errorMessage = nil
@@ -762,6 +772,17 @@ struct ContentView: View {
             set: { newValue in
                 if !newValue {
                     workspace.cancelPendingWindowClose()
+                }
+            }
+        )
+    }
+
+    private var pendingFileRefreshBinding: Binding<Bool> {
+        Binding(
+            get: { workspace.pendingFileRefresh != nil },
+            set: { newValue in
+                if !newValue {
+                    workspace.cancelPendingFileRefresh()
                 }
             }
         )

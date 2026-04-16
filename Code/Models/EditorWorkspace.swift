@@ -29,6 +29,7 @@ final class EditorWorkspace: ObservableObject {
     @Published var errorMessage: String?
     @Published var pendingTabClose: PendingTabClose?
     @Published var pendingWindowClose: PendingWindowClose?
+    @Published var pendingFileRefresh: PendingFileRefresh?
 
     private let fileManager: FileManager
     private let sessionStore: SessionStore
@@ -149,6 +150,7 @@ final class EditorWorkspace: ObservableObject {
         selectedFileID = nil
         pendingTabClose = nil
         pendingWindowClose = nil
+        pendingFileRefresh = nil
         pendingWindowCloseAction = nil
         errorMessage = nil
         createUntitledTab()
@@ -367,6 +369,35 @@ final class EditorWorkspace: ObservableObject {
     func requestCloseSelectedTab() {
         guard let selectedTabID else { return }
         requestCloseTab(selectedTabID)
+    }
+
+    var canRefreshSelectedFile: Bool {
+        selectedTab?.fileURL != nil
+    }
+
+    func requestRefreshSelectedFile() {
+        guard let selectedTab else { return }
+        requestRefreshFile(for: selectedTab.id)
+    }
+
+    func requestRefreshFile(for id: EditorTab.ID) {
+        guard let tab = tab(withID: id), tab.fileURL != nil else { return }
+
+        if tab.isDirty {
+            pendingFileRefresh = PendingFileRefresh(id: id, fileName: tab.title)
+        } else {
+            refreshFile(for: id)
+        }
+    }
+
+    func confirmPendingFileRefresh() {
+        guard let pendingFileRefresh else { return }
+        refreshFile(for: pendingFileRefresh.id)
+        self.pendingFileRefresh = nil
+    }
+
+    func cancelPendingFileRefresh() {
+        pendingFileRefresh = nil
     }
 
     func confirmPendingTabCloseSave() async {
@@ -705,6 +736,24 @@ final class EditorWorkspace: ObservableObject {
         tab.textEncoding = tab.lastSavedEncoding
         tab.lineEnding = tab.lastSavedLineEnding
         tab.setContent(tab.lastSavedContent, notify: true)
+    }
+
+    private func refreshFile(for id: EditorTab.ID) {
+        guard let tab = tab(withID: id), let fileURL = tab.fileURL else { return }
+
+        do {
+            let fileContents = try readTextFile(at: fileURL)
+            tab.textEncoding = fileContents.encoding
+            tab.lineEnding = fileContents.lineEnding
+            tab.lastSavedEncoding = fileContents.encoding
+            tab.lastSavedLineEnding = fileContents.lineEnding
+            tab.lastSavedContent = fileContents.content
+            tab.setContent(fileContents.content, notify: true)
+            selectedFileID = fileURL.path(percentEncoded: false)
+            persistSession()
+        } catch {
+            errorMessage = "Failed to refresh \(fileURL.lastPathComponent): \(error.localizedDescription)"
+        }
     }
 
     private func closedTabState(for id: EditorTab.ID, preserveUnsavedChanges: Bool) -> ClosedTabState? {

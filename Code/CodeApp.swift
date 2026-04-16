@@ -374,6 +374,15 @@ private struct EditorCommands: Commands {
             }
             .keyboardShortcut("w", modifiers: [.command, .shift])
             .disabled(resolvedWorkspace?.rootFolderURL == nil)
+
+            Divider()
+
+            Button {
+                resolvedWorkspace?.requestRefreshSelectedFile()
+            } label: {
+                Label("Refresh File", systemImage: "arrow.clockwise")
+            }
+            .disabled(!(resolvedWorkspace?.canRefreshSelectedFile ?? false))
         }
 
         CommandGroup(after: .saveItem) {
