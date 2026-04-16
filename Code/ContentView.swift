@@ -1162,16 +1162,16 @@ private struct SettingsPopoverView: View {
                     }
 
                     SettingsRow(
-                        "Syntax Highlighting",
+                        "Syntax Highlighting Beta",
                         systemImage: "paintbrush",
-                        subtitle: "BETA. Color variables, functions, etc."
+                        subtitle: "Color variables, functions, etc."
                     ) {
                         Toggle(isOn: $preferences.isSyntaxHighlightingEnabled) {
                         }
                         .toggleStyle(.switch)
                     }
 
-                    Picker("Autocomplete (BETA)", selection: $preferences.autocompleteMode) {
+                    Picker("Autocomplete Beta", selection: $preferences.autocompleteMode) {
                         ForEach(EditorAutocompleteMode.allCases) { mode in
                             Text(mode.title).tag(mode)
                         }
