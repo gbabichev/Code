@@ -1180,6 +1180,36 @@ private struct SettingsPopoverView: View {
                 }
             }
 
+            settingsSection(
+                title: "Files",
+                caption: "Recent item history and file access behavior"
+            ) {
+                VStack(alignment: .leading, spacing: 14) {
+                    settingStepperRow(
+                        title: "Recent Items",
+                        detail: preferences.recentItemLimit == 0 ? "Off" : "\(preferences.recentItemLimit) items",
+                        value: Binding(
+                            get: { Double(preferences.recentItemLimit) },
+                            set: { preferences.recentItemLimit = Int($0) }
+                        ),
+                        range: Double(AppPreferences.minRecentItemLimit)...Double(AppPreferences.maxRecentItemLimit)
+                    )
+
+                    HStack {
+                        Text("Clear saved recent file and folder history.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Button("Clear Recents", role: .destructive) {
+                            preferences.clearRecentItems()
+                        }
+                        .disabled(preferences.recentItems.isEmpty)
+                    }
+                }
+            }
+
         }
         .padding(18)
         .frame(width: 400)

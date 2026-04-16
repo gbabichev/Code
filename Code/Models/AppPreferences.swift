@@ -28,6 +28,42 @@ enum EditorAutocompleteMode: String, CaseIterable, Identifiable {
     }
 }
 
+struct RecentItem: Codable, Identifiable, Hashable {
+    enum Kind: String, Codable {
+        case file
+        case folder
+    }
+
+    let kind: Kind
+    let path: String
+
+    var id: String { "\(kind.rawValue):\(path)" }
+
+    var url: URL {
+        URL(fileURLWithPath: path)
+    }
+
+    var systemImage: String {
+        switch kind {
+        case .file:
+            return "doc"
+        case .folder:
+            return "folder"
+        }
+    }
+
+    var menuTitle: String {
+        let name = url.lastPathComponent.isEmpty ? path : url.lastPathComponent
+        let parentPath = url.deletingLastPathComponent().path(percentEncoded: false)
+
+        if parentPath.isEmpty || parentPath == path {
+            return name
+        }
+
+        return "\(name) - \(parentPath)"
+    }
+}
+
 @MainActor
 final class AppPreferences: ObservableObject {
     static let defaultSkinID = "classic"
@@ -39,6 +75,10 @@ final class AppPreferences: ObservableObject {
     static let minIndentWidth = 1
     static let maxIndentWidth = 8
     static let defaultSyntaxHighlightingEnabled = true
+    static let defaultRecentItemLimit = 5
+    static let minRecentItemLimit = 0
+    static let maxRecentItemLimit = 20
+    private static let maxStoredRecentItems = 50
 
     @Published var isWordWrapEnabled: Bool {
         didSet {
@@ -111,8 +151,20 @@ final class AppPreferences: ObservableObject {
         }
     }
 
+    @Published var recentItemLimit: Int {
+        didSet {
+            let clampedLimit = min(max(recentItemLimit, Self.minRecentItemLimit), Self.maxRecentItemLimit)
+            if clampedLimit != recentItemLimit {
+                recentItemLimit = clampedLimit
+                return
+            }
+            userDefaults.set(recentItemLimit, forKey: Keys.recentItemLimit)
+        }
+    }
+
     @Published private(set) var availableSkins: [SkinDefinition] = []
     @Published private(set) var availableEditorFonts: [String] = []
+    @Published private(set) var recentItems: [RecentItem]
     @Published var errorMessage: String?
 
     private let userDefaults: UserDefaults
@@ -180,6 +232,19 @@ final class AppPreferences: ObservableObject {
             isSyntaxHighlightingEnabled = Self.defaultSyntaxHighlightingEnabled
         }
 
+        if userDefaults.object(forKey: Keys.recentItemLimit) != nil {
+            recentItemLimit = userDefaults.integer(forKey: Keys.recentItemLimit)
+        } else {
+            recentItemLimit = Self.defaultRecentItemLimit
+        }
+
+        if let recentItemsData = userDefaults.data(forKey: Keys.recentItems),
+           let decodedRecentItems = try? JSONDecoder().decode([RecentItem].self, from: recentItemsData) {
+            recentItems = decodedRecentItems
+        } else {
+            recentItems = []
+        }
+
         reloadEditorFonts()
         reloadSkins()
 
@@ -193,6 +258,8 @@ final class AppPreferences: ObservableObject {
         userDefaults.set(indentWidth, forKey: Keys.indentWidth)
         userDefaults.set(autocompleteMode.rawValue, forKey: Keys.autocompleteMode)
         userDefaults.set(isSyntaxHighlightingEnabled, forKey: Keys.isSyntaxHighlightingEnabled)
+        userDefaults.set(recentItemLimit, forKey: Keys.recentItemLimit)
+        persistRecentItems()
     }
 
     var selectedSkin: SkinDefinition {
@@ -319,6 +386,32 @@ final class AppPreferences: ObservableObject {
         editorFontSize -= 1
     }
 
+    var visibleRecentItems: [RecentItem] {
+        Array(
+            recentItems
+                .filter { FileManager.default.fileExists(atPath: $0.path) }
+                .prefix(recentItemLimit)
+        )
+    }
+
+    func recordRecentFile(_ url: URL) {
+        recordRecentItem(RecentItem(kind: .file, path: url.path(percentEncoded: false)))
+    }
+
+    func recordRecentFolder(_ url: URL) {
+        recordRecentItem(RecentItem(kind: .folder, path: url.path(percentEncoded: false)))
+    }
+
+    func removeRecentItem(_ item: RecentItem) {
+        recentItems.removeAll { $0 == item }
+        persistRecentItems()
+    }
+
+    func clearRecentItems() {
+        recentItems.removeAll()
+        persistRecentItems()
+    }
+
     private func reloadEditorFonts() {
         availableEditorFonts = NSFontManager.shared.availableFontFamilies
             .filter { familyName in
@@ -347,6 +440,20 @@ final class AppPreferences: ObservableObject {
                 }
                 .first
     }
+
+    private func recordRecentItem(_ item: RecentItem) {
+        recentItems.removeAll { $0 == item }
+        recentItems.insert(item, at: 0)
+        if recentItems.count > Self.maxStoredRecentItems {
+            recentItems.removeLast(recentItems.count - Self.maxStoredRecentItems)
+        }
+        persistRecentItems()
+    }
+
+    private func persistRecentItems() {
+        let encodedRecentItems = try? JSONEncoder().encode(recentItems)
+        userDefaults.set(encodedRecentItems, forKey: Keys.recentItems)
+    }
 }
 
 private enum Keys {
@@ -359,4 +466,6 @@ private enum Keys {
     static let indentWidth = "preferences.indentWidth"
     static let autocompleteMode = "preferences.autocompleteMode"
     static let isSyntaxHighlightingEnabled = "preferences.isSyntaxHighlightingEnabled"
+    static let recentItemLimit = "preferences.recentItemLimit"
+    static let recentItems = "preferences.recentItems"
 }

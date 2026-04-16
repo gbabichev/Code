@@ -100,7 +100,7 @@ private struct WorkspaceSceneView: View {
     var body: some View {
         let effectiveSessionID = workspaceSessionID.isEmpty ? bootstrapSessionID : workspaceSessionID
 
-        WorkspaceContentView(sessionID: effectiveSessionID)
+        WorkspaceContentView(sessionID: effectiveSessionID, preferences: preferences)
             .id(effectiveSessionID)
             .environmentObject(preferences)
             .environmentObject(activeWorkspaceRegistry)
@@ -130,9 +130,10 @@ private struct WorkspaceContentView: View {
     @EnvironmentObject private var detachedTabTransfer: DetachedTabTransferCoordinator
     @EnvironmentObject private var externalFileRouter: ExternalFileRouter
 
-    init(sessionID: String) {
+    init(sessionID: String, preferences: AppPreferences) {
         let hasPendingFiles = ExternalFileRouter.shared.hasPendingFiles()
         _workspace = StateObject(wrappedValue: EditorWorkspace(
+            preferences: preferences,
             sessionStore: SessionStore(sessionID: sessionID),
             skipUntitledIfPendingFiles: hasPendingFiles
         ))
@@ -310,6 +311,23 @@ private struct EditorCommands: Commands {
         activeWorkspaceRegistry.workspace ?? workspace
     }
 
+    private func openRecentItem(_ item: RecentItem) {
+        guard let resolvedWorkspace else { return }
+
+        guard FileManager.default.fileExists(atPath: item.path) else {
+            preferences.removeRecentItem(item)
+            preferences.errorMessage = "Recent item no longer exists: \(item.path)"
+            return
+        }
+
+        switch item.kind {
+        case .file:
+            resolvedWorkspace.openFile(item.url)
+        case .folder:
+            resolvedWorkspace.setRootFolder(item.url)
+        }
+    }
+
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") {
@@ -365,6 +383,31 @@ private struct EditorCommands: Commands {
                 Label("Open Folder...", systemImage: "folder")
             }
             .keyboardShortcut("o", modifiers: [.command, .shift])
+            .disabled(resolvedWorkspace == nil)
+
+            Menu {
+                if preferences.visibleRecentItems.isEmpty {
+                    Button("No Recent Items") {
+                    }
+                    .disabled(true)
+                } else {
+                    ForEach(preferences.visibleRecentItems) { item in
+                        Button {
+                            openRecentItem(item)
+                        } label: {
+                            Label(item.menuTitle, systemImage: item.systemImage)
+                        }
+                    }
+
+                    Divider()
+
+                    Button("Clear Recents", role: .destructive) {
+                        preferences.clearRecentItems()
+                    }
+                }
+            } label: {
+                Label("Recent Items", systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90")
+            }
             .disabled(resolvedWorkspace == nil)
 
             Button {

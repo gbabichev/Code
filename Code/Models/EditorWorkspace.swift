@@ -31,6 +31,7 @@ final class EditorWorkspace: ObservableObject {
     @Published var pendingWindowClose: PendingWindowClose?
     @Published var pendingFileRefresh: PendingFileRefresh?
 
+    private let preferences: AppPreferences
     private let fileManager: FileManager
     private let sessionStore: SessionStore
     private var tabObservers: [String: AnyCancellable] = [:]
@@ -40,10 +41,12 @@ final class EditorWorkspace: ObservableObject {
     private var recentlyClosedTabs: [ClosedTabState] = []
 
     init(
+        preferences: AppPreferences,
         fileManager: FileManager = .default,
         sessionStore: SessionStore,
         skipUntitledIfPendingFiles: Bool = false
     ) {
+        self.preferences = preferences
         self.fileManager = fileManager
         self.sessionStore = sessionStore
         restoreSession()
@@ -133,6 +136,7 @@ final class EditorWorkspace: ObservableObject {
 
     func setRootFolder(_ url: URL) {
         rootFolderURL = url
+        preferences.recordRecentFolder(url)
         reloadFileTree()
         persistSession()
     }
@@ -171,6 +175,7 @@ final class EditorWorkspace: ObservableObject {
         selectedFileID = url.path(percentEncoded: false)
 
         if let existing = openTabs.first(where: { $0.fileURL == url }) {
+            preferences.recordRecentFile(url)
             selectTab(existing.id)
             persistSession()
             return
@@ -189,6 +194,7 @@ final class EditorWorkspace: ObservableObject {
             )
             attachObserver(to: tab)
             openTabs.append(tab)
+            preferences.recordRecentFile(url)
             selectTab(tab.id, persist: false)
             persistSession()
         } catch {
@@ -533,6 +539,7 @@ final class EditorWorkspace: ObservableObject {
             tab.lastSavedEncoding = tab.textEncoding
             tab.lastSavedLineEnding = tab.lineEnding
             tab.refreshDirtyState()
+            preferences.recordRecentFile(destinationURL)
             selectedFileID = destinationURL.path(percentEncoded: false)
             if let rootFolderURL,
                destinationURL.path(percentEncoded: false).hasPrefix(rootFolderURL.path(percentEncoded: false)) {
