@@ -48,4 +48,24 @@ struct SessionStore {
 
         try? data.write(to: sessionURL, options: .atomic)
     }
+
+    static func savedSessions(fileManager: FileManager = .default) -> [(id: String, modificationDate: Date)] {
+        let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let sessionsDirectoryURL = appSupportURL
+            .appendingPathComponent("Code", isDirectory: true)
+            .appendingPathComponent("Sessions", isDirectory: true)
+        let urls = (try? fileManager.contentsOfDirectory(
+            at: sessionsDirectoryURL,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        return urls.compactMap { url in
+            guard url.pathExtension == "json" else { return nil }
+            let id = url.deletingPathExtension().lastPathComponent
+            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+            let modificationDate = values?.contentModificationDate ?? .distantPast
+            return (id: id, modificationDate: modificationDate)
+        }
+    }
 }

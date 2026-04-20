@@ -16,6 +16,7 @@ struct CodeApp: App {
     @StateObject private var preferences = AppPreferences()
     @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
     @StateObject private var activeWorkspaceRegistry = ActiveWorkspaceRegistry.shared
+    @StateObject private var workspacePersistenceRegistry = WorkspacePersistenceRegistry.shared
     @StateObject private var detachedTabTransfer = DetachedTabTransferCoordinator.shared
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
     @StateObject private var searchController = EditorSearchController()
@@ -29,12 +30,14 @@ struct CodeApp: App {
                 preferences: preferences,
                 sessionRegistry: sessionRegistry,
                 activeWorkspaceRegistry: activeWorkspaceRegistry,
+                workspacePersistenceRegistry: workspacePersistenceRegistry,
                 detachedTabTransfer: detachedTabTransfer,
                 externalFileRouter: externalFileRouter,
                 searchController: searchController,
                 aboutController: aboutController,
                 settingsController: settingsController,
-                updateCenter: updateCenter
+                updateCenter: updateCenter,
+                openNewWindow: { openWindow(id: "workspace") }
             )
         }
         .windowStyle(.hiddenTitleBar)
@@ -47,6 +50,7 @@ struct CodeApp: App {
                 settingsController: settingsController,
                 updateCenter: updateCenter,
                 activeWorkspaceRegistry: activeWorkspaceRegistry,
+                workspacePersistenceRegistry: workspacePersistenceRegistry,
                 openNewWindow: { openWindow(id: "workspace") }
             )
         }
@@ -64,12 +68,14 @@ private struct WorkspaceSceneView: View {
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var sessionRegistry: WorkspaceSessionRegistry
     @ObservedObject var activeWorkspaceRegistry: ActiveWorkspaceRegistry
+    @ObservedObject var workspacePersistenceRegistry: WorkspacePersistenceRegistry
     @ObservedObject var detachedTabTransfer: DetachedTabTransferCoordinator
     @ObservedObject var externalFileRouter: ExternalFileRouter
     @ObservedObject var searchController: EditorSearchController
     @ObservedObject var aboutController: AboutOverlayController
     @ObservedObject var settingsController: SettingsPopoverController
     @ObservedObject var updateCenter: AppUpdateCenter
+    let openNewWindow: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @SceneStorage("workspaceSessionID") private var workspaceSessionID = ""
     @State private var bootstrapSessionID: String
@@ -78,22 +84,26 @@ private struct WorkspaceSceneView: View {
         preferences: AppPreferences,
         sessionRegistry: WorkspaceSessionRegistry,
         activeWorkspaceRegistry: ActiveWorkspaceRegistry,
+        workspacePersistenceRegistry: WorkspacePersistenceRegistry,
         detachedTabTransfer: DetachedTabTransferCoordinator,
         externalFileRouter: ExternalFileRouter,
         searchController: EditorSearchController,
         aboutController: AboutOverlayController,
         settingsController: SettingsPopoverController,
-        updateCenter: AppUpdateCenter
+        updateCenter: AppUpdateCenter,
+        openNewWindow: @escaping () -> Void
     ) {
         self.preferences = preferences
         self.sessionRegistry = sessionRegistry
         self.activeWorkspaceRegistry = activeWorkspaceRegistry
+        self.workspacePersistenceRegistry = workspacePersistenceRegistry
         self.detachedTabTransfer = detachedTabTransfer
         self.externalFileRouter = externalFileRouter
         self.searchController = searchController
         self.aboutController = aboutController
         self.settingsController = settingsController
         self.updateCenter = updateCenter
+        self.openNewWindow = openNewWindow
         _bootstrapSessionID = State(initialValue: sessionRegistry.makeSceneBootstrapSessionID())
     }
 
@@ -103,7 +113,9 @@ private struct WorkspaceSceneView: View {
         WorkspaceContentView(sessionID: effectiveSessionID, preferences: preferences)
             .id(effectiveSessionID)
             .environmentObject(preferences)
+            .environmentObject(sessionRegistry)
             .environmentObject(activeWorkspaceRegistry)
+            .environmentObject(workspacePersistenceRegistry)
             .environmentObject(detachedTabTransfer)
             .environmentObject(externalFileRouter)
             .environmentObject(searchController)
@@ -114,7 +126,16 @@ private struct WorkspaceSceneView: View {
                 if workspaceSessionID.isEmpty {
                     workspaceSessionID = effectiveSessionID
                 }
+                sessionRegistry.handleSceneAppear(sessionID: effectiveSessionID) { count in
+                    guard count > 0 else { return }
+                    for _ in 0..<count {
+                        openNewWindow()
+                    }
+                }
                 sessionRegistry.markFocused(sessionID: effectiveSessionID)
+            }
+            .onDisappear {
+                sessionRegistry.handleSceneDisappear(sessionID: effectiveSessionID)
             }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active {
@@ -125,12 +146,16 @@ private struct WorkspaceSceneView: View {
 }
 
 private struct WorkspaceContentView: View {
+    let sessionID: String
     @StateObject private var workspace: EditorWorkspace
     @EnvironmentObject private var activeWorkspaceRegistry: ActiveWorkspaceRegistry
+    @EnvironmentObject private var workspacePersistenceRegistry: WorkspacePersistenceRegistry
+    @EnvironmentObject private var sessionRegistry: WorkspaceSessionRegistry
     @EnvironmentObject private var detachedTabTransfer: DetachedTabTransferCoordinator
     @EnvironmentObject private var externalFileRouter: ExternalFileRouter
 
     init(sessionID: String, preferences: AppPreferences) {
+        self.sessionID = sessionID
         let hasPendingFiles = ExternalFileRouter.shared.hasPendingFiles()
         _workspace = StateObject(wrappedValue: EditorWorkspace(
             preferences: preferences,
@@ -146,12 +171,17 @@ private struct WorkspaceContentView: View {
             .focusedSceneValue(\.activeEditorWorkspace, workspace)
             .background(WindowDirtyStateView(isDocumentEdited: workspace.hasDirtyTabs))
             .background(WindowCloseInterceptorView(workspace: workspace))
-            .background(ActiveWorkspaceTrackingView(workspace: workspace))
+            .background(ActiveWorkspaceTrackingView(
+                workspace: workspace,
+                sessionID: sessionID
+            ))
             .onAppear {
+                workspacePersistenceRegistry.register(workspace)
                 adoptDetachedTabIfNeeded()
                 openPendingExternalFiles()
             }
             .onDisappear {
+                workspacePersistenceRegistry.unregister(workspace)
                 activeWorkspaceRegistry.clearIfNeeded(workspace)
                 workspace.flushSession()
             }
@@ -179,6 +209,12 @@ private struct WorkspaceContentView: View {
 private final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         ExternalFileRouter.shared.enqueue(urls: urls)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        ApplicationLifecycleState.shared.markTerminating()
+        WorkspacePersistenceRegistry.shared.flushAllSessions()
+        return .terminateNow
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -297,6 +333,27 @@ final class ActiveWorkspaceRegistry: ObservableObject {
     }
 }
 
+@MainActor
+final class WorkspacePersistenceRegistry: ObservableObject {
+    static let shared = WorkspacePersistenceRegistry()
+
+    private let workspaces = NSHashTable<EditorWorkspace>.weakObjects()
+
+    func register(_ workspace: EditorWorkspace) {
+        workspaces.add(workspace)
+    }
+
+    func unregister(_ workspace: EditorWorkspace) {
+        workspaces.remove(workspace)
+    }
+
+    func flushAllSessions() {
+        for workspace in workspaces.allObjects {
+            workspace.flushSession()
+        }
+    }
+}
+
 private struct EditorCommands: Commands {
     @FocusedValue(\.activeEditorWorkspace) private var workspace
     @ObservedObject var preferences: AppPreferences
@@ -305,6 +362,7 @@ private struct EditorCommands: Commands {
     @ObservedObject var settingsController: SettingsPopoverController
     @ObservedObject var updateCenter: AppUpdateCenter
     @ObservedObject var activeWorkspaceRegistry: ActiveWorkspaceRegistry
+    @ObservedObject var workspacePersistenceRegistry: WorkspacePersistenceRegistry
     let openNewWindow: () -> Void
 
     private var resolvedWorkspace: EditorWorkspace? {
@@ -568,6 +626,8 @@ private struct EditorCommands: Commands {
 
         CommandGroup(replacing: .appTermination) {
             Button {
+                ApplicationLifecycleState.shared.markTerminating()
+                workspacePersistenceRegistry.flushAllSessions()
                 NSApp.terminate(nil)
             } label: {
                 Label("Quit Code", systemImage: "xmark.circle")
@@ -634,25 +694,33 @@ private struct WindowCloseInterceptorView: NSViewRepresentable {
 
 private struct ActiveWorkspaceTrackingView: NSViewRepresentable {
     @ObservedObject var workspace: EditorWorkspace
+    let sessionID: String
     @EnvironmentObject private var activeWorkspaceRegistry: ActiveWorkspaceRegistry
+    @EnvironmentObject private var sessionRegistry: WorkspaceSessionRegistry
 
     func makeNSView(context: Context) -> ActiveWorkspaceTrackingNSView {
         let view = ActiveWorkspaceTrackingNSView()
         view.registry = activeWorkspaceRegistry
+        view.sessionRegistry = sessionRegistry
         view.workspace = workspace
+        view.sessionID = sessionID
         return view
     }
 
     func updateNSView(_ nsView: ActiveWorkspaceTrackingNSView, context: Context) {
         nsView.registry = activeWorkspaceRegistry
+        nsView.sessionRegistry = sessionRegistry
         nsView.workspace = workspace
+        nsView.sessionID = sessionID
         nsView.attachIfNeeded()
     }
 }
 
 private final class ActiveWorkspaceTrackingNSView: NSView {
     weak var registry: ActiveWorkspaceRegistry?
+    weak var sessionRegistry: WorkspaceSessionRegistry?
     weak var workspace: EditorWorkspace?
+    var sessionID = ""
     private weak var observedWindow: NSWindow?
 
     override func viewDidMoveToWindow() {
@@ -710,6 +778,7 @@ private final class ActiveWorkspaceTrackingNSView: NSView {
         if let workspace {
             registry?.clearIfNeeded(workspace)
         }
+        sessionRegistry?.handleWindowWillClose(sessionID: sessionID)
     }
 
     private func promoteWorkspace() {

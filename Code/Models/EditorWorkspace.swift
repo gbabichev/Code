@@ -363,6 +363,7 @@ final class EditorWorkspace: ObservableObject {
     }
 
     func requestCloseTab(_ id: EditorTab.ID) {
+        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
         guard let tab = tab(withID: id) else { return }
 
         if tab.isDirty {
@@ -387,6 +388,7 @@ final class EditorWorkspace: ObservableObject {
     }
 
     func requestRefreshFile(for id: EditorTab.ID) {
+        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
         guard let tab = tab(withID: id), tab.fileURL != nil else { return }
 
         if tab.isDirty {
@@ -426,6 +428,7 @@ final class EditorWorkspace: ObservableObject {
     }
 
     func requestWindowClose(performClose: @escaping @MainActor () -> Void) {
+        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
         if hasDirtyTabs {
             pendingWindowCloseAction = performClose
             pendingWindowClose = PendingWindowClose(
@@ -622,6 +625,7 @@ final class EditorWorkspace: ObservableObject {
     /// Immediately write session state to disk (used on app termination)
     func flushSession() {
         EditorDebugTrace.log("EditorWorkspace.flushSession begin")
+        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
         reconcilePendingDirtyStates()
 
         let snapshot = EditorSessionSnapshot(

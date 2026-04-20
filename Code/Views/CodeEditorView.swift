@@ -10,9 +10,17 @@ final class ActiveEditorTextViewRegistry {
     static let shared = ActiveEditorTextViewRegistry()
 
     weak var textView: NSTextView?
+    private let textViews = NSHashTable<LineClickableTextView>.weakObjects()
+
+    func track(_ textView: LineClickableTextView) {
+        textViews.add(textView)
+    }
 
     func register(_ textView: NSTextView) {
         self.textView = textView
+        if let lineClickableTextView = textView as? LineClickableTextView {
+            track(lineClickableTextView)
+        }
     }
 
     func toggleLineComment() {
@@ -29,6 +37,12 @@ final class ActiveEditorTextViewRegistry {
 
     func flushPendingModelSync() {
         (textView as? LineClickableTextView)?.flushPendingModelSync?()
+    }
+
+    func flushAllPendingModelSync() {
+        for textView in textViews.allObjects {
+            textView.flushPendingModelSync?()
+        }
     }
 }
 
@@ -330,6 +344,7 @@ struct CodeEditorView: NSViewRepresentable {
             completionController.attach(to: containerView)
 
             if let lineClickableTextView = textView as? LineClickableTextView {
+                ActiveEditorTextViewRegistry.shared.track(lineClickableTextView)
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
                 lineClickableTextView.indentWidth = indentWidth
                 lineClickableTextView.autocompleteModeProvider = { [weak self] in
