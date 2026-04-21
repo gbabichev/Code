@@ -30,15 +30,18 @@ final class EditorWorkspace: ObservableObject {
     @Published var pendingTabClose: PendingTabClose?
     @Published var pendingWindowClose: PendingWindowClose?
     @Published var pendingFileRefresh: PendingFileRefresh?
+    @Published private var externalModificationVersionByTabID: [EditorTab.ID: Int] = [:]
 
     private let preferences: AppPreferences
     private let fileManager: FileManager
     private let sessionStore: SessionStore
     private var tabObservers: [String: AnyCancellable] = [:]
+    private var knownDiskStatesByTabID: [EditorTab.ID: FileDiskState] = [:]
     private var persistSessionTimer: Timer?
     private var pendingWindowCloseAction: (@MainActor () -> Void)?
     private var pendingDirtyStateRecheckTabIDs = Set<EditorTab.ID>()
     private var recentlyClosedTabs: [ClosedTabState] = []
+    private var nextExternalModificationVersion = 0
 
     init(
         preferences: AppPreferences,
@@ -73,6 +76,10 @@ final class EditorWorkspace: ObservableObject {
 
     var hasDirtyTabs: Bool {
         openTabs.contains(where: \.isDirty)
+    }
+
+    func externalModificationVersion(for id: EditorTab.ID) -> Int? {
+        externalModificationVersionByTabID[id]
     }
 
     func tab(withID id: EditorTab.ID) -> EditorTab? {
@@ -146,6 +153,7 @@ final class EditorWorkspace: ObservableObject {
         fileTree = []
         openTabs.removeAll()
         tabObservers.removeAll()
+        knownDiskStatesByTabID.removeAll()
         recentlyClosedTabs.removeAll()
         primaryTabID = nil
         secondaryTabID = nil
@@ -155,6 +163,8 @@ final class EditorWorkspace: ObservableObject {
         pendingTabClose = nil
         pendingWindowClose = nil
         pendingFileRefresh = nil
+        externalModificationVersionByTabID.removeAll()
+        nextExternalModificationVersion = 0
         pendingWindowCloseAction = nil
         errorMessage = nil
         createUntitledTab()
@@ -194,6 +204,7 @@ final class EditorWorkspace: ObservableObject {
             )
             attachObserver(to: tab)
             openTabs.append(tab)
+            recordKnownDiskState(for: tab.id, fileURL: url)
             preferences.recordRecentFile(url)
             selectTab(tab.id, persist: false)
             persistSession()
@@ -238,6 +249,14 @@ final class EditorWorkspace: ObservableObject {
 
         attachObserver(to: tab)
         openTabs.append(tab)
+        if let lastKnownDiskState = closedState.lastKnownDiskState {
+            knownDiskStatesByTabID[tab.id] = lastKnownDiskState
+        } else {
+            recordKnownDiskState(for: tab.id, fileURL: tab.fileURL)
+        }
+        if let externalModificationVersion = closedState.externalModificationVersion {
+            externalModificationVersionByTabID[tab.id] = externalModificationVersion
+        }
         selectTab(tab.id, persist: false)
         persistSession()
     }
@@ -251,8 +270,11 @@ final class EditorWorkspace: ObservableObject {
     func adoptTransferredTab(_ tab: EditorTab) {
         openTabs.forEach { tabObservers[$0.id] = nil }
         openTabs.removeAll()
+        knownDiskStatesByTabID.removeAll()
+        externalModificationVersionByTabID.removeAll()
         attachObserver(to: tab)
         openTabs.append(tab)
+        recordKnownDiskState(for: tab.id, fileURL: tab.fileURL)
         primaryTabID = tab.id
         secondaryTabID = nil
         focusedPane = .primary
@@ -395,6 +417,24 @@ final class EditorWorkspace: ObservableObject {
             pendingFileRefresh = PendingFileRefresh(id: id, fileName: tab.title)
         } else {
             refreshFile(for: id)
+        }
+    }
+
+    func synchronizeCleanTabsWithDisk() {
+        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
+
+        for tab in openTabs {
+            guard !tab.isDirty, let fileURL = tab.fileURL else { continue }
+            guard let currentDiskState = try? diskState(for: fileURL) else { continue }
+            guard knownDiskStatesByTabID[tab.id] != currentDiskState else { continue }
+            _ = refreshFile(for: tab.id, reportErrors: false)
+        }
+
+        for tab in openTabs {
+            guard tab.isDirty, let fileURL = tab.fileURL else { continue }
+            guard let currentDiskState = try? diskState(for: fileURL) else { continue }
+            guard knownDiskStatesByTabID[tab.id] != currentDiskState else { continue }
+            noteExternalModification(for: tab.id, diskState: currentDiskState)
         }
     }
 
@@ -544,6 +584,8 @@ final class EditorWorkspace: ObservableObject {
             tab.refreshDirtyState()
             preferences.recordRecentFile(destinationURL)
             selectedFileID = destinationURL.path(percentEncoded: false)
+            recordKnownDiskState(for: tab.id, fileURL: destinationURL)
+            clearExternalModification(for: tab.id)
             if let rootFolderURL,
                destinationURL.path(percentEncoded: false).hasPrefix(rootFolderURL.path(percentEncoded: false)) {
                 reloadFileTree()
@@ -701,6 +743,7 @@ final class EditorWorkspace: ObservableObject {
                     isDirty: item.isDirty
                 )
                 attachObserver(to: tab)
+                recordKnownDiskState(for: tab.id, fileURL: url)
                 return tab
             }
 
@@ -750,7 +793,12 @@ final class EditorWorkspace: ObservableObject {
     }
 
     private func refreshFile(for id: EditorTab.ID) {
-        guard let tab = tab(withID: id), let fileURL = tab.fileURL else { return }
+        _ = refreshFile(for: id, reportErrors: true)
+    }
+
+    @discardableResult
+    private func refreshFile(for id: EditorTab.ID, reportErrors: Bool) -> Bool {
+        guard let tab = tab(withID: id), let fileURL = tab.fileURL else { return false }
 
         do {
             let fileContents = try readTextFile(at: fileURL)
@@ -760,10 +808,18 @@ final class EditorWorkspace: ObservableObject {
             tab.lastSavedLineEnding = fileContents.lineEnding
             tab.lastSavedContent = fileContents.content
             tab.setContent(fileContents.content, notify: true)
-            selectedFileID = fileURL.path(percentEncoded: false)
+            if selectedTabID == id {
+                selectedFileID = fileURL.path(percentEncoded: false)
+            }
+            recordKnownDiskState(for: tab.id, fileURL: fileURL)
+            clearExternalModification(for: tab.id)
             persistSession()
+            return true
         } catch {
-            errorMessage = "Failed to refresh \(fileURL.lastPathComponent): \(error.localizedDescription)"
+            if reportErrors {
+                errorMessage = "Failed to refresh \(fileURL.lastPathComponent): \(error.localizedDescription)"
+            }
+            return false
         }
     }
 
@@ -781,7 +837,9 @@ final class EditorWorkspace: ObservableObject {
                 lastSavedContent: tab.lastSavedContent,
                 lastSavedEncoding: tab.lastSavedEncoding,
                 lastSavedLineEnding: tab.lastSavedLineEnding,
-                isDirty: tab.isDirty
+                isDirty: tab.isDirty,
+                lastKnownDiskState: knownDiskStatesByTabID[id],
+                externalModificationVersion: externalModificationVersionByTabID[id]
             )
         }
 
@@ -795,7 +853,9 @@ final class EditorWorkspace: ObservableObject {
             lastSavedContent: tab.lastSavedContent,
             lastSavedEncoding: tab.lastSavedEncoding,
             lastSavedLineEnding: tab.lastSavedLineEnding,
-            isDirty: false
+            isDirty: false,
+            lastKnownDiskState: knownDiskStatesByTabID[id],
+            externalModificationVersion: externalModificationVersionByTabID[id]
         )
     }
 
@@ -807,6 +867,8 @@ final class EditorWorkspace: ObservableObject {
 
         let removedTab = openTabs.remove(at: index)
         tabObservers[id] = nil
+        knownDiskStatesByTabID[id] = nil
+        externalModificationVersionByTabID[id] = nil
 
         if primaryTabID == id {
             if let secondaryTabID {
@@ -898,6 +960,33 @@ final class EditorWorkspace: ObservableObject {
         normalizeLineEndings(in: tab.content).replacingOccurrences(of: "\n", with: tab.lineEnding.sequence)
     }
 
+    private func recordKnownDiskState(for id: EditorTab.ID, fileURL: URL?) {
+        guard let fileURL else {
+            knownDiskStatesByTabID[id] = nil
+            return
+        }
+
+        knownDiskStatesByTabID[id] = try? diskState(for: fileURL)
+    }
+
+    private func noteExternalModification(for id: EditorTab.ID, diskState: FileDiskState) {
+        nextExternalModificationVersion += 1
+        externalModificationVersionByTabID[id] = nextExternalModificationVersion
+        knownDiskStatesByTabID[id] = diskState
+    }
+
+    private func clearExternalModification(for id: EditorTab.ID) {
+        externalModificationVersionByTabID[id] = nil
+    }
+
+    private func diskState(for url: URL) throws -> FileDiskState {
+        let values = try url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        return FileDiskState(
+            modificationDate: values.contentModificationDate,
+            fileSize: values.fileSize
+        )
+    }
+
     private func readTextFile(at url: URL) throws -> (content: String, encoding: EditorTextEncoding, lineEnding: EditorLineEnding) {
         let data = try Data(contentsOf: url)
         let decoded = try decodeTextData(data, fileName: url.lastPathComponent)
@@ -957,4 +1046,11 @@ private struct ClosedTabState {
     let lastSavedEncoding: EditorTextEncoding
     let lastSavedLineEnding: EditorLineEnding
     let isDirty: Bool
+    let lastKnownDiskState: FileDiskState?
+    let externalModificationVersion: Int?
+}
+
+private struct FileDiskState: Equatable {
+    let modificationDate: Date?
+    let fileSize: Int?
 }

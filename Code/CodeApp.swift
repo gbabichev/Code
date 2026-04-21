@@ -757,6 +757,12 @@ private final class ActiveWorkspaceTrackingNSView: NSView {
             name: NSWindow.willCloseNotification,
             object: window
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationDidBecomeActive),
+            name: NSApplication.didBecomeActiveNotification,
+            object: NSApp
+        )
 
         if window.isKeyWindow || window.isMainWindow {
             promoteWorkspace()
@@ -781,8 +787,16 @@ private final class ActiveWorkspaceTrackingNSView: NSView {
         sessionRegistry?.handleWindowWillClose(sessionID: sessionID)
     }
 
+    @objc
+    private func handleApplicationDidBecomeActive(_: Notification) {
+        guard let observedWindow else { return }
+        guard observedWindow.isKeyWindow || observedWindow.isMainWindow else { return }
+        promoteWorkspace()
+    }
+
     private func promoteWorkspace() {
         guard let workspace else { return }
+        workspace.synchronizeCleanTabsWithDisk()
         registry?.setActive(workspace)
     }
 
@@ -791,6 +805,7 @@ private final class ActiveWorkspaceTrackingNSView: NSView {
             NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: observedWindow)
             NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeMainNotification, object: observedWindow)
             NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: observedWindow)
+            NotificationCenter.default.removeObserver(self, name: NSApplication.didBecomeActiveNotification, object: NSApp)
         } else {
             NotificationCenter.default.removeObserver(self)
         }

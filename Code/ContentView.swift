@@ -21,6 +21,7 @@ struct ContentView: View {
     @State private var cachedSearchMatches: [NSRange] = []
     @State private var toastMessage: String?
     @State private var dismissedLargeFileWordWrapBannerTabIDs: Set<EditorTab.ID> = []
+    @State private var dismissedExternalModificationBannerVersionsByTabID: [EditorTab.ID: Int] = [:]
     @FocusState private var focusedSearchField: SearchField?
 
     enum SearchField: Hashable {
@@ -453,6 +454,27 @@ struct ContentView: View {
         )
     }
 
+    private func externalModificationBannerDismissedBinding(for tabID: EditorTab.ID) -> Binding<Bool> {
+        Binding(
+            get: {
+                guard let version = workspace.externalModificationVersion(for: tabID) else { return false }
+                return dismissedExternalModificationBannerVersionsByTabID[tabID] == version
+            },
+            set: { isDismissed in
+                guard let version = workspace.externalModificationVersion(for: tabID) else {
+                    dismissedExternalModificationBannerVersionsByTabID.removeValue(forKey: tabID)
+                    return
+                }
+
+                if isDismissed {
+                    dismissedExternalModificationBannerVersionsByTabID[tabID] = version
+                } else {
+                    dismissedExternalModificationBannerVersionsByTabID.removeValue(forKey: tabID)
+                }
+            }
+        )
+    }
+
     private var editorArea: some View {
         Group {
             if let primaryTab = workspace.primaryTab {
@@ -460,6 +482,9 @@ struct ContentView: View {
                     HSplitView {
                         EditorSplitPaneView(
                             isLargeFileWordWrapBannerDismissed: largeFileWordWrapBannerDismissedBinding(for: primaryTab.id),
+                            showsExternalModificationBanner: workspace.externalModificationVersion(for: primaryTab.id) != nil,
+                            isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: primaryTab.id),
+                            onExternalModificationRefresh: { workspace.requestRefreshFile(for: primaryTab.id) },
                             title: primaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(primaryTab),
@@ -477,6 +502,9 @@ struct ContentView: View {
 
                         EditorSplitPaneView(
                             isLargeFileWordWrapBannerDismissed: largeFileWordWrapBannerDismissedBinding(for: secondaryTab.id),
+                            showsExternalModificationBanner: workspace.externalModificationVersion(for: secondaryTab.id) != nil,
+                            isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: secondaryTab.id),
+                            onExternalModificationRefresh: { workspace.requestRefreshFile(for: secondaryTab.id) },
                             title: secondaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(secondaryTab),
@@ -495,6 +523,9 @@ struct ContentView: View {
                 } else {
                     EditorAreaView(
                         isLargeFileWordWrapBannerDismissed: largeFileWordWrapBannerDismissedBinding(for: primaryTab.id),
+                        showsExternalModificationBanner: workspace.externalModificationVersion(for: primaryTab.id) != nil,
+                        isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: primaryTab.id),
+                        onExternalModificationRefresh: { workspace.requestRefreshFile(for: primaryTab.id) },
                         text: selectedTabBinding(primaryTab),
                         isWordWrapEnabled: preferences.isWordWrapEnabled,
                         isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
@@ -827,6 +858,9 @@ struct ContentView: View {
 // MARK: - Editor Area View (extracted to help compiler type-checking)
 private struct EditorAreaView: View {
     let isLargeFileWordWrapBannerDismissed: Binding<Bool>
+    let showsExternalModificationBanner: Bool
+    let isExternalModificationBannerDismissed: Binding<Bool>
+    let onExternalModificationRefresh: () -> Void
     let text: Binding<String>
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
@@ -844,29 +878,30 @@ private struct EditorAreaView: View {
             && (text.wrappedValue as NSString).length > CodeEditorView.largeFileWordWrapThreshold
     }
 
+    private var shouldShowExternalModificationBanner: Bool {
+        showsExternalModificationBanner && !isExternalModificationBannerDismissed.wrappedValue
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            if showsLargeFileWordWrapBanner {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .bold))
-                    Text("Word wrap is disabled for this file because it is too large.")
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(2)
-                    Spacer(minLength: 0)
-                    Button {
-                        isLargeFileWordWrapBannerDismissed.wrappedValue = true
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .bold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.9))
+            if shouldShowExternalModificationBanner {
+                banner(
+                    message: "File was modified externally. Refresh to load disk changes, or save to overwrite them.",
+                    backgroundColor: Color.orange.opacity(0.94),
+                    actionTitle: "Refresh",
+                    onAction: onExternalModificationRefresh
+                ) {
+                    isExternalModificationBannerDismissed.wrappedValue = true
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .foregroundStyle(.white)
-                .background(Color.red.opacity(0.92))
+            }
+
+            if showsLargeFileWordWrapBanner {
+                banner(
+                    message: "Word wrap is disabled for this file because it is too large.",
+                    backgroundColor: Color.red.opacity(0.92)
+                ) {
+                        isLargeFileWordWrapBannerDismissed.wrappedValue = true
+                }
             }
 
             CodeEditorView(
@@ -883,10 +918,54 @@ private struct EditorAreaView: View {
             )
         }
     }
+
+    @ViewBuilder
+    private func banner(
+        message: String,
+        backgroundColor: Color,
+        actionTitle: String? = nil,
+        onAction: (() -> Void)? = nil,
+        onDismiss: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 11, weight: .bold))
+            Text(message)
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(2)
+            Spacer(minLength: 0)
+            if let actionTitle, let onAction {
+                Button(actionTitle) {
+                    onAction()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .bold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.white.opacity(0.18), in: Capsule())
+                .foregroundStyle(.white)
+            }
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(0.9))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .foregroundStyle(.white)
+        .background(backgroundColor)
+    }
 }
 
 private struct EditorSplitPaneView: View {
     let isLargeFileWordWrapBannerDismissed: Binding<Bool>
+    let showsExternalModificationBanner: Bool
+    let isExternalModificationBannerDismissed: Binding<Bool>
+    let onExternalModificationRefresh: () -> Void
     let title: String
     let showsCloseButton: Bool
     let text: Binding<String>
@@ -942,6 +1021,9 @@ private struct EditorSplitPaneView: View {
 
             EditorAreaView(
                 isLargeFileWordWrapBannerDismissed: isLargeFileWordWrapBannerDismissed,
+                showsExternalModificationBanner: showsExternalModificationBanner,
+                isExternalModificationBannerDismissed: isExternalModificationBannerDismissed,
+                onExternalModificationRefresh: onExternalModificationRefresh,
                 text: text,
                 isWordWrapEnabled: isWordWrapEnabled,
                 isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
