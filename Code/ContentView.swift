@@ -18,7 +18,9 @@ struct ContentView: View {
     @EnvironmentObject private var aboutController: AboutOverlayController
     @EnvironmentObject private var settingsController: SettingsPopoverController
     @State private var isTargetingTabDrop = false
-    @State private var cachedSearchMatches: [NSRange] = []
+    @State private var searchMatchSummary = SearchMatchSummary()
+    @State private var pendingSearchSummaryWorkItem: DispatchWorkItem?
+    @State private var searchSummaryGeneration = 0
     @State private var toastMessage: String?
     @State private var dismissedLargeFileWordWrapBannerTabIDs: Set<EditorTab.ID> = []
     @State private var dismissedExternalModificationBannerVersionsByTabID: [EditorTab.ID: Int] = [:]
@@ -235,7 +237,7 @@ struct ContentView: View {
                         replacement: $searchController.replacement,
                         isCaseSensitive: $searchController.isCaseSensitive,
                         isReplaceVisible: searchController.isReplaceVisible,
-                        matchSummary: matchSummary(for: cachedSearchMatches),
+                        matchSummary: matchSummaryText,
                         focusedField: $focusedSearchField,
                         onClose: { searchController.hide() },
                         onFindNext: { findNext(in: selectedTab) },
@@ -279,19 +281,19 @@ struct ContentView: View {
             handleSearchCommand()
         }
         .onChange(of: searchController.query) { _, _ in
-            refreshSearchMatches()
+            scheduleSearchSummaryRefresh()
         }
         .onChange(of: searchController.isCaseSensitive) { _, _ in
-            refreshSearchMatches()
+            scheduleSearchSummaryRefresh()
         }
         .onChange(of: searchController.isPresented) { _, _ in
-            refreshSearchMatches()
+            refreshSearchSummary()
         }
         .onChange(of: workspace.selectedTabID) { _, _ in
-            refreshSearchMatches()
+            refreshSearchSummary()
         }
         .onAppear {
-            refreshSearchMatches()
+            refreshSearchSummary()
         }
     }
 
@@ -557,6 +559,7 @@ struct ContentView: View {
         focusedSearchField = .find
 
         guard let selectedTab = workspace.selectedTab else {
+            refreshSearchSummary()
             return
         }
 
@@ -564,6 +567,8 @@ struct ContentView: View {
         case .showFind, .showReplace:
             if !searchController.query.isEmpty {
                 findNext(in: selectedTab)
+            } else {
+                refreshSearchSummary()
             }
         case .findNext, .useSelectionForFind:
             findNext(in: selectedTab)
@@ -588,6 +593,7 @@ struct ContentView: View {
         ) ?? findMatch(in: text, query: searchController.query, range: NSRange(location: 0, length: min(startLocation, text.length)), options: stringCompareOptions) {
             select(match, in: textView)
         }
+        refreshSearchSummary()
     }
 
     private func findPrevious(in tab: EditorTab) {
@@ -611,6 +617,7 @@ struct ContentView: View {
         ) {
             select(match, in: textView)
         }
+        refreshSearchSummary()
     }
 
     private func replaceCurrentMatch(in tab: EditorTab) {
@@ -629,7 +636,7 @@ struct ContentView: View {
             let replacementRange = NSRange(location: selectedRange.location, length: (searchController.replacement as NSString).length)
             DispatchQueue.main.async {
                 self.select(replacementRange, in: textView)
-                self.refreshSearchMatches()
+                self.refreshSearchSummary()
             }
             findNext(in: tab)
             return
@@ -650,52 +657,72 @@ struct ContentView: View {
             range: fullRange
         )
         workspace.updateContent(updated, for: tab.id)
-        refreshSearchMatches()
+        refreshSearchSummary()
     }
 
-    private func findMatches(in tab: EditorTab) -> [NSRange] {
-        guard !searchController.query.isEmpty else { return [] }
+    private func scheduleSearchSummaryRefresh() {
+        searchSummaryGeneration += 1
+        let generation = searchSummaryGeneration
+        pendingSearchSummaryWorkItem?.cancel()
 
-        let text = tab.content as NSString
-        var matches: [NSRange] = []
-        var searchLocation = 0
-
-        while searchLocation <= text.length {
-            let searchRange = NSRange(location: searchLocation, length: text.length - searchLocation)
-            let match = text.range(of: searchController.query, options: stringCompareOptions, range: searchRange)
-            guard match.location != NSNotFound, match.length > 0 else { break }
-            matches.append(match)
-            searchLocation = NSMaxRange(match)
+        let workItem = DispatchWorkItem {
+            guard generation == searchSummaryGeneration else { return }
+            refreshSearchSummary(generation: generation)
         }
-
-        return matches
+        pendingSearchSummaryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
     }
 
-    private func refreshSearchMatches() {
+    private func refreshSearchSummary() {
+        searchSummaryGeneration += 1
+        refreshSearchSummary(generation: searchSummaryGeneration)
+    }
+
+    private func refreshSearchSummary(generation: Int) {
+        pendingSearchSummaryWorkItem?.cancel()
+        pendingSearchSummaryWorkItem = nil
+
         guard searchController.isPresented,
               let selectedTab = workspace.selectedTab else {
-            cachedSearchMatches = []
+            searchMatchSummary = SearchMatchSummary()
             return
         }
 
-        cachedSearchMatches = findMatches(in: selectedTab)
+        let query = searchController.query
+        guard !query.isEmpty else {
+            searchMatchSummary = SearchMatchSummary()
+            return
+        }
+
+        let text = selectedTab.content
+        let options = stringCompareOptions
+        let selectedRange = ActiveEditorTextViewRegistry.shared.textView?.selectedRange() ?? NSRange(location: NSNotFound, length: 0)
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let summary = Self.computeSearchMatchSummary(
+                in: text,
+                query: query,
+                options: options,
+                selectedRange: selectedRange
+            )
+
+            DispatchQueue.main.async {
+                guard generation == searchSummaryGeneration else { return }
+                searchMatchSummary = summary
+            }
+        }
     }
 
-    private func matchSummary(for matches: [NSRange]) -> String {
-        guard !matches.isEmpty else {
+    private var matchSummaryText: String {
+        guard searchMatchSummary.totalMatches > 0 else {
             return searchController.query.isEmpty ? "" : "0 matches"
         }
 
-        guard let textView = ActiveEditorTextViewRegistry.shared.textView else {
-            return "\(matches.count) matches"
+        if let currentMatchIndex = searchMatchSummary.currentMatchIndex {
+            return "\(currentMatchIndex) of \(searchMatchSummary.totalMatches)"
         }
 
-        let selectedRange = textView.selectedRange()
-        if let currentIndex = matches.firstIndex(where: { NSEqualRanges($0, selectedRange) }) {
-            return "\(currentIndex + 1) of \(matches.count)"
-        }
-
-        return "\(matches.count) matches"
+        return "\(searchMatchSummary.totalMatches) matches"
     }
 
     private func findMatch(
@@ -728,6 +755,34 @@ struct ContentView: View {
         var options = stringCompareOptions
         options.insert(.backwards)
         return options
+    }
+
+    private nonisolated static func computeSearchMatchSummary(
+        in text: String,
+        query: String,
+        options: NSString.CompareOptions,
+        selectedRange: NSRange
+    ) -> SearchMatchSummary {
+        guard !query.isEmpty else { return SearchMatchSummary() }
+
+        let nsText = text as NSString
+        var totalMatches = 0
+        var currentMatchIndex: Int?
+        var searchLocation = 0
+
+        while searchLocation <= nsText.length {
+            let searchRange = NSRange(location: searchLocation, length: nsText.length - searchLocation)
+            let match = nsText.range(of: query, options: options, range: searchRange)
+            guard match.location != NSNotFound, match.length > 0 else { break }
+
+            totalMatches += 1
+            if currentMatchIndex == nil, NSEqualRanges(match, selectedRange) {
+                currentMatchIndex = totalMatches
+            }
+            searchLocation = NSMaxRange(match)
+        }
+
+        return SearchMatchSummary(totalMatches: totalMatches, currentMatchIndex: currentMatchIndex)
     }
 
     private func handleDroppedItems(_ providers: [NSItemProvider]) -> Bool {
@@ -853,6 +908,11 @@ struct ContentView: View {
             .dark
         }
     }
+}
+
+private struct SearchMatchSummary {
+    var totalMatches = 0
+    var currentMatchIndex: Int?
 }
 
 // MARK: - Editor Area View (extracted to help compiler type-checking)

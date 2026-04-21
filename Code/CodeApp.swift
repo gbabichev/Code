@@ -19,7 +19,6 @@ struct CodeApp: App {
     @StateObject private var workspacePersistenceRegistry = WorkspacePersistenceRegistry.shared
     @StateObject private var detachedTabTransfer = DetachedTabTransferCoordinator.shared
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
-    @StateObject private var searchController = EditorSearchController()
     @StateObject private var aboutController = AboutOverlayController()
     @StateObject private var settingsController = SettingsPopoverController()
     @StateObject private var updateCenter = AppUpdateCenter.shared
@@ -33,7 +32,6 @@ struct CodeApp: App {
                 workspacePersistenceRegistry: workspacePersistenceRegistry,
                 detachedTabTransfer: detachedTabTransfer,
                 externalFileRouter: externalFileRouter,
-                searchController: searchController,
                 aboutController: aboutController,
                 settingsController: settingsController,
                 updateCenter: updateCenter,
@@ -45,7 +43,6 @@ struct CodeApp: App {
             SidebarCommands()
             EditorCommands(
                 preferences: preferences,
-                searchController: searchController,
                 aboutController: aboutController,
                 settingsController: settingsController,
                 updateCenter: updateCenter,
@@ -71,7 +68,6 @@ private struct WorkspaceSceneView: View {
     @ObservedObject var workspacePersistenceRegistry: WorkspacePersistenceRegistry
     @ObservedObject var detachedTabTransfer: DetachedTabTransferCoordinator
     @ObservedObject var externalFileRouter: ExternalFileRouter
-    @ObservedObject var searchController: EditorSearchController
     @ObservedObject var aboutController: AboutOverlayController
     @ObservedObject var settingsController: SettingsPopoverController
     @ObservedObject var updateCenter: AppUpdateCenter
@@ -87,7 +83,6 @@ private struct WorkspaceSceneView: View {
         workspacePersistenceRegistry: WorkspacePersistenceRegistry,
         detachedTabTransfer: DetachedTabTransferCoordinator,
         externalFileRouter: ExternalFileRouter,
-        searchController: EditorSearchController,
         aboutController: AboutOverlayController,
         settingsController: SettingsPopoverController,
         updateCenter: AppUpdateCenter,
@@ -99,7 +94,6 @@ private struct WorkspaceSceneView: View {
         self.workspacePersistenceRegistry = workspacePersistenceRegistry
         self.detachedTabTransfer = detachedTabTransfer
         self.externalFileRouter = externalFileRouter
-        self.searchController = searchController
         self.aboutController = aboutController
         self.settingsController = settingsController
         self.updateCenter = updateCenter
@@ -118,7 +112,6 @@ private struct WorkspaceSceneView: View {
             .environmentObject(workspacePersistenceRegistry)
             .environmentObject(detachedTabTransfer)
             .environmentObject(externalFileRouter)
-            .environmentObject(searchController)
             .environmentObject(aboutController)
             .environmentObject(settingsController)
             .environmentObject(updateCenter)
@@ -148,6 +141,7 @@ private struct WorkspaceSceneView: View {
 private struct WorkspaceContentView: View {
     let sessionID: String
     @StateObject private var workspace: EditorWorkspace
+    @StateObject private var searchController = EditorSearchController()
     @EnvironmentObject private var activeWorkspaceRegistry: ActiveWorkspaceRegistry
     @EnvironmentObject private var workspacePersistenceRegistry: WorkspacePersistenceRegistry
     @EnvironmentObject private var sessionRegistry: WorkspaceSessionRegistry
@@ -168,7 +162,9 @@ private struct WorkspaceContentView: View {
         ContentView()
             .frame(minWidth: 500, minHeight: 500)
             .environmentObject(workspace)
+            .environmentObject(searchController)
             .focusedSceneValue(\.activeEditorWorkspace, workspace)
+            .focusedSceneValue(\.activeEditorSearchController, searchController)
             .background(WindowDirtyStateView(isDocumentEdited: workspace.hasDirtyTabs))
             .background(WindowCloseInterceptorView(workspace: workspace))
             .background(ActiveWorkspaceTrackingView(
@@ -356,8 +352,8 @@ final class WorkspacePersistenceRegistry: ObservableObject {
 
 private struct EditorCommands: Commands {
     @FocusedValue(\.activeEditorWorkspace) private var workspace
+    @FocusedValue(\.activeEditorSearchController) private var searchController
     @ObservedObject var preferences: AppPreferences
-    @ObservedObject var searchController: EditorSearchController
     @ObservedObject var aboutController: AboutOverlayController
     @ObservedObject var settingsController: SettingsPopoverController
     @ObservedObject var updateCenter: AppUpdateCenter
@@ -572,46 +568,48 @@ private struct EditorCommands: Commands {
 
         CommandMenu("Find") {
             Button {
-                searchController.showFind()
+                searchController?.showFind()
             } label: {
                 Label("Find...", systemImage: "magnifyingglass")
             }
             .keyboardShortcut("f", modifiers: [.command])
+            .disabled(searchController == nil)
 
             Button {
-                searchController.showReplace()
+                searchController?.showReplace()
             } label: {
                 Label("Replace...", systemImage: "rectangle.and.pencil.and.ellipsis")
             }
             .keyboardShortcut("f", modifiers: [.command, .option])
+            .disabled(searchController == nil)
 
             Divider()
 
             Button {
-                searchController.findNext()
+                searchController?.findNext()
             } label: {
                 Label("Find Next", systemImage: "chevron.down")
             }
             .keyboardShortcut("g", modifiers: [.command])
-            .disabled(resolvedWorkspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil || searchController == nil)
 
             Button {
-                searchController.findPrevious()
+                searchController?.findPrevious()
             } label: {
                 Label("Find Previous", systemImage: "chevron.up")
             }
             .keyboardShortcut("g", modifiers: [.command, .shift])
-            .disabled(resolvedWorkspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil || searchController == nil)
 
             Divider()
 
             Button {
-                searchController.useSelectionForFind()
+                searchController?.useSelectionForFind()
             } label: {
                 Label("Use Selection for Find", systemImage: "selection.pin.in.out")
             }
             .keyboardShortcut("e", modifiers: [.command])
-            .disabled(resolvedWorkspace?.selectedTab == nil)
+            .disabled(resolvedWorkspace?.selectedTab == nil || searchController == nil)
         }
 
         CommandGroup(after: .sidebar) {
@@ -646,6 +644,15 @@ private extension FocusedValues {
         get { self[ActiveEditorWorkspaceKey.self] }
         set { self[ActiveEditorWorkspaceKey.self] = newValue }
     }
+
+    var activeEditorSearchController: EditorSearchController? {
+        get { self[ActiveEditorSearchControllerKey.self] }
+        set { self[ActiveEditorSearchControllerKey.self] = newValue }
+    }
+}
+
+private struct ActiveEditorSearchControllerKey: FocusedValueKey {
+    typealias Value = EditorSearchController
 }
 
 private struct WindowDirtyStateView: NSViewRepresentable {
