@@ -1165,6 +1165,8 @@ struct CodeEditorView: NSViewRepresentable {
             switch language {
             case .plainText:
                 return []
+            case .logfile:
+                return []
             case .shell:
                 return [
                     "if", "then", "else", "elif", "fi", "for", "do", "done", "while", "until",

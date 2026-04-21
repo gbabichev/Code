@@ -94,6 +94,7 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable {
 
 enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
     case plainText
+    case logfile
     case markdown
     case shell
     case dotenv
@@ -110,6 +111,8 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         switch rawValue {
         case "plainText":
             self = .plainText
+        case "logfile":
+            self = .logfile
         case "markdown":
             self = .markdown
         case "shell":
@@ -147,6 +150,13 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         }
 
         let lastPathComponent = url.lastPathComponent.lowercased()
+        if url.pathExtension.lowercased() == "log"
+            || lastPathComponent == "logfile"
+            || lastPathComponent.hasSuffix(".log")
+            || lastPathComponent.contains(".log.") {
+            return .logfile
+        }
+
         if ["md", "markdown"].contains(url.pathExtension.lowercased()) {
             return .markdown
         }
@@ -182,7 +192,7 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .shell, .dotenv, .python, .powerShell:
             return "#"
-        case .plainText, .markdown, .xml, .json:
+        case .plainText, .logfile, .markdown, .xml, .json:
             return nil
         }
     }
@@ -191,6 +201,8 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .plainText:
             "Plain Text"
+        case .logfile:
+            "Logfile"
         case .markdown:
             "Markdown"
         case .shell:

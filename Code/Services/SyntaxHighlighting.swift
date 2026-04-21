@@ -827,6 +827,83 @@ struct JSONSyntaxHighlighter: SyntaxHighlighting {
     }
 }
 
+struct LogfileSyntaxHighlighter: SyntaxHighlighting {
+    let theme: SkinTheme
+
+    private static let timestampRegex = try! NSRegularExpression(
+        pattern: #"""
+        (?xmi)
+        \b
+        (?:
+            \d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[.,]\d{3,6})?(?:Z|[+-]\d{2}:?\d{2})?
+            |
+            \d{2}:\d{2}:\d{2}(?:[.,]\d{3,6})?
+            |
+            [A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}
+        )
+        \b
+        """#
+    )
+    private static let levelRegex = try! NSRegularExpression(
+        pattern: #"(?mi)\b(trace|debug|info|notice|warn|warning|error|err|critical|fatal|panic)\b"#
+    )
+    private static let bracketContextRegex = try! NSRegularExpression(
+        pattern: #"\[[A-Za-z0-9_.:/#-]+\]"#
+    )
+    private static let keyRegex = try! NSRegularExpression(
+        pattern: #"(?m)\b([A-Za-z_][A-Za-z0-9_.-]*)="#
+    )
+    private static let quotedStringRegex = try! NSRegularExpression(
+        pattern: #"\"([^\n\"\\]|\\.)*\"|'([^\n'\\]|\\.)*'"#
+    )
+    private static let stackTraceRegex = try! NSRegularExpression(
+        pattern: #"(?m)^\s+(?:at\b|File\b|Caused by:|Traceback\b).*$"#
+    )
+
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
+        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
+
+        if range != nil, highlightRange.length >= maxFullHighlightSize {
+            storage.setAttributes(theme.baseAttributes, range: highlightRange)
+            return
+        }
+
+        storage.setAttributes(theme.baseAttributes, range: highlightRange)
+
+        let stringRanges = Self.quotedStringRegex.matches(in: text, range: highlightRange).map(\.range)
+        let stackTraceRanges = Self.stackTraceRegex.matches(in: text, range: highlightRange).map(\.range)
+
+        for range in stringRanges {
+            storage.addAttributes(theme.stringAttributes, range: range)
+        }
+
+        for match in Self.timestampRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: stringRanges) {
+            storage.addAttributes(theme.commandAttributes, range: match.range)
+        }
+
+        for match in Self.levelRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: stringRanges) {
+            storage.addAttributes(theme.keywordAttributes, range: match.range)
+        }
+
+        for match in Self.bracketContextRegex.matches(in: text, range: highlightRange)
+        where !intersects(match.range, with: stringRanges + stackTraceRanges) {
+            storage.addAttributes(theme.variableAttributes, range: match.range)
+        }
+
+        for match in Self.keyRegex.matches(in: text, range: highlightRange)
+        where match.numberOfRanges > 1 && !intersects(match.range(at: 1), with: stringRanges + stackTraceRanges) {
+            storage.addAttributes(theme.variableAttributes, range: match.range(at: 1))
+        }
+
+        for range in stackTraceRanges {
+            storage.addAttributes(theme.commentAttributes, range: range)
+        }
+    }
+}
+
 private func lineStart(in text: NSString, at location: Int) -> Int {
     guard text.length > 0 else { return 0 }
     var index = min(max(location, 0), text.length)
@@ -855,6 +932,8 @@ enum SyntaxHighlighterFactory {
         let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: semiboldFont)
 
         switch language {
+        case .logfile:
+            return LogfileSyntaxHighlighter(theme: theme)
         case .markdown:
             return MarkdownSyntaxHighlighter(theme: theme)
         case .shell:
