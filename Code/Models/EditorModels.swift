@@ -468,6 +468,12 @@ struct EditorTabSnapshot: Codable {
     }
 }
 
+extension EditorTabSnapshot {
+    var isBlankUntitledTab: Bool {
+        filePath == nil && !isDirty && content.isEmpty
+    }
+}
+
 struct PendingTabClose: Identifiable, Equatable {
     let id: EditorTab.ID
     let fileName: String
@@ -529,6 +535,13 @@ struct EditorSessionSnapshot: Codable {
         appTheme = try container.decodeIfPresent(AppTheme.self, forKey: .appTheme)
         selectedSkinID = try container.decodeIfPresent(String.self, forKey: .selectedSkinID)
         tabs = try container.decode([EditorTabSnapshot].self, forKey: .tabs)
+    }
+
+    var isBlankWorkspace: Bool {
+        rootFolderPath == nil
+            && selectedFilePath == nil
+            && !tabs.isEmpty
+            && tabs.allSatisfy(\.isBlankUntitledTab)
     }
 }
 

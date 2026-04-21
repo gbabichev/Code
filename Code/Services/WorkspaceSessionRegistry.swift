@@ -8,12 +8,14 @@ import Foundation
 
 @MainActor
 final class WorkspaceSessionRegistry: ObservableObject {
+    private static let additionalLaunchRestoreDelay: TimeInterval = 1.0
+
     private let userDefaults: UserDefaults
     private let fileManager: FileManager
     private var didConsumeLaunchRestore = false
-    private var didScheduleAdditionalLaunchRestore = false
-    private var connectedSessionIDs = Set<String>()
+    private var connectedSessionCounts: [String: Int] = [:]
     private var pendingLaunchRestoreSessionIDs: [String] = []
+    private var pendingRestoreWorkItem: DispatchWorkItem?
 
     init(
         userDefaults: UserDefaults = .standard,
@@ -43,41 +45,37 @@ final class WorkspaceSessionRegistry: ObservableObject {
     ) {
         guard !sessionID.isEmpty else { return }
 
-        connectedSessionIDs.insert(sessionID)
+        connectedSessionCounts[sessionID, default: 0] += 1
+        pendingLaunchRestoreSessionIDs.removeAll { $0 == sessionID }
         register(sessionID: sessionID)
-
-        guard !didScheduleAdditionalLaunchRestore else { return }
-        didScheduleAdditionalLaunchRestore = true
-
-        // Give SwiftUI scene restoration a moment to recreate any additional windows
-        // before fallback restore opens missing ones.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            Task { @MainActor in
-                guard let self else { return }
-
-                let existingOrPending = self.connectedSessionIDs.union(self.pendingLaunchRestoreSessionIDs)
-                let missingSessionIDs = self.orderedRestorableSessionIDs().filter { !existingOrPending.contains($0) }
-                guard !missingSessionIDs.isEmpty else { return }
-
-                self.pendingLaunchRestoreSessionIDs.append(contentsOf: missingSessionIDs)
-                openAdditionalWindows(missingSessionIDs.count)
-            }
-        }
+        scheduleAdditionalLaunchRestoreCheck(openAdditionalWindows: openAdditionalWindows)
     }
 
     func handleSceneDisappear(sessionID: String) {
         guard !sessionID.isEmpty else { return }
 
-        connectedSessionIDs.remove(sessionID)
+        let currentCount = connectedSessionCounts[sessionID, default: 0]
+        if currentCount <= 1 {
+            connectedSessionCounts.removeValue(forKey: sessionID)
+        } else {
+            connectedSessionCounts[sessionID] = currentCount - 1
+        }
     }
 
     func handleWindowWillClose(sessionID: String) {
         guard !sessionID.isEmpty else { return }
         guard !ApplicationLifecycleState.shared.isTerminating else { return }
+        guard connectedSessionCounts[sessionID, default: 0] <= 1 else { return }
 
         var sessionIDs = storedRestorableSessionIDs()
         sessionIDs.removeAll { $0 == sessionID }
         userDefaults.set(sessionIDs, forKey: Keys.restorableSessionIDs)
+    }
+
+    func noteRestoredSceneSession(sessionID: String) {
+        guard !sessionID.isEmpty else { return }
+        didConsumeLaunchRestore = true
+        pendingLaunchRestoreSessionIDs.removeAll { $0 == sessionID }
     }
 
     func markFocused(sessionID: String) {
@@ -104,16 +102,17 @@ final class WorkspaceSessionRegistry: ObservableObject {
             userDefaults.set(availableSessionIDs, forKey: Keys.restorableSessionIDs)
         }
 
+        let orderedSessionIDs: [String]
         if availableSessionIDs.isEmpty {
-            return fallbackRestorableSessionIDs(from: savedSessions)
+            orderedSessionIDs = fallbackRestorableSessionIDs(from: savedSessions)
+        } else if let lastFocusedSessionID = userDefaults.string(forKey: Keys.lastFocusedSessionID),
+                  availableSessionIDs.contains(lastFocusedSessionID) {
+            orderedSessionIDs = [lastFocusedSessionID] + availableSessionIDs.filter { $0 != lastFocusedSessionID }
+        } else {
+            orderedSessionIDs = availableSessionIDs
         }
 
-        guard let lastFocusedSessionID = userDefaults.string(forKey: Keys.lastFocusedSessionID),
-              availableSessionIDs.contains(lastFocusedSessionID) else {
-            return availableSessionIDs
-        }
-
-        return [lastFocusedSessionID] + availableSessionIDs.filter { $0 != lastFocusedSessionID }
+        return filteredLaunchRestoreSessionIDs(from: orderedSessionIDs)
     }
 
     private func fallbackRestorableSessionIDs(from savedSessions: [(id: String, modificationDate: Date)]) -> [String] {
@@ -146,6 +145,54 @@ final class WorkspaceSessionRegistry: ObservableObject {
     private func consumePendingLaunchRestoreSessionID() -> String? {
         guard !pendingLaunchRestoreSessionIDs.isEmpty else { return nil }
         return pendingLaunchRestoreSessionIDs.removeFirst()
+    }
+
+    private func filteredLaunchRestoreSessionIDs(from sessionIDs: [String]) -> [String] {
+        guard !sessionIDs.isEmpty else { return [] }
+
+        let classifiedSessionIDs = sessionIDs.map { sessionID in
+            let snapshot = SessionStore(sessionID: sessionID, fileManager: fileManager).load()
+            return (sessionID: sessionID, isBlankWorkspace: snapshot?.isBlankWorkspace == true)
+        }
+
+        let nonBlankSessionIDs = classifiedSessionIDs
+            .filter { !$0.isBlankWorkspace }
+            .map(\.sessionID)
+        if !nonBlankSessionIDs.isEmpty {
+            return nonBlankSessionIDs
+        }
+
+        guard let firstBlankSessionID = classifiedSessionIDs.first?.sessionID else {
+            return []
+        }
+        return [firstBlankSessionID]
+    }
+
+    private func scheduleAdditionalLaunchRestoreCheck(
+        openAdditionalWindows: @escaping (_ count: Int) -> Void
+    ) {
+        pendingRestoreWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+
+                let missingSessionIDs = self.orderedRestorableSessionIDs().filter { sessionID in
+                    self.connectedSessionCounts[sessionID, default: 0] == 0
+                        && !self.pendingLaunchRestoreSessionIDs.contains(sessionID)
+                }
+                guard !missingSessionIDs.isEmpty else { return }
+
+                self.pendingLaunchRestoreSessionIDs.append(contentsOf: missingSessionIDs)
+                openAdditionalWindows(missingSessionIDs.count)
+            }
+        }
+
+        pendingRestoreWorkItem = workItem
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.additionalLaunchRestoreDelay,
+            execute: workItem
+        )
     }
 }
 

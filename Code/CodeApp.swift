@@ -74,7 +74,7 @@ private struct WorkspaceSceneView: View {
     let openNewWindow: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @SceneStorage("workspaceSessionID") private var workspaceSessionID = ""
-    @State private var bootstrapSessionID: String
+    @State private var bootstrapSessionID = ""
 
     init(
         preferences: AppPreferences,
@@ -98,43 +98,56 @@ private struct WorkspaceSceneView: View {
         self.settingsController = settingsController
         self.updateCenter = updateCenter
         self.openNewWindow = openNewWindow
-        _bootstrapSessionID = State(initialValue: sessionRegistry.makeSceneBootstrapSessionID())
     }
 
     var body: some View {
         let effectiveSessionID = workspaceSessionID.isEmpty ? bootstrapSessionID : workspaceSessionID
 
-        WorkspaceContentView(sessionID: effectiveSessionID, preferences: preferences)
-            .id(effectiveSessionID)
-            .environmentObject(preferences)
-            .environmentObject(sessionRegistry)
-            .environmentObject(activeWorkspaceRegistry)
-            .environmentObject(workspacePersistenceRegistry)
-            .environmentObject(detachedTabTransfer)
-            .environmentObject(externalFileRouter)
-            .environmentObject(aboutController)
-            .environmentObject(settingsController)
-            .environmentObject(updateCenter)
-            .onAppear {
-                if workspaceSessionID.isEmpty {
-                    workspaceSessionID = effectiveSessionID
-                }
-                sessionRegistry.handleSceneAppear(sessionID: effectiveSessionID) { count in
-                    guard count > 0 else { return }
-                    for _ in 0..<count {
-                        openNewWindow()
+        Group {
+            if effectiveSessionID.isEmpty {
+                Color.clear
+                    .onAppear {
+                        guard workspaceSessionID.isEmpty, bootstrapSessionID.isEmpty else { return }
+                        bootstrapSessionID = sessionRegistry.makeSceneBootstrapSessionID()
                     }
-                }
-                sessionRegistry.markFocused(sessionID: effectiveSessionID)
+            } else {
+                WorkspaceContentView(sessionID: effectiveSessionID, preferences: preferences)
+                    .id(effectiveSessionID)
+                    .onAppear {
+                        let wasRestoredBySceneStorage = !workspaceSessionID.isEmpty
+                        if wasRestoredBySceneStorage {
+                            sessionRegistry.noteRestoredSceneSession(sessionID: effectiveSessionID)
+                        } else {
+                            workspaceSessionID = effectiveSessionID
+                        }
+
+                        sessionRegistry.handleSceneAppear(sessionID: effectiveSessionID) { count in
+                            guard count > 0 else { return }
+                            for _ in 0..<count {
+                                openNewWindow()
+                            }
+                        }
+                        sessionRegistry.markFocused(sessionID: effectiveSessionID)
+                    }
+                    .onDisappear {
+                        sessionRegistry.handleSceneDisappear(sessionID: effectiveSessionID)
+                    }
+                    .onChange(of: scenePhase) { _, newPhase in
+                        if newPhase == .active {
+                            sessionRegistry.markFocused(sessionID: effectiveSessionID)
+                        }
+                    }
             }
-            .onDisappear {
-                sessionRegistry.handleSceneDisappear(sessionID: effectiveSessionID)
-            }
-            .onChange(of: scenePhase) { _, newPhase in
-                if newPhase == .active {
-                    sessionRegistry.markFocused(sessionID: effectiveSessionID)
-                }
-            }
+        }
+        .environmentObject(preferences)
+        .environmentObject(sessionRegistry)
+        .environmentObject(activeWorkspaceRegistry)
+        .environmentObject(workspacePersistenceRegistry)
+        .environmentObject(detachedTabTransfer)
+        .environmentObject(externalFileRouter)
+        .environmentObject(aboutController)
+        .environmentObject(settingsController)
+        .environmentObject(updateCenter)
     }
 }
 
