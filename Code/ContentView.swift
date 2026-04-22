@@ -265,16 +265,26 @@ struct ContentView: View {
                 fileInfoBar(for: selectedTab)
             }
         }
-        .overlay(alignment: .bottomTrailing) {
+        .overlay(alignment: .top) {
             if let toastMessage {
-                Text(toastMessage)
-                    .font(.caption.weight(.medium))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 44)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                HStack {
+                    Text(toastMessage)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .fill(.ultraThickMaterial)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.12))
+                        }
+                        .shadow(color: .black.opacity(0.18), radius: 16, y: 6)
+                }
+                .padding(.top, 14)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .onChange(of: searchController.eventID) { _, _ in
