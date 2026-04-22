@@ -328,7 +328,7 @@ struct ContentView: View {
                     Image(systemName: "link")
                 }
                 .buttonStyle(.borderless)
-                .help("Copy File URL")
+                .help("Copy File Path")
 
                 Divider()
                     .frame(height: 12)
@@ -814,8 +814,8 @@ struct ContentView: View {
     private func copyFileURL(for tab: EditorTab) {
         guard let fileURL = tab.fileURL else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(fileURL.absoluteString, forType: .string)
-        showToast("File URL Copied")
+        NSPasteboard.general.setString(fileURL.path(percentEncoded: false), forType: .string)
+        showToast("File Path Copied")
     }
 
     private func openParentFolderInTerminal(for tab: EditorTab) {
