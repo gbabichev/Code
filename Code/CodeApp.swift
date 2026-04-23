@@ -13,12 +13,13 @@ import SwiftUI
 struct CodeApp: App {
     @Environment(\.openWindow) private var openWindow
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var preferences = AppPreferences()
+    @StateObject private var preferences = AppPreferences.shared
     @StateObject private var sessionRegistry = WorkspaceSessionRegistry()
     @StateObject private var activeWorkspaceRegistry = ActiveWorkspaceRegistry.shared
     @StateObject private var workspacePersistenceRegistry = WorkspacePersistenceRegistry.shared
     @StateObject private var detachedTabTransfer = DetachedTabTransferCoordinator.shared
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
+    @StateObject private var recentItemRouter = RecentItemRouter.shared
     @StateObject private var aboutController = AboutOverlayController()
     @StateObject private var settingsController = SettingsPopoverController()
     @StateObject private var updateCenter = AppUpdateCenter.shared
@@ -32,6 +33,7 @@ struct CodeApp: App {
                 workspacePersistenceRegistry: workspacePersistenceRegistry,
                 detachedTabTransfer: detachedTabTransfer,
                 externalFileRouter: externalFileRouter,
+                recentItemRouter: recentItemRouter,
                 aboutController: aboutController,
                 settingsController: settingsController,
                 updateCenter: updateCenter,
@@ -58,6 +60,12 @@ struct CodeApp: App {
                 openWindow(id: "workspace")
             }
         }
+        .onChange(of: recentItemRouter.pendingRequestID) { _, _ in
+            let hasVisibleWindows = NSApp.windows.contains(where: { $0.isVisible })
+            if !hasVisibleWindows {
+                openWindow(id: "workspace")
+            }
+        }
     }
 }
 
@@ -68,6 +76,7 @@ private struct WorkspaceSceneView: View {
     @ObservedObject var workspacePersistenceRegistry: WorkspacePersistenceRegistry
     @ObservedObject var detachedTabTransfer: DetachedTabTransferCoordinator
     @ObservedObject var externalFileRouter: ExternalFileRouter
+    @ObservedObject var recentItemRouter: RecentItemRouter
     @ObservedObject var aboutController: AboutOverlayController
     @ObservedObject var settingsController: SettingsPopoverController
     @ObservedObject var updateCenter: AppUpdateCenter
@@ -83,6 +92,7 @@ private struct WorkspaceSceneView: View {
         workspacePersistenceRegistry: WorkspacePersistenceRegistry,
         detachedTabTransfer: DetachedTabTransferCoordinator,
         externalFileRouter: ExternalFileRouter,
+        recentItemRouter: RecentItemRouter,
         aboutController: AboutOverlayController,
         settingsController: SettingsPopoverController,
         updateCenter: AppUpdateCenter,
@@ -94,6 +104,7 @@ private struct WorkspaceSceneView: View {
         self.workspacePersistenceRegistry = workspacePersistenceRegistry
         self.detachedTabTransfer = detachedTabTransfer
         self.externalFileRouter = externalFileRouter
+        self.recentItemRouter = recentItemRouter
         self.aboutController = aboutController
         self.settingsController = settingsController
         self.updateCenter = updateCenter
@@ -145,6 +156,7 @@ private struct WorkspaceSceneView: View {
         .environmentObject(workspacePersistenceRegistry)
         .environmentObject(detachedTabTransfer)
         .environmentObject(externalFileRouter)
+        .environmentObject(recentItemRouter)
         .environmentObject(aboutController)
         .environmentObject(settingsController)
         .environmentObject(updateCenter)
@@ -160,14 +172,17 @@ private struct WorkspaceContentView: View {
     @EnvironmentObject private var sessionRegistry: WorkspaceSessionRegistry
     @EnvironmentObject private var detachedTabTransfer: DetachedTabTransferCoordinator
     @EnvironmentObject private var externalFileRouter: ExternalFileRouter
+    @EnvironmentObject private var recentItemRouter: RecentItemRouter
+    @EnvironmentObject private var preferences: AppPreferences
 
     init(sessionID: String, preferences: AppPreferences) {
         self.sessionID = sessionID
-        let hasPendingFiles = ExternalFileRouter.shared.hasPendingFiles()
+        let hasPendingExternalOpen = ExternalFileRouter.shared.hasPendingFiles()
+            || RecentItemRouter.shared.hasPendingItems()
         _workspace = StateObject(wrappedValue: EditorWorkspace(
             preferences: preferences,
             sessionStore: SessionStore(sessionID: sessionID),
-            skipUntitledIfPendingFiles: hasPendingFiles
+            skipUntitledIfPendingFiles: hasPendingExternalOpen
         ))
     }
 
@@ -188,6 +203,7 @@ private struct WorkspaceContentView: View {
                 workspacePersistenceRegistry.register(workspace)
                 adoptDetachedTabIfNeeded()
                 openPendingExternalFiles()
+                openPendingRecentItems()
             }
             .onDisappear {
                 workspacePersistenceRegistry.unregister(workspace)
@@ -196,6 +212,9 @@ private struct WorkspaceContentView: View {
             }
             .onChange(of: externalFileRouter.pendingRequestID) { _, _ in
                 openPendingExternalFiles()
+            }
+            .onChange(of: recentItemRouter.pendingRequestID) { _, _ in
+                openPendingRecentItems()
             }
     }
 
@@ -208,6 +227,30 @@ private struct WorkspaceContentView: View {
         }
     }
 
+    private func openPendingRecentItems() {
+        let items = recentItemRouter.consumePendingItems()
+        guard !items.isEmpty else { return }
+
+        for item in items {
+            openRecentItem(item)
+        }
+    }
+
+    private func openRecentItem(_ item: RecentItem) {
+        guard FileManager.default.fileExists(atPath: item.path) else {
+            preferences.removeRecentItem(item)
+            preferences.errorMessage = "Recent item no longer exists: \(item.path)"
+            return
+        }
+
+        switch item.kind {
+        case .file:
+            workspace.openFile(item.url)
+        case .folder:
+            workspace.setRootFolder(item.url)
+        }
+    }
+
     private func adoptDetachedTabIfNeeded() {
         guard let tab = detachedTabTransfer.consumePendingTab() else { return }
         workspace.adoptTransferredTab(tab)
@@ -216,6 +259,61 @@ private struct WorkspaceContentView: View {
 
 @MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        let menu = NSMenu()
+        let recentItems = AppPreferences.shared.visibleRecentItems
+
+        guard !recentItems.isEmpty else {
+            let emptyItem = NSMenuItem(title: "No Recent Items", action: nil, keyEquivalent: "")
+            emptyItem.isEnabled = false
+            menu.addItem(emptyItem)
+            return menu
+        }
+
+        for item in recentItems {
+            let menuItem = NSMenuItem(
+                title: item.menuTitle,
+                action: #selector(openDockRecentItem(_:)),
+                keyEquivalent: ""
+            )
+            menuItem.target = self
+            menuItem.representedObject = item.id
+            menuItem.image = NSImage(systemSymbolName: item.systemImage, accessibilityDescription: nil)
+            menu.addItem(menuItem)
+        }
+
+        let clearItem = NSMenuItem(
+            title: "Clear Recents",
+            action: #selector(clearDockRecentItems(_:)),
+            keyEquivalent: ""
+        )
+        clearItem.target = self
+        menu.addItem(clearItem)
+
+        return menu
+    }
+
+    @objc private func openDockRecentItem(_ sender: NSMenuItem) {
+        guard
+            let itemID = sender.representedObject as? String,
+            let item = AppPreferences.shared.recentItems.first(where: { $0.id == itemID })
+        else {
+            return
+        }
+
+        guard FileManager.default.fileExists(atPath: item.path) else {
+            AppPreferences.shared.removeRecentItem(item)
+            AppPreferences.shared.errorMessage = "Recent item no longer exists: \(item.path)"
+            return
+        }
+
+        RecentItemRouter.shared.enqueue(item)
+    }
+
+    @objc private func clearDockRecentItems(_ sender: NSMenuItem) {
+        AppPreferences.shared.clearRecentItems()
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         ExternalFileRouter.shared.enqueue(urls: urls)
     }
@@ -264,6 +362,37 @@ final class ExternalFileRouter: ObservableObject {
         }
 
         return files
+    }
+}
+
+@MainActor
+final class RecentItemRouter: ObservableObject {
+    static let shared = RecentItemRouter()
+
+    @Published private(set) var pendingRequestID = UUID()
+    private var pendingItems: [RecentItem] = []
+
+    func enqueue(_ item: RecentItem) {
+        pendingItems.append(item)
+        pendingRequestID = UUID()
+    }
+
+    func hasPendingItems() -> Bool {
+        !pendingItems.isEmpty
+    }
+
+    func consumePendingItems() -> [RecentItem] {
+        let items = pendingItems
+        pendingItems.removeAll()
+
+        if !items.isEmpty {
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = NSApp.windows.first(where: { $0.isVisible }) {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        return items
     }
 }
 

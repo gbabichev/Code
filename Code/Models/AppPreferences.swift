@@ -66,6 +66,8 @@ struct RecentItem: Codable, Identifiable, Hashable {
 
 @MainActor
 final class AppPreferences: ObservableObject {
+    static let shared = AppPreferences()
+
     static let defaultSkinID = "classic"
     static let defaultFontSize: Double = 13
     static let defaultEditorFontFamilyName = "Menlo"
