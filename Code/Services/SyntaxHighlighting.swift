@@ -704,126 +704,222 @@ struct XMLSyntaxHighlighter: SyntaxHighlighting {
 struct JSONSyntaxHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
-    private static let numberRegex = try! NSRegularExpression(pattern: #"(?m)\b-?\d+\.?\d*([eE][+-]?\d+)?\b"#)
-    private static let booleanRegex = try! NSRegularExpression(pattern: #"(?m)\b(true|false)\b"#)
-    private static let nullRegex = try! NSRegularExpression(pattern: #"(?m)\bnull\b"#)
+    private enum TokenKind {
+        case key
+        case string
+        case number
+        case boolean
+        case null
+        case comment
+    }
+
+    private struct Token {
+        let kind: TokenKind
+        let range: NSRange
+    }
 
     func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: storage.length)
-        let highlightRange = highlightedRange(for: range, in: text as NSString, fallback: fullRange)
-
-        // Only limit range when a specific edit range was provided (not during force/full highlighting)
-        if range != nil, highlightRange.length >= maxFullHighlightSize {
-            storage.setAttributes(theme.baseAttributes, range: highlightRange)
-            return
-        }
+        let nsText = text as NSString
+        let highlightRange = highlightedRange(for: range, in: nsText, fallback: fullRange)
+        let scanRange = range == nil ? highlightRange : contextualScanRange(for: highlightRange, in: nsText)
 
         storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        let (keyRanges, stringRanges, commentRanges) = jsonTokens(in: text as NSString, within: highlightRange)
+        for token in jsonTokens(in: nsText, within: scanRange) {
+            let visibleRange = NSIntersectionRange(token.range, highlightRange)
+            guard visibleRange.length > 0 else { continue }
 
-        // Keys
-        for range in keyRanges {
-            storage.addAttributes(theme.variableAttributes, range: range)
-        }
-
-        // String values
-        for range in stringRanges {
-            storage.addAttributes(theme.stringAttributes, range: range)
-        }
-
-        for match in Self.numberRegex.matches(in: text, range: highlightRange)
-        where !intersects(match.range, with: commentRanges + keyRanges + stringRanges) {
-            storage.addAttributes(theme.builtinAttributes, range: match.range)
-        }
-
-        for match in Self.booleanRegex.matches(in: text, range: highlightRange)
-        where !intersects(match.range, with: commentRanges + keyRanges + stringRanges) {
-            storage.addAttributes(theme.builtinAttributes, range: match.range)
-        }
-
-        for match in Self.nullRegex.matches(in: text, range: highlightRange)
-        where !intersects(match.range, with: commentRanges + keyRanges + stringRanges) {
-            storage.addAttributes(theme.keywordAttributes, range: match.range)
-        }
-
-        for range in commentRanges {
-            storage.addAttributes(theme.commentAttributes, range: range)
+            switch token.kind {
+            case .key:
+                storage.addAttributes(theme.variableAttributes, range: visibleRange)
+            case .string:
+                storage.addAttributes(theme.stringAttributes, range: visibleRange)
+            case .number, .boolean:
+                storage.addAttributes(theme.builtinAttributes, range: visibleRange)
+            case .null:
+                storage.addAttributes(theme.keywordAttributes, range: visibleRange)
+            case .comment:
+                storage.addAttributes(theme.commentAttributes, range: visibleRange)
+            }
         }
     }
 
-    private func jsonTokens(in text: NSString, within range: NSRange) -> ([NSRange], [NSRange], [NSRange]) {
-        var keyRanges: [NSRange] = []
-        var stringRanges: [NSRange] = []
-        var commentRanges: [NSRange] = []
+    private func jsonTokens(in text: NSString, within range: NSRange) -> [Token] {
+        var tokens: [Token] = []
         var index = range.location
+        let scanEnd = min(NSMaxRange(range), text.length)
 
-        while index < NSMaxRange(range) {
+        while index < scanEnd {
             let ch = text.character(at: index)
 
-            // Line comment //
             if index + 1 < text.length, ch == 47, text.character(at: index + 1) == 47 {
-                let lineEnd = text.lineRange(for: NSRange(location: index, length: 0)).location
-                commentRanges.append(NSRange(location: index, length: lineEnd - index))
-                index = lineEnd
+                let end = lineEnd(in: text, at: index)
+                tokens.append(Token(kind: .comment, range: NSRange(location: index, length: end - index)))
+                index = end
                 continue
             }
 
-            // Block comment /* ... */
             if index + 1 < text.length, ch == 47, text.character(at: index + 1) == 42 {
                 let searchRange = NSRange(location: index + 2, length: text.length - index - 2)
-                let endIdx = text.range(of: "*/", options: [], range: searchRange)
-                if endIdx.location != NSNotFound {
-                    let commentEnd = endIdx.location + 2
-                    commentRanges.append(NSRange(location: index, length: commentEnd - index))
-                    index = commentEnd
-                } else {
-                    commentRanges.append(NSRange(location: index, length: text.length - index))
-                    break
-                }
+                let endRange = text.range(of: "*/", options: [], range: searchRange)
+                let end = endRange.location == NSNotFound ? text.length : endRange.location + 2
+                tokens.append(Token(kind: .comment, range: NSRange(location: index, length: end - index)))
+                index = end
                 continue
             }
 
-            // String
-            if ch == 34 { // "
-                var end = index + 1
-                var escaped = false
-                while end < text.length {
-                    let c = text.character(at: end)
-                    if c == 92 {
-                        escaped = !escaped
-                        end += 1
-                        continue
-                    }
-                    if c == 34 && !escaped {
-                        end += 1
-                        break
-                    }
-                    escaped = false
-                    end += 1
-                }
-                let strRange = NSRange(location: index, length: end - index)
-
-                // Check if followed by colon (key) — skip whitespace
-                var scan = end
-                while scan < text.length {
-                    let c = text.character(at: scan)
-                    if c != 32 && c != 9 && c != 10 && c != 13 { break }
-                    scan += 1
-                }
-                if scan < text.length, text.character(at: scan) == 58 {
-                    keyRanges.append(strRange)
-                } else {
-                    stringRanges.append(strRange)
-                }
+            if ch == 34 {
+                let end = stringEnd(in: text, startingAt: index)
+                let tokenRange = NSRange(location: index, length: end - index)
+                let kind: TokenKind = isObjectKey(in: text, afterStringEndingAt: end) ? .key : .string
+                tokens.append(Token(kind: kind, range: tokenRange))
                 index = end
+                continue
+            }
+
+            if let end = numberEnd(in: text, startingAt: index) {
+                tokens.append(Token(kind: .number, range: NSRange(location: index, length: end - index)))
+                index = end
+                continue
+            }
+
+            if matchesLiteral("true", in: text, at: index) {
+                tokens.append(Token(kind: .boolean, range: NSRange(location: index, length: 4)))
+                index += 4
+                continue
+            }
+
+            if matchesLiteral("false", in: text, at: index) {
+                tokens.append(Token(kind: .boolean, range: NSRange(location: index, length: 5)))
+                index += 5
+                continue
+            }
+
+            if matchesLiteral("null", in: text, at: index) {
+                tokens.append(Token(kind: .null, range: NSRange(location: index, length: 4)))
+                index += 4
                 continue
             }
 
             index += 1
         }
 
-        return (keyRanges, stringRanges, commentRanges)
+        return tokens
+    }
+
+    private func stringEnd(in text: NSString, startingAt index: Int) -> Int {
+        var end = index + 1
+        while end < text.length {
+            let ch = text.character(at: end)
+            if ch == 92 {
+                end = min(end + 2, text.length)
+                continue
+            }
+            end += 1
+            if ch == 34 {
+                break
+            }
+        }
+        return end
+    }
+
+    private func isObjectKey(in text: NSString, afterStringEndingAt end: Int) -> Bool {
+        var index = end
+        while index < text.length {
+            let ch = text.character(at: index)
+            if !isWhitespace(ch) {
+                return ch == 58
+            }
+            index += 1
+        }
+        return false
+    }
+
+    private func numberEnd(in text: NSString, startingAt index: Int) -> Int? {
+        var cursor = index
+        if text.character(at: cursor) == 45 {
+            cursor += 1
+            guard cursor < text.length else { return nil }
+        }
+
+        guard cursor < text.length, isDigit(text.character(at: cursor)) else { return nil }
+
+        if text.character(at: cursor) == 48 {
+            cursor += 1
+        } else {
+            while cursor < text.length, isDigit(text.character(at: cursor)) {
+                cursor += 1
+            }
+        }
+
+        if cursor < text.length, text.character(at: cursor) == 46 {
+            let fractionStart = cursor
+            cursor += 1
+            guard cursor < text.length, isDigit(text.character(at: cursor)) else {
+                return fractionStart == index ? nil : fractionStart
+            }
+            while cursor < text.length, isDigit(text.character(at: cursor)) {
+                cursor += 1
+            }
+        }
+
+        if cursor < text.length, isExponentMarker(text.character(at: cursor)) {
+            let exponentStart = cursor
+            cursor += 1
+            if cursor < text.length, isSign(text.character(at: cursor)) {
+                cursor += 1
+            }
+            guard cursor < text.length, isDigit(text.character(at: cursor)) else {
+                return exponentStart == index ? nil : exponentStart
+            }
+            while cursor < text.length, isDigit(text.character(at: cursor)) {
+                cursor += 1
+            }
+        }
+
+        guard !isIdentifierBoundaryViolation(in: text, start: index, end: cursor) else { return nil }
+        return cursor
+    }
+
+    private func matchesLiteral(_ literal: String, in text: NSString, at index: Int) -> Bool {
+        let literalLength = (literal as NSString).length
+        guard index + literalLength <= text.length else { return false }
+        guard text.substring(with: NSRange(location: index, length: literalLength)) == literal else { return false }
+        return !isIdentifierBoundaryViolation(in: text, start: index, end: index + literalLength)
+    }
+
+    private func isIdentifierBoundaryViolation(in text: NSString, start: Int, end: Int) -> Bool {
+        if start > 0, isIdentifierCharacter(text.character(at: start - 1)) {
+            return true
+        }
+        if end < text.length, isIdentifierCharacter(text.character(at: end)) {
+            return true
+        }
+        return false
+    }
+
+    private func isWhitespace(_ ch: unichar) -> Bool {
+        ch == 32 || ch == 9 || ch == 10 || ch == 13
+    }
+
+    private func isDigit(_ ch: unichar) -> Bool {
+        ch >= 48 && ch <= 57
+    }
+
+    private func isExponentMarker(_ ch: unichar) -> Bool {
+        ch == 69 || ch == 101
+    }
+
+    private func isSign(_ ch: unichar) -> Bool {
+        ch == 43 || ch == 45
+    }
+
+    private func isIdentifierCharacter(_ ch: unichar) -> Bool {
+        (ch >= 48 && ch <= 57)
+            || (ch >= 65 && ch <= 90)
+            || (ch >= 97 && ch <= 122)
+            || ch == 95
     }
 }
 
