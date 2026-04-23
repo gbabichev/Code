@@ -84,7 +84,7 @@ struct ContentView: View {
         } message: { pending in
             Text("Do you want to save the changes you made to \(pending.fileName)?")
         }
-        .alert("Save Changes Before Closing Window?", isPresented: pendingWindowCloseBinding, presenting: workspace.pendingWindowClose) { _ in
+        .alert(pendingWindowCloseTitle, isPresented: pendingWindowCloseBinding, presenting: workspace.pendingWindowClose) { _ in
             Button("Save") {
                 Task {
                     await workspace.confirmPendingWindowCloseSave()
@@ -885,11 +885,27 @@ struct ContentView: View {
     }
 
     private func pendingWindowCloseMessage(for pending: PendingWindowClose) -> String {
-        if pending.dirtyTabNames.count == 1, let name = pending.dirtyTabNames.first {
-            return "Do you want to save the changes you made to \(name) before closing this window?"
+        let actionDescription = switch pending.action {
+        case .closeWindow:
+            "closing this window"
+        case .closeFolder:
+            "closing this folder"
         }
 
-        return "Do you want to save the changes you made to \(pending.dirtyTabNames.count) tabs before closing this window?"
+        if pending.dirtyTabNames.count == 1, let name = pending.dirtyTabNames.first {
+            return "Do you want to save the changes you made to \(name) before \(actionDescription)?"
+        }
+
+        return "Do you want to save the changes you made to \(pending.dirtyTabNames.count) tabs before \(actionDescription)?"
+    }
+
+    private var pendingWindowCloseTitle: String {
+        switch workspace.pendingWindowClose?.action {
+        case .closeFolder:
+            return "Save Changes Before Closing Folder?"
+        case .closeWindow, nil:
+            return "Save Changes Before Closing Window?"
+        }
     }
 
     private var errorBinding: Binding<Bool> {

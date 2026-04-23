@@ -148,7 +148,23 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
-    func closeFolder() {
+    func requestCloseFolder() {
+        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
+        if hasDirtyTabs {
+            pendingWindowCloseAction = { [weak self] in
+                self?.closeFolder()
+            }
+            pendingWindowClose = PendingWindowClose(
+                action: .closeFolder,
+                dirtyTabNames: openTabs.filter(\.isDirty).map(\.title)
+            )
+            return
+        }
+
+        closeFolder()
+    }
+
+    private func closeFolder() {
         rootFolderURL = nil
         fileTree = []
         openTabs.removeAll()
@@ -472,6 +488,7 @@ final class EditorWorkspace: ObservableObject {
         if hasDirtyTabs {
             pendingWindowCloseAction = performClose
             pendingWindowClose = PendingWindowClose(
+                action: .closeWindow,
                 dirtyTabNames: openTabs.filter(\.isDirty).map(\.title)
             )
             return

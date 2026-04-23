@@ -480,7 +480,13 @@ struct PendingTabClose: Identifiable, Equatable {
 }
 
 struct PendingWindowClose: Identifiable {
+    enum Action {
+        case closeWindow
+        case closeFolder
+    }
+
     let id = UUID()
+    let action: Action
     let dirtyTabNames: [String]
 }
 

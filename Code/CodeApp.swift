@@ -307,11 +307,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if let workspace = ActiveWorkspaceRegistry.shared.workspace {
+            NSApp.activate(ignoringOtherApps: true)
+            openRecentItem(item, in: workspace)
+            return
+        }
+
         RecentItemRouter.shared.enqueue(item)
     }
 
     @objc private func clearDockRecentItems(_ sender: NSMenuItem) {
         AppPreferences.shared.clearRecentItems()
+    }
+
+    private func openRecentItem(_ item: RecentItem, in workspace: EditorWorkspace) {
+        switch item.kind {
+        case .file:
+            workspace.openFile(item.url)
+        case .folder:
+            workspace.setRootFolder(item.url)
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -607,7 +622,7 @@ private struct EditorCommands: Commands {
             .disabled(resolvedWorkspace == nil)
 
             Button {
-                resolvedWorkspace?.closeFolder()
+                resolvedWorkspace?.requestCloseFolder()
             } label: {
                 Label("Close Folder", systemImage: "folder.badge.minus")
             }
