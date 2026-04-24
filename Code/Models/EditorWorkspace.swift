@@ -11,6 +11,8 @@ import UniformTypeIdentifiers
 @MainActor
 final class EditorWorkspace: ObservableObject {
     private static let largeFileTypingThreshold = 100_000
+    private static let defaultSessionPersistenceDelay: TimeInterval = 0.25
+    private static let largeDirtySessionPersistenceDelay: TimeInterval = 5.0
     private static let maxRecentlyClosedTabs = 20
 
     enum EditorPane: String {
@@ -547,8 +549,7 @@ final class EditorWorkspace: ObservableObject {
         } else {
             pendingDirtyStateRecheckTabIDs.remove(tab.id)
         }
-        // Debounced session persistence — fires after 250ms of inactivity.
-        persistSession()
+        persistSession(delay: shouldUseDeferredDirtyCheck ? Self.largeDirtySessionPersistenceDelay : nil)
     }
 
     func saveSelectedTab() async {
@@ -670,22 +671,36 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
-    func persistSession() {
-        // Real debounce: wait for 250ms of inactivity before writing session state.
+    func persistSession(delay requestedDelay: TimeInterval? = nil) {
+        let delay = requestedDelay ?? (hasLargeDirtyFileBackedTab ? Self.largeDirtySessionPersistenceDelay : Self.defaultSessionPersistenceDelay)
         EditorDebugTrace.log("EditorWorkspace.persistSession schedule")
         persistSessionTimer?.invalidate()
-        persistSessionTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: false) { [weak self] _ in
+        persistSessionTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                self?.flushSession()
+                self?.writeSession(flushPendingModelSync: false, reconcileDirtyStates: false)
             }
         }
     }
 
     /// Immediately write session state to disk (used on app termination)
     func flushSession() {
+        writeSession(flushPendingModelSync: true, reconcileDirtyStates: true)
+    }
+
+    private func writeSession(flushPendingModelSync: Bool, reconcileDirtyStates: Bool) {
         EditorDebugTrace.log("EditorWorkspace.flushSession begin")
-        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
-        reconcilePendingDirtyStates()
+        persistSessionTimer?.invalidate()
+        persistSessionTimer = nil
+
+        if flushPendingModelSync {
+            ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
+            persistSessionTimer?.invalidate()
+            persistSessionTimer = nil
+        }
+
+        if reconcileDirtyStates {
+            reconcilePendingDirtyStates()
+        }
 
         let snapshot = EditorSessionSnapshot(
             rootFolderPath: rootFolderURL?.path(percentEncoded: false),
@@ -708,6 +723,14 @@ final class EditorWorkspace: ObservableObject {
         )
         sessionStore.save(snapshot)
         EditorDebugTrace.log("EditorWorkspace.flushSession end tabs=\(openTabs.count)")
+    }
+
+    private var hasLargeDirtyFileBackedTab: Bool {
+        openTabs.contains {
+            $0.fileURL != nil
+                && $0.isDirty
+                && $0.content.utf16.count > Self.largeFileTypingThreshold
+        }
     }
 
     private func reconcilePendingDirtyStates() {

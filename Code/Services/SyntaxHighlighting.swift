@@ -701,8 +701,21 @@ struct XMLSyntaxHighlighter: SyntaxHighlighting {
 }
 
 // MARK: - JSON Highlighter
-struct JSONSyntaxHighlighter: SyntaxHighlighting {
+final class JSONSyntaxHighlighter: SyntaxHighlighting {
+    private static let maxCachedLines = 2_000
+    private static let maxCachedLineLength = 20_000
+    private static let contextualScanExpansion = 2_048
+
     let theme: SkinTheme
+
+    init(theme: SkinTheme) {
+        self.theme = theme
+    }
+
+    private enum LineState: Hashable {
+        case normal
+        case blockComment
+    }
 
     private enum TokenKind {
         case key
@@ -713,59 +726,136 @@ struct JSONSyntaxHighlighter: SyntaxHighlighting {
         case comment
     }
 
+    private struct CacheKey: Hashable {
+        let text: String
+        let initialState: LineState
+    }
+
+    private struct CacheValue {
+        let tokens: [Token]
+        let endState: LineState
+    }
+
     private struct Token {
         let kind: TokenKind
         let range: NSRange
     }
 
+    private var lineCache: [CacheKey: CacheValue] = [:]
+
     func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: storage.length)
         let nsText = text as NSString
-        let highlightRange = highlightedRange(for: range, in: nsText, fallback: fullRange)
-        let scanRange = range == nil ? highlightRange : contextualScanRange(for: highlightRange, in: nsText)
+        let highlightRange = clampedRange(range, in: nsText, fallback: fullRange)
+        let scanRange = range == nil ? highlightRange : lineBoundedScanRange(for: characterScanRange(for: highlightRange, in: nsText), in: nsText)
 
         storage.setAttributes(theme.baseAttributes, range: highlightRange)
 
-        for token in jsonTokens(in: nsText, within: scanRange) {
-            let visibleRange = NSIntersectionRange(token.range, highlightRange)
-            guard visibleRange.length > 0 else { continue }
+        var state = range == nil ? LineState.normal : lineStateBefore(scanRange.location, in: nsText)
+        var lineLocation = scanRange.location
+        let scanEnd = min(NSMaxRange(scanRange), nsText.length)
 
-            switch token.kind {
-            case .key:
-                storage.addAttributes(theme.variableAttributes, range: visibleRange)
-            case .string:
-                storage.addAttributes(theme.stringAttributes, range: visibleRange)
-            case .number, .boolean:
-                storage.addAttributes(theme.builtinAttributes, range: visibleRange)
-            case .null:
-                storage.addAttributes(theme.keywordAttributes, range: visibleRange)
-            case .comment:
-                storage.addAttributes(theme.commentAttributes, range: visibleRange)
+        while lineLocation < scanEnd {
+            let lineRange = NSRange(location: lineLocation, length: lineEnd(in: nsText, at: lineLocation) - lineLocation)
+            let cacheValue: CacheValue
+
+            if lineRange.length <= Self.maxCachedLineLength {
+                let line = nsText.substring(with: lineRange)
+                let cacheKey = CacheKey(text: line, initialState: state)
+                if let cached = lineCache[cacheKey] {
+                    cacheValue = cached
+                } else {
+                    cacheValue = jsonTokens(in: line as NSString, initialState: state)
+                    lineCache[cacheKey] = cacheValue
+                    trimCacheIfNeeded()
+                }
+            } else {
+                let line = nsText.substring(with: lineRange)
+                cacheValue = jsonTokens(in: line as NSString, initialState: state)
             }
+
+            for token in cacheValue.tokens {
+                let absoluteRange = NSRange(location: lineRange.location + token.range.location, length: token.range.length)
+                apply(token.kind, absoluteRange: absoluteRange, visibleIn: highlightRange, to: storage)
+            }
+
+            state = cacheValue.endState
+            lineLocation = NSMaxRange(lineRange)
         }
     }
 
-    private func jsonTokens(in text: NSString, within range: NSRange) -> [Token] {
-        var tokens: [Token] = []
-        var index = range.location
-        let scanEnd = min(NSMaxRange(range), text.length)
+    private func clampedRange(_ range: NSRange?, in text: NSString, fallback: NSRange) -> NSRange {
+        guard let range,
+              range.location != NSNotFound,
+              range.location <= text.length else {
+            return fallback
+        }
 
-        while index < scanEnd {
+        let length = min(range.length, text.length - range.location)
+        return NSRange(location: range.location, length: length)
+    }
+
+    private func characterScanRange(for range: NSRange, in text: NSString) -> NSRange {
+        guard text.length > 0 else { return NSRange(location: 0, length: 0) }
+
+        let start = max(range.location - Self.contextualScanExpansion, 0)
+        let end = min(NSMaxRange(range) + Self.contextualScanExpansion, text.length)
+        return NSRange(location: start, length: end - start)
+    }
+
+    private func lineBoundedScanRange(for range: NSRange, in text: NSString) -> NSRange {
+        guard text.length > 0 else { return NSRange(location: 0, length: 0) }
+
+        let startLocation = min(max(range.location, 0), text.length)
+        let endLocation = min(max(NSMaxRange(range), startLocation), text.length)
+        let startLine = text.lineRange(for: NSRange(location: startLocation, length: 0))
+        let endLine = text.lineRange(for: NSRange(location: endLocation, length: 0))
+        let start = startLine.location
+        let end = max(NSMaxRange(endLine), start)
+        return NSRange(location: start, length: min(end, text.length) - start)
+    }
+
+    private func lineStateBefore(_ location: Int, in text: NSString) -> LineState {
+        guard location > 0 else { return .normal }
+
+        let searchStart = max(location - 65_536, 0)
+        let searchRange = NSRange(location: searchStart, length: location - searchStart)
+        let lastBlockStart = text.range(of: "/*", options: [.backwards], range: searchRange)
+        guard lastBlockStart.location != NSNotFound else { return .normal }
+
+        let lastBlockEnd = text.range(of: "*/", options: [.backwards], range: searchRange)
+        if lastBlockEnd.location == NSNotFound {
+            return .blockComment
+        }
+        return lastBlockStart.location > lastBlockEnd.location ? .blockComment : .normal
+    }
+
+    private func jsonTokens(in text: NSString, initialState: LineState) -> CacheValue {
+        var tokens: [Token] = []
+        var index = 0
+        var state = initialState
+
+        if state == .blockComment {
+            let end = blockCommentEnd(in: text, searchingFrom: index)
+            tokens.append(Token(kind: .comment, range: NSRange(location: index, length: end.location - index)))
+            index = end.location
+            state = end.state
+        }
+
+        while index < text.length {
             let ch = text.character(at: index)
 
             if index + 1 < text.length, ch == 47, text.character(at: index + 1) == 47 {
-                let end = lineEnd(in: text, at: index)
+                let end = text.length
                 tokens.append(Token(kind: .comment, range: NSRange(location: index, length: end - index)))
-                index = end
-                continue
+                break
             }
 
             if index + 1 < text.length, ch == 47, text.character(at: index + 1) == 42 {
-                let searchRange = NSRange(location: index + 2, length: text.length - index - 2)
-                let endRange = text.range(of: "*/", options: [], range: searchRange)
-                let end = endRange.location == NSNotFound ? text.length : endRange.location + 2
-                tokens.append(Token(kind: .comment, range: NSRange(location: index, length: end - index)))
-                index = end
+                let end = blockCommentEnd(in: text, searchingFrom: index + 2)
+                tokens.append(Token(kind: .comment, range: NSRange(location: index, length: end.location - index)))
+                index = end.location
+                state = end.state
                 continue
             }
 
@@ -805,7 +895,46 @@ struct JSONSyntaxHighlighter: SyntaxHighlighting {
             index += 1
         }
 
-        return tokens
+        return CacheValue(tokens: tokens, endState: state)
+    }
+
+    private func apply(
+        _ kind: TokenKind,
+        absoluteRange: NSRange,
+        visibleIn highlightRange: NSRange,
+        to storage: NSMutableAttributedString
+    ) {
+        let visibleRange = NSIntersectionRange(absoluteRange, highlightRange)
+        guard visibleRange.length > 0 else { return }
+
+        switch kind {
+        case .key:
+            storage.addAttributes(theme.variableAttributes, range: visibleRange)
+        case .string:
+            storage.addAttributes(theme.stringAttributes, range: visibleRange)
+        case .number, .boolean:
+            storage.addAttributes(theme.builtinAttributes, range: visibleRange)
+        case .null:
+            storage.addAttributes(theme.keywordAttributes, range: visibleRange)
+        case .comment:
+            storage.addAttributes(theme.commentAttributes, range: visibleRange)
+        }
+    }
+
+    private func blockCommentEnd(in text: NSString, searchingFrom index: Int) -> (location: Int, state: LineState) {
+        let searchStart = min(index, text.length)
+        let searchRange = NSRange(location: searchStart, length: text.length - searchStart)
+        let endRange = text.range(of: "*/", options: [], range: searchRange)
+        if endRange.location == NSNotFound {
+            return (text.length, .blockComment)
+        }
+        return (endRange.location + 2, .normal)
+    }
+
+    private func trimCacheIfNeeded() {
+        if lineCache.count > Self.maxCachedLines {
+            lineCache.removeAll(keepingCapacity: true)
+        }
     }
 
     private func stringEnd(in text: NSString, startingAt index: Int) -> Int {
