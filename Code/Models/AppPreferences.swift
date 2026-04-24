@@ -9,21 +9,18 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
-enum EditorAutocompleteMode: String, CaseIterable, Identifiable {
+enum EditorAutocompleteMode: String {
+    case on
     case off
-    case systemDefault
-    case custom
 
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .off:
-            "Off"
-        case .systemDefault:
-            "Default"
-        case .custom:
-            "Custom"
+    static func migratedValue(from rawValue: String?) -> EditorAutocompleteMode {
+        switch rawValue {
+        case Self.off.rawValue:
+            .off
+        case Self.on.rawValue, "custom", "systemDefault":
+            .on
+        default:
+            .on
         }
     }
 }
@@ -221,12 +218,9 @@ final class AppPreferences: ObservableObject {
             indentWidth = Self.defaultIndentWidth
         }
 
-        if let storedAutocompleteMode = userDefaults.string(forKey: Keys.autocompleteMode),
-           let autocompleteMode = EditorAutocompleteMode(rawValue: storedAutocompleteMode) {
-            self.autocompleteMode = autocompleteMode
-        } else {
-            autocompleteMode = .systemDefault
-        }
+        autocompleteMode = EditorAutocompleteMode.migratedValue(
+            from: userDefaults.string(forKey: Keys.autocompleteMode)
+        )
 
         if userDefaults.object(forKey: Keys.isSyntaxHighlightingEnabled) != nil {
             isSyntaxHighlightingEnabled = userDefaults.bool(forKey: Keys.isSyntaxHighlightingEnabled)

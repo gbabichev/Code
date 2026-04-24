@@ -1304,12 +1304,20 @@ private struct SettingsPopoverView: View {
                         .toggleStyle(.switch)
                     }
 
-                    Picker("Autocomplete Beta", selection: $preferences.autocompleteMode) {
-                        ForEach(EditorAutocompleteMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
+                    SettingsRow(
+                        "Autocomplete",
+                        systemImage: "sparkles",
+                        subtitle: "Suggest symbols already in this file."
+                    ) {
+                        Toggle(
+                            isOn: Binding(
+                                get: { preferences.autocompleteMode == .on },
+                                set: { preferences.autocompleteMode = $0 ? .on : .off }
+                            )
+                        ) {
                         }
+                        .toggleStyle(.switch)
                     }
-                    .pickerStyle(.segmented)
                 }
             }
 

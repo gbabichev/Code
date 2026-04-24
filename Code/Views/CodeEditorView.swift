@@ -368,7 +368,7 @@ struct CodeEditorView: NSViewRepresentable {
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
                 lineClickableTextView.indentWidth = indentWidth
                 lineClickableTextView.autocompleteModeProvider = { [weak self] in
-                    self?.autocompleteMode ?? .systemDefault
+                    self?.autocompleteMode ?? .on
                 }
                 lineClickableTextView.isCompletionVisible = { [weak self] in
                     self?.completionController.isVisible ?? false
@@ -466,33 +466,6 @@ struct CodeEditorView: NSViewRepresentable {
             }
 
             sourceText = textView.string
-        }
-
-        func textView(
-            _ textView: NSTextView,
-            completions words: [String],
-            forPartialWordRange charRange: NSRange,
-            indexOfSelectedItem index: UnsafeMutablePointer<Int>?
-        ) -> [String] {
-            guard autocompleteMode == .systemDefault else { return [] }
-            let source = textView.string as NSString
-            guard charRange.location != NSNotFound,
-                  NSMaxRange(charRange) <= source.length,
-                  charRange.length > 0 else {
-                return []
-            }
-
-            let partial = source.substring(with: charRange)
-            guard partial.count >= 2 else { return [] }
-
-            let reservedWords = reservedIdentifiers(for: language)
-            let suggestions = completionCandidates(in: textView.string, partial: partial, excluding: reservedWords)
-            guard !suggestions.isEmpty else { return [] }
-
-            // Don't pre-select any item — prevents the popup from ghost-typing
-            // the top match into the text while the user is still typing
-            unsafe index?.pointee = -1
-            return suggestions
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -1341,7 +1314,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func handleAutocompleteModeChange() {
-            guard autocompleteMode == .custom else {
+            guard autocompleteMode == .on else {
                 completionController.hide()
                 return
             }
@@ -1349,7 +1322,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func refreshCompletionItems() {
-            guard autocompleteMode == .custom,
+            guard autocompleteMode == .on,
                   let lineClickableTextView = textView as? LineClickableTextView else {
                 completionController.hide()
                 return
@@ -1368,7 +1341,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func acceptSelectedCompletion() -> Bool {
-            guard autocompleteMode == .custom,
+            guard autocompleteMode == .on,
                   let lineClickableTextView = textView as? LineClickableTextView,
                   let selectedItem = completionController.selectedItem else {
                 return false
@@ -1496,9 +1469,11 @@ struct CodeEditorView: NSViewRepresentable {
 }
 
 final class LineClickableTextView: NSTextView {
+    private static let minimumCompletionPrefixLength = 2
+    private static let completionDelay: TimeInterval = 0.5
+
     var lineCommentPrefix: String?
     var indentWidth = 4
-    private var shouldTriggerAutomaticCompletion = false
     private var isApplyingAcceptedCompletion = false
     private var completionTimer: Timer?
     var requestCompletionUpdate: (() -> Void)?
@@ -1762,7 +1737,6 @@ final class LineClickableTextView: NSTextView {
 
         guard !isApplyingAcceptedCompletion else {
             cancelCompletionTimer()
-            shouldTriggerAutomaticCompletion = false
             return
         }
 
@@ -1771,17 +1745,21 @@ final class LineClickableTextView: NSTextView {
               replacementString.count == 1,
               let scalar = replacementString.unicodeScalars.first else {
             cancelCompletionTimer()
-            shouldTriggerAutomaticCompletion = false
             return
         }
 
         let isValidChar = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_")).contains(scalar)
         if isValidChar {
-            // Reset debounce timer on each valid character — only show completions after a pause
-            scheduleCompletionAfterPause()
+            switch autocompleteModeProvider?() ?? .on {
+            case .on:
+                // Reset debounce timer on each valid character — only show completions after a pause.
+                scheduleCompletion(after: Self.completionDelay)
+            case .off:
+                cancelCompletionTimer()
+                cancelCompletions?()
+            }
         } else {
             cancelCompletionTimer()
-            shouldTriggerAutomaticCompletion = false
             cancelCompletions?()
         }
     }
@@ -1792,9 +1770,9 @@ final class LineClickableTextView: NSTextView {
         }
     }
 
-    private func scheduleCompletionAfterPause() {
+    private func scheduleCompletion(after delay: TimeInterval) {
         cancelCompletionTimer()
-        completionTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+        completionTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.showCompletionIfReady()
             }
@@ -1809,7 +1787,7 @@ final class LineClickableTextView: NSTextView {
     private func showCompletionIfReady() {
         guard !isApplyingAcceptedCompletion,
               selectedRange().length == 0,
-              currentPartialWordRange()?.length ?? 0 >= 2 else {
+              currentPartialWordRange()?.length ?? 0 >= Self.minimumCompletionPrefixLength else {
             return
         }
 
@@ -1817,16 +1795,14 @@ final class LineClickableTextView: NSTextView {
             guard let self,
                   unsafe self.window?.firstResponder === self,
                   !self.isApplyingAcceptedCompletion,
-                  self.currentPartialWordRange()?.length ?? 0 >= 2 else {
+                  self.currentPartialWordRange()?.length ?? 0 >= Self.minimumCompletionPrefixLength else {
                 return
             }
-            switch self.autocompleteModeProvider?() ?? .systemDefault {
+            switch self.autocompleteModeProvider?() ?? .on {
+            case .on:
+                self.requestCompletionUpdate?()
             case .off:
                 self.cancelCompletions?()
-            case .systemDefault:
-                self.complete(nil)
-            case .custom:
-                self.requestCompletionUpdate?()
             }
         }
     }
