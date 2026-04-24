@@ -542,7 +542,6 @@ final class EditorWorkspace: ObservableObject {
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
         // Large dirty files should not re-compare the entire buffer on every keypress.
         let shouldUseDeferredDirtyCheck = tab.isDirty && content.utf16.count > Self.largeFileTypingThreshold
-        EditorDebugTrace.log("EditorWorkspace.updateContent tab=\(id) chars=\(content.utf16.count) deferredDirtyCheck=\(shouldUseDeferredDirtyCheck)")
         tab.setContent(content, notify: false, exactDirtyCheck: !shouldUseDeferredDirtyCheck)
         if shouldUseDeferredDirtyCheck {
             pendingDirtyStateRecheckTabIDs.insert(tab.id)
@@ -673,7 +672,6 @@ final class EditorWorkspace: ObservableObject {
 
     func persistSession(delay requestedDelay: TimeInterval? = nil) {
         let delay = requestedDelay ?? (hasLargeDirtyFileBackedTab ? Self.largeDirtySessionPersistenceDelay : Self.defaultSessionPersistenceDelay)
-        EditorDebugTrace.log("EditorWorkspace.persistSession schedule")
         persistSessionTimer?.invalidate()
         persistSessionTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in
@@ -688,7 +686,6 @@ final class EditorWorkspace: ObservableObject {
     }
 
     private func writeSession(flushPendingModelSync: Bool, reconcileDirtyStates: Bool) {
-        EditorDebugTrace.log("EditorWorkspace.flushSession begin")
         persistSessionTimer?.invalidate()
         persistSessionTimer = nil
 
@@ -722,7 +719,6 @@ final class EditorWorkspace: ObservableObject {
             }
         )
         sessionStore.save(snapshot)
-        EditorDebugTrace.log("EditorWorkspace.flushSession end tabs=\(openTabs.count)")
     }
 
     private var hasLargeDirtyFileBackedTab: Bool {

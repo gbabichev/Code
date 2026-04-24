@@ -46,57 +46,6 @@ final class ActiveEditorTextViewRegistry {
     }
 }
 
-private func editorPaddingTraceNumber(_ value: CGFloat) -> String {
-    let rounded = (Double(value) * 10).rounded() / 10
-    return "\(rounded)"
-}
-
-private enum EditorActivityTrace {
-    #if DEBUG
-    private struct Bucket {
-        var firstSeen: CFAbsoluteTime
-        var count = 0
-        var totalDuration: TimeInterval = 0
-        var maxDuration: TimeInterval = 0
-        var lastDetails = ""
-    }
-
-    private static let lock = NSLock()
-    private static let reportInterval: TimeInterval = 5
-    private static var buckets: [String: Bucket] = [:]
-
-    static func record(_ name: String, details: String = "", duration: TimeInterval? = nil) {
-        guard EditorDebugTrace.isEnabled else { return }
-        let now = CFAbsoluteTimeGetCurrent()
-        let report = lock.withLock { () -> String? in
-            var bucket = buckets[name] ?? Bucket(firstSeen: now)
-            bucket.count += 1
-            bucket.lastDetails = details
-            if let duration {
-                bucket.totalDuration += duration
-                bucket.maxDuration = max(bucket.maxDuration, duration)
-            }
-
-            let elapsed = now - bucket.firstSeen
-            guard elapsed >= reportInterval else {
-                buckets[name] = bucket
-                return nil
-            }
-
-            let averageMS = bucket.count > 0 ? (bucket.totalDuration / Double(bucket.count)) * 1000 : 0
-            let maxMS = bucket.maxDuration * 1000
-            buckets[name] = Bucket(firstSeen: now)
-            return "EditorActivity \(name) count=\(bucket.count) elapsed=\(editorPaddingTraceNumber(elapsed))s avgMs=\(editorPaddingTraceNumber(averageMS)) maxMs=\(editorPaddingTraceNumber(maxMS)) \(bucket.lastDetails)"
-        }
-        if let report {
-            EditorDebugTrace.log(report)
-        }
-    }
-    #else
-    static func record(_ name: String, details: String = "", duration: TimeInterval? = nil) {}
-    #endif
-}
-
 private struct GutterLineIndex {
     private var lineStarts: [Int] = [0]
 
@@ -284,7 +233,6 @@ struct CodeEditorView: NSViewRepresentable {
     }
 
     func updateNSView(_ container: EditorContainerView, context: Context) {
-        let updateStartedAt = CFAbsoluteTimeGetCurrent()
         let effectiveWordWrapEnabled = isWordWrapEnabled
         let didLanguageChange = context.coordinator.language != language
         let didSkinChange = context.coordinator.skin != skin
@@ -295,13 +243,6 @@ struct CodeEditorView: NSViewRepresentable {
         let didWordWrapChange = context.coordinator.isWordWrapEnabled != effectiveWordWrapEnabled
         let didAutocompleteModeChange = context.coordinator.autocompleteMode != autocompleteMode
         let didSyntaxHighlightingChange = context.coordinator.isSyntaxHighlightingEnabled != isSyntaxHighlightingEnabled
-        defer {
-            EditorActivityTrace.record(
-                "CodeEditorView.updateNSView",
-                details: "chars=\((text as NSString).length) lang=\(didLanguageChange) skin=\(didSkinChange) font=\(didFontChange) wrap=\(didWordWrapChange) autocomplete=\(didAutocompleteModeChange) syntax=\(didSyntaxHighlightingChange) refresh=\(context.coordinator.requiresHighlightRefresh)",
-                duration: CFAbsoluteTimeGetCurrent() - updateStartedAt
-            )
-        }
         context.coordinator.language = language
         context.coordinator.skin = skin
         context.coordinator.indentWidth = indentWidth
@@ -376,7 +317,6 @@ struct CodeEditorView: NSViewRepresentable {
         private var sourceText: String
         private var lastSyncedBindingText: String
         private(set) var requiresHighlightRefresh = true
-        private var activeKeystrokeTraceID: Int?
         private var suppressNextBindingSync = false
         private var pendingBindingSyncWorkItem: DispatchWorkItem?
         private var pendingEditedRange: NSRange?
@@ -384,16 +324,12 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingVisibleRangeHighlightWorkItem: DispatchWorkItem?
         private var pendingBackgroundHighlightWorkItem: DispatchWorkItem?
         private var backgroundHighlightNextLocation: Int?
-        private var backgroundHighlightStartedAt: Date?
         private var lastVisibleHighlightRange: NSRange?
         private var lastScrollEventAt: CFAbsoluteTime = 0
         private var isUpdatingDocumentLayout = false
         private var cachedSyntaxHighlighter: SyntaxHighlighting?
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
         private let completionController = CompletionController()
-        #if DEBUG
-        private var lastPaddingLayoutLog: String?
-        #endif
 
         init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
             self.textBinding = textBinding
@@ -479,7 +415,6 @@ struct CodeEditorView: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
             updateSourceTextAfterEdit(textView: textView)
-            EditorDebugTrace.log("Coordinator.textDidChange begin chars=\((sourceText as NSString).length)", eventID: activeKeystrokeTraceID)
             if shouldDeferBindingSync(for: (sourceText as NSString).length) {
                 schedulePendingBindingSync()
             } else {
@@ -498,21 +433,16 @@ struct CodeEditorView: NSViewRepresentable {
             if isSyntaxHighlightingEnabled {
                 applyHighlighting(in: editedRange)
             } else {
-                EditorDebugTrace.log("Coordinator.textDidChange syntaxHighlighting=off", eventID: activeKeystrokeTraceID)
                 markHighlightingCurrent()
             }
 
             (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
             gutterView.needsDisplay = true
             updateDocumentLayout()
-            EditorDebugTrace.log("Coordinator.textDidChange end", eventID: activeKeystrokeTraceID)
-            EditorDebugTrace.endKeystroke(eventID: activeKeystrokeTraceID)
-            activeKeystrokeTraceID = nil
         }
 
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
             // Capture the exact range being edited for live highlighting
-            activeKeystrokeTraceID = EditorDebugTrace.beginKeystroke(replacementString: replacementString, range: affectedCharRange)
             pendingEditedRange = affectedCharRange
             pendingTextEdit = (range: affectedCharRange, replacement: (replacementString ?? "") as NSString)
             (textView as? LineClickableTextView)?.notePendingCompletionTrigger(
@@ -531,13 +461,11 @@ struct CodeEditorView: NSViewRepresentable {
                     let updated = NSMutableString(string: sourceText)
                     updated.replaceCharacters(in: affectedRange, with: pendingTextEdit.replacement as String)
                     sourceText = updated as String
-                    EditorDebugTrace.log("Coordinator.updateSourceTextAfterEdit incremental chars=\(updated.length)", eventID: activeKeystrokeTraceID)
                     return
                 }
             }
 
             sourceText = textView.string
-            EditorDebugTrace.log("Coordinator.updateSourceTextAfterEdit fallback chars=\((sourceText as NSString).length)", eventID: activeKeystrokeTraceID)
         }
 
         func textView(
@@ -569,14 +497,12 @@ struct CodeEditorView: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             if isApplyingHighlighting { return }
-            EditorActivityTrace.record("Coordinator.textViewDidChangeSelection")
             refreshCompletionItems()
             textView?.needsDisplay = true
             gutterView.needsDisplay = true
         }
 
         func configureLayout(isWordWrapEnabled: Bool) {
-            let startedAt = CFAbsoluteTimeGetCurrent()
             guard let textView = textView as? LineClickableTextView,
                   let textContainer = unsafe textView.textContainer,
                   let layoutManager = unsafe textView.layoutManager else { return }
@@ -606,20 +532,8 @@ struct CodeEditorView: NSViewRepresentable {
                 scrollView?.hasHorizontalScroller = true
             }
 
-            let ensureLayoutStartedAt = CFAbsoluteTimeGetCurrent()
             layoutManager.ensureLayout(for: textContainer)
-            EditorActivityTrace.record(
-                "WordWrap.configureLayout.ensureLayout",
-                details: "wordWrap=\(isWordWrapEnabled) textLength=\(unsafe textView.textStorage?.length ?? -1) container=\(editorPaddingTraceNumber(textContainer.containerSize.width))x\(editorPaddingTraceNumber(textContainer.containerSize.height))",
-                duration: CFAbsoluteTimeGetCurrent() - ensureLayoutStartedAt
-            )
-            let sizeToFitStartedAt = CFAbsoluteTimeGetCurrent()
             textView.sizeToFit()
-            EditorActivityTrace.record(
-                "WordWrap.configureLayout.sizeToFit",
-                details: "wordWrap=\(isWordWrapEnabled) frame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height))",
-                duration: CFAbsoluteTimeGetCurrent() - sizeToFitStartedAt
-            )
 
             let minimumWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
             let minimumHeight = max((scrollView?.contentSize.height ?? textView.bounds.height), 0)
@@ -630,13 +544,7 @@ struct CodeEditorView: NSViewRepresentable {
                 textView.frame.size.height = minimumHeight
             }
             updateDocumentLayout()
-            logPaddingLayout(reason: "configureLayout", textView: textView)
             textView.needsDisplay = true
-            EditorActivityTrace.record(
-                "WordWrap.configureLayout",
-                details: "wordWrap=\(isWordWrapEnabled) textLength=\(unsafe textView.textStorage?.length ?? -1) frame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height)) contentSize=\(editorPaddingTraceNumber(scrollView?.contentSize.width ?? 0))x\(editorPaddingTraceNumber(scrollView?.contentSize.height ?? 0))",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
         }
 
         func applyTheme(_ theme: SkinTheme) {
@@ -663,7 +571,6 @@ struct CodeEditorView: NSViewRepresentable {
 
         func syncWithBindingText(_ text: String) -> Bool {
             if suppressNextBindingSync {
-                EditorDebugTrace.log("Coordinator.syncWithBindingText suppressed")
                 lastSyncedBindingText = text
                 suppressNextBindingSync = false
                 return false
@@ -675,14 +582,12 @@ struct CodeEditorView: NSViewRepresentable {
                 return false
             }
             if pendingBindingSyncWorkItem != nil, text == lastSyncedBindingText {
-                EditorDebugTrace.log("Coordinator.syncWithBindingText staleDeferredSkip")
                 return false
             }
             guard sourceText != text || textView.string != text else { return false }
 
             pendingBindingSyncWorkItem?.cancel()
             pendingBindingSyncWorkItem = nil
-            EditorDebugTrace.log("Coordinator.syncWithBindingText apply chars=\((text as NSString).length)")
             sourceText = text
             lastSyncedBindingText = text
             textView.string = text
@@ -693,13 +598,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func updateDocumentLayout() {
-            let startedAt = CFAbsoluteTimeGetCurrent()
             guard !isUpdatingDocumentLayout else {
-                EditorActivityTrace.record(
-                    "Coordinator.updateDocumentLayout",
-                    details: "reentrant=true",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
                 return
             }
             isUpdatingDocumentLayout = true
@@ -712,57 +611,17 @@ struct CodeEditorView: NSViewRepresentable {
                let textContainer = unsafe textView.textContainer {
                 let width = max(scrollView.contentSize.width, 0)
                 if abs(textView.frame.width - width) > 0.5 {
-                    let wrapResizeStartedAt = CFAbsoluteTimeGetCurrent()
                     textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
                     textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
-                    let sizeToFitStartedAt = CFAbsoluteTimeGetCurrent()
                     textView.sizeToFit()
-                    EditorActivityTrace.record(
-                        "WordWrap.updateDocumentLayout.sizeToFit",
-                        details: "width=\(editorPaddingTraceNumber(width)) frame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height))",
-                        duration: CFAbsoluteTimeGetCurrent() - sizeToFitStartedAt
-                    )
-                    EditorActivityTrace.record(
-                        "WordWrap.updateDocumentLayout.widthChange",
-                        details: "targetWidth=\(editorPaddingTraceNumber(width)) frame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height))",
-                        duration: CFAbsoluteTimeGetCurrent() - wrapResizeStartedAt
-                    )
                 }
             }
             documentView.updateLayout(minimumSize: scrollView.contentSize)
-            logPaddingLayout(reason: "updateDocumentLayout", textView: textView)
-            EditorActivityTrace.record(
-                "Coordinator.updateDocumentLayout",
-                details: "textFrame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height)) documentFrame=\(editorPaddingTraceNumber(documentView.frame.width))x\(editorPaddingTraceNumber(documentView.frame.height)) syntax=\(isSyntaxHighlightingEnabled)",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
         }
 
         @objc
         private func handleTextViewFrameDidChange() {
-            if let textView = textView as? LineClickableTextView {
-                EditorActivityTrace.record(
-                    "Coordinator.handleTextViewFrameDidChange",
-                    details: "frame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height))"
-                )
-            } else {
-                EditorActivityTrace.record("Coordinator.handleTextViewFrameDidChange", details: "missingTextView=true")
-            }
             updateDocumentLayout()
-        }
-
-        private func logPaddingLayout(reason: String, textView: LineClickableTextView) {
-            #if DEBUG
-            guard EditorDebugTrace.isEnabled else { return }
-            let contentSize = scrollView?.contentSize ?? .zero
-            let textContainerSize = unsafe textView.textContainer?.containerSize ?? .zero
-            let documentFrame = documentView?.frame ?? .zero
-            let bottomPadding = documentView?.bottomPadding ?? 0
-            let message = "EditorPadding.\(reason) textFrame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height)) documentFrame=\(editorPaddingTraceNumber(documentFrame.width))x\(editorPaddingTraceNumber(documentFrame.height)) contentSize=\(editorPaddingTraceNumber(contentSize.width))x\(editorPaddingTraceNumber(contentSize.height)) container=\(editorPaddingTraceNumber(textContainerSize.width))x\(editorPaddingTraceNumber(textContainerSize.height)) padding=\(editorPaddingTraceNumber(bottomPadding)) wordWrap=\(isWordWrapEnabled) syntax=\(isSyntaxHighlightingEnabled)"
-            guard message != lastPaddingLayoutLog else { return }
-            lastPaddingLayoutLog = message
-            EditorDebugTrace.log(message)
-            #endif
         }
 
         private func shouldDeferBindingSync(for textLength: Int) -> Bool {
@@ -770,7 +629,6 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func schedulePendingBindingSync() {
-            EditorDebugTrace.log("Coordinator.schedulePendingBindingSync chars=\((sourceText as NSString).length)", eventID: activeKeystrokeTraceID)
             pendingBindingSyncWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
                 self?.flushPendingBindingSync()
@@ -781,7 +639,6 @@ struct CodeEditorView: NSViewRepresentable {
 
         private func flushPendingBindingSync() {
             guard sourceText != lastSyncedBindingText || pendingBindingSyncWorkItem != nil else { return }
-            EditorDebugTrace.log("Coordinator.flushPendingBindingSync chars=\((sourceText as NSString).length)", eventID: activeKeystrokeTraceID)
             pendingBindingSyncWorkItem?.cancel()
             pendingBindingSyncWorkItem = nil
             suppressNextBindingSync = true
@@ -796,7 +653,6 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func markHighlightingCurrent() {
-            EditorDebugTrace.log("Coordinator.markHighlightingCurrent", eventID: activeKeystrokeTraceID)
             pendingVisibleRangeHighlightWorkItem?.cancel()
             pendingVisibleRangeHighlightWorkItem = nil
             cancelBackgroundHighlighting()
@@ -804,19 +660,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func applyHighlighting(in editedRange: NSRange? = nil) {
-            let startedAt = CFAbsoluteTimeGetCurrent()
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
-            defer {
-                EditorActivityTrace.record(
-                    "Coordinator.applyHighlighting",
-                    details: "edited=\(editedRange?.location ?? -1):\(editedRange?.length ?? 0) chars=\(textStorage.length) syntax=\(isSyntaxHighlightingEnabled)",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
-            }
-            EditorDebugTrace.log("Coordinator.applyHighlighting editedRange=\(editedRange?.location ?? -1):\(editedRange?.length ?? 0) syntax=\(isSyntaxHighlightingEnabled)", eventID: activeKeystrokeTraceID)
-            if editedRange == nil, isSyntaxHighlightingEnabled {
-                backgroundHighlightStartedAt = Date()
-            }
 
             // When an edited range is provided (live typing), only highlight
             // a small window around the cursor. For large files, shrink it
@@ -857,37 +701,23 @@ struct CodeEditorView: NSViewRepresentable {
                 if isSyntaxHighlightingEnabled,
                    shouldUseVisibleRangeSyntaxHighlighting(for: textStorage.length) {
                     scheduleBackgroundHighlightIfNeeded(resetProgress: true)
-                } else if isSyntaxHighlightingEnabled {
-                    logSyntaxHighlightingCompleted(totalLength: textStorage.length, mode: "full")
                 }
             }
         }
 
         private func applyHighlightingToVisibleRange(_ range: NSRange) {
-            let startedAt = CFAbsoluteTimeGetCurrent()
             applyHighlightingPass(
                 highlightRange: range,
                 requestedHighlightRange: range,
                 shouldForceLayoutForHighlightedRange: false
-            )
-            EditorActivityTrace.record(
-                "Coordinator.applyHighlightingToVisibleRange",
-                details: "range=\(range.location):\(range.length)",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
             )
         }
 
         private func applyBackgroundHighlightChunk(_ range: NSRange) {
-            let startedAt = CFAbsoluteTimeGetCurrent()
             applyHighlightingPass(
                 highlightRange: range,
                 requestedHighlightRange: range,
                 shouldForceLayoutForHighlightedRange: false
-            )
-            EditorActivityTrace.record(
-                "Coordinator.applyBackgroundHighlightChunk",
-                details: "range=\(range.location):\(range.length)",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
             )
         }
 
@@ -898,7 +728,6 @@ struct CodeEditorView: NSViewRepresentable {
         ) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
             let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
-            let startedAt = CFAbsoluteTimeGetCurrent()
 
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
@@ -933,15 +762,6 @@ struct CodeEditorView: NSViewRepresentable {
             }
             isApplyingHighlighting = false
             requiresHighlightRefresh = false
-            if activeKeystrokeTraceID != nil {
-                let durationMS = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
-                EditorDebugTrace.log("Coordinator.applyHighlightingPass done range=\(highlightRange.location):\(highlightRange.length) durationMs=\(durationMS)", eventID: activeKeystrokeTraceID)
-            }
-            EditorActivityTrace.record(
-                "Coordinator.applyHighlightingPass",
-                details: "highlight=\(highlightRange.location):\(highlightRange.length) requested=\(requestedHighlightRange?.location ?? -1):\(requestedHighlightRange?.length ?? 0) forceLayout=\(shouldForceLayoutForHighlightedRange)",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
         }
 
         private func syntaxHighlighter() -> SyntaxHighlighting {
@@ -972,26 +792,13 @@ struct CodeEditorView: NSViewRepresentable {
         @objc
         private func handleBoundsDidChange() {
             // Only redraw gutter if scroll position actually changed
-            guard let scrollView else {
-                EditorActivityTrace.record("Coordinator.handleBoundsDidChange", details: "missingScrollView=true")
-                return
-            }
+            guard let scrollView else { return }
             let origin = scrollView.contentView.bounds.origin
             let didChange = origin != gutterView.lastClipOrigin
-            EditorActivityTrace.record(
-                "Coordinator.handleBoundsDidChange",
-                details: "changed=\(didChange) origin=\(editorPaddingTraceNumber(origin.x)),\(editorPaddingTraceNumber(origin.y))"
-            )
             guard didChange else { return }
             lastScrollEventAt = CFAbsoluteTimeGetCurrent()
             gutterView.needsDisplay = true
-            guard !isApplyingHighlighting, !isUpdatingDocumentLayout else {
-                EditorActivityTrace.record(
-                    "Coordinator.handleBoundsDidChange",
-                    details: "skipVisibleHighlight isApplyingHighlighting=\(isApplyingHighlighting) isUpdatingDocumentLayout=\(isUpdatingDocumentLayout)"
-                )
-                return
-            }
+            guard !isApplyingHighlighting, !isUpdatingDocumentLayout else { return }
             scheduleVisibleRangeHighlightIfNeeded()
             if completionController.isVisible {
                 completionController.reposition(anchorRect: completionAnchor()?.rect)
@@ -1011,15 +818,9 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func scheduleVisibleRangeHighlightIfNeeded() {
-            let startedAt = CFAbsoluteTimeGetCurrent()
             guard let textView,
                   let textLength = unsafe textView.textStorage?.length,
                   shouldUseVisibleRangeSyntaxHighlighting(for: textLength) else {
-                EditorActivityTrace.record(
-                    "Coordinator.scheduleVisibleRangeHighlightIfNeeded",
-                    details: "scheduled=false pending=\(pendingVisibleRangeHighlightWorkItem != nil)",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
                 pendingVisibleRangeHighlightWorkItem?.cancel()
                 pendingVisibleRangeHighlightWorkItem = nil
                 return
@@ -1028,63 +829,24 @@ struct CodeEditorView: NSViewRepresentable {
             pendingVisibleRangeHighlightWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self else { return }
-                let firedAt = CFAbsoluteTimeGetCurrent()
-                guard let visibleRange = self.visibleCharacterRange() else {
-                    EditorActivityTrace.record(
-                        "Coordinator.visibleRangeHighlightWorkItem",
-                        details: "visibleRange=nil",
-                        duration: CFAbsoluteTimeGetCurrent() - firedAt
-                    )
-                    return
-                }
-                guard visibleRange != self.lastVisibleHighlightRange else {
-                    EditorActivityTrace.record(
-                        "Coordinator.visibleRangeHighlightWorkItem",
-                        details: "skippedSameRange=\(visibleRange.location):\(visibleRange.length)",
-                        duration: CFAbsoluteTimeGetCurrent() - firedAt
-                    )
-                    return
-                }
+                guard let visibleRange = self.visibleCharacterRange() else { return }
+                guard visibleRange != self.lastVisibleHighlightRange else { return }
                 self.lastVisibleHighlightRange = visibleRange
                 self.applyHighlightingToVisibleRange(visibleRange)
-                EditorActivityTrace.record(
-                    "Coordinator.visibleRangeHighlightWorkItem",
-                    details: "visibleRange=\(visibleRange.location):\(visibleRange.length)",
-                    duration: CFAbsoluteTimeGetCurrent() - firedAt
-                )
             }
             pendingVisibleRangeHighlightWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.largeDocumentVisibleHighlightDelay, execute: workItem)
-            EditorActivityTrace.record(
-                "Coordinator.scheduleVisibleRangeHighlightIfNeeded",
-                details: "scheduled=true textLength=\(textLength)",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
         }
 
         private func scheduleBackgroundHighlightIfNeeded(resetProgress: Bool, delayOverride: TimeInterval? = nil) {
-            let startedAt = CFAbsoluteTimeGetCurrent()
             guard let textView,
                   let textLength = unsafe textView.textStorage?.length else {
                 cancelBackgroundHighlighting()
-                EditorActivityTrace.record(
-                    "Coordinator.scheduleBackgroundHighlightIfNeeded",
-                    details: "scheduled=false missingText=true reset=\(resetProgress)",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
                 return
             }
 
             guard shouldUseBackgroundHighlighting(for: textLength) else {
                 cancelBackgroundHighlighting()
-                if textLength > Self.largeDocumentBackgroundHighlightLimit {
-                    logSyntaxHighlightingCompleted(totalLength: textLength, mode: "visible")
-                }
-                EditorActivityTrace.record(
-                    "Coordinator.scheduleBackgroundHighlightIfNeeded",
-                    details: "scheduled=false textLength=\(textLength) reset=\(resetProgress)",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
                 return
             }
 
@@ -1101,24 +863,13 @@ struct CodeEditorView: NSViewRepresentable {
             pendingBackgroundHighlightWorkItem = workItem
             let delay = delayOverride ?? (resetProgress ? Self.initialBackgroundHighlightDelay : Self.backgroundHighlightDelay)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-            EditorActivityTrace.record(
-                "Coordinator.scheduleBackgroundHighlightIfNeeded",
-                details: "scheduled=true reset=\(resetProgress) delay=\(editorPaddingTraceNumber(delay)) next=\(backgroundHighlightNextLocation ?? -1) textLength=\(textLength)",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
         }
 
         private func performBackgroundHighlightChunk() {
-            let startedAt = CFAbsoluteTimeGetCurrent()
             guard let textView,
                   let textLength = unsafe textView.textStorage?.length,
                   shouldUseBackgroundHighlighting(for: textLength) else {
                 cancelBackgroundHighlighting()
-                EditorActivityTrace.record(
-                    "Coordinator.performBackgroundHighlightChunk",
-                    details: "result=cancel",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
                 return
             }
 
@@ -1127,22 +878,12 @@ struct CodeEditorView: NSViewRepresentable {
                     resetProgress: false,
                     delayOverride: Self.scrollIdleBackgroundHighlightDelay
                 )
-                EditorActivityTrace.record(
-                    "Coordinator.performBackgroundHighlightChunk",
-                    details: "result=deferForScroll textLength=\(textLength)",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
                 return
             }
 
             let nextLocation = min(max(backgroundHighlightNextLocation ?? 0, 0), textLength)
             guard nextLocation < textLength else {
                 pendingBackgroundHighlightWorkItem = nil
-                EditorActivityTrace.record(
-                    "Coordinator.performBackgroundHighlightChunk",
-                    details: "result=done textLength=\(textLength)",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
                 return
             }
 
@@ -1155,76 +896,29 @@ struct CodeEditorView: NSViewRepresentable {
                 scheduleBackgroundHighlightIfNeeded(resetProgress: false)
             } else {
                 pendingBackgroundHighlightWorkItem = nil
-                logSyntaxHighlightingCompleted(totalLength: textLength, mode: "background")
             }
-            EditorActivityTrace.record(
-                "Coordinator.performBackgroundHighlightChunk",
-                details: "result=chunk range=\(chunkRange.location):\(chunkRange.length) next=\(backgroundHighlightNextLocation ?? -1) textLength=\(textLength)",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
         }
 
         private func cancelBackgroundHighlighting() {
             pendingBackgroundHighlightWorkItem?.cancel()
             pendingBackgroundHighlightWorkItem = nil
             backgroundHighlightNextLocation = nil
-            backgroundHighlightStartedAt = nil
-        }
-
-        private func logSyntaxHighlightingCompleted(totalLength: Int, mode: String) {
-            #if DEBUG
-            let durationText: String
-            if let backgroundHighlightStartedAt {
-                durationText = unsafe String(format: " duration=%.2fs", Date().timeIntervalSince(backgroundHighlightStartedAt))
-            } else {
-                durationText = ""
-            }
-            print("[SyntaxHighlighting] done mode=\(mode) language=\(language.title) chars=\(totalLength)\(durationText)")
-            #endif
-            backgroundHighlightStartedAt = nil
         }
 
         private func visibleCharacterRange(verticalPadding: CGFloat = 400) -> NSRange? {
-            let startedAt = CFAbsoluteTimeGetCurrent()
             guard let textView,
                   let scrollView,
                   let layoutManager = unsafe textView.layoutManager,
-                  let textContainer = unsafe textView.textContainer else {
-                EditorActivityTrace.record(
-                    "Coordinator.visibleCharacterRange",
-                    details: "result=nil missingDependency=true",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
-                return nil
-            }
+                  let textContainer = unsafe textView.textContainer else { return nil }
 
             let expandedVisibleRect = scrollView.contentView.bounds.insetBy(dx: 0, dy: -verticalPadding)
             let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: expandedVisibleRect, in: textContainer)
-            guard visibleGlyphRange.location != NSNotFound else {
-                EditorActivityTrace.record(
-                    "Coordinator.visibleCharacterRange",
-                    details: "result=nil glyphRangeNotFound=true",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
-                return nil
-            }
+            guard visibleGlyphRange.location != NSNotFound else { return nil }
 
             let characterRange = unsafe layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
             let text = textView.string as NSString
-            guard characterRange.location != NSNotFound, characterRange.location <= text.length else {
-                EditorActivityTrace.record(
-                    "Coordinator.visibleCharacterRange",
-                    details: "result=nil characterRange=\(characterRange.location):\(characterRange.length)",
-                    duration: CFAbsoluteTimeGetCurrent() - startedAt
-                )
-                return nil
-            }
+            guard characterRange.location != NSNotFound, characterRange.location <= text.length else { return nil }
             let lineRange = text.lineRange(for: characterRange)
-            EditorActivityTrace.record(
-                "Coordinator.visibleCharacterRange",
-                details: "glyphRange=\(visibleGlyphRange.location):\(visibleGlyphRange.length) charRange=\(lineRange.location):\(lineRange.length)",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
             return lineRange
         }
 
@@ -2241,28 +1935,12 @@ final class PaddedEditorDocumentView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let startedAt = CFAbsoluteTimeGetCurrent()
-        defer {
-            EditorActivityTrace.record(
-                "PaddedEditorDocumentView.draw",
-                details: "dirty=\(editorPaddingTraceNumber(dirtyRect.width))x\(editorPaddingTraceNumber(dirtyRect.height)) frame=\(editorPaddingTraceNumber(frame.width))x\(editorPaddingTraceNumber(frame.height))",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
-        }
         backgroundColor.setFill()
         dirtyRect.fill()
     }
 
     func updateLayout(minimumSize: NSSize) {
-        let startedAt = CFAbsoluteTimeGetCurrent()
-        guard !isUpdatingLayout else {
-            EditorActivityTrace.record(
-                "PaddedEditorDocumentView.updateLayout",
-                details: "reentrant=true",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
-            return
-        }
+        guard !isUpdatingLayout else { return }
         isUpdatingLayout = true
         defer { isUpdatingLayout = false }
 
@@ -2284,11 +1962,6 @@ final class PaddedEditorDocumentView: NSView {
             setFrameSize(newSize)
         }
         needsDisplay = true
-        EditorActivityTrace.record(
-            "PaddedEditorDocumentView.updateLayout",
-            details: "textFrame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height)) documentFrame=\(editorPaddingTraceNumber(frame.width))x\(editorPaddingTraceNumber(frame.height)) newSize=\(editorPaddingTraceNumber(newSize.width))x\(editorPaddingTraceNumber(newSize.height)) padding=\(editorPaddingTraceNumber(bottomPadding))",
-            duration: CFAbsoluteTimeGetCurrent() - startedAt
-        )
     }
 }
 
@@ -2317,14 +1990,6 @@ final class EditorContainerView: NSView {
     }
 
     override func layout() {
-        let startedAt = CFAbsoluteTimeGetCurrent()
-        defer {
-            EditorActivityTrace.record(
-                "EditorContainerView.layout",
-                details: "bounds=\(editorPaddingTraceNumber(bounds.width))x\(editorPaddingTraceNumber(bounds.height)) gutterWidth=\(editorPaddingTraceNumber(gutterWidth))",
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
-        }
         super.layout()
 
         guard let gutterView, let scrollView else { return }
@@ -2562,15 +2227,6 @@ final class GutterView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let startedAt = CFAbsoluteTimeGetCurrent()
-        var activityDetails = "missingDependency=true"
-        defer {
-            EditorActivityTrace.record(
-                "GutterView.draw",
-                details: activityDetails,
-                duration: CFAbsoluteTimeGetCurrent() - startedAt
-            )
-        }
         guard let textView,
               let layoutManager = unsafe textView.layoutManager,
               let textContainer = unsafe textView.textContainer,
@@ -2588,7 +2244,6 @@ final class GutterView: NSView {
         let clipOrigin = scrollView.contentView.bounds.origin
         let visibleRect = NSRect(origin: clipOrigin, size: scrollView.contentView.bounds.size)
         let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
-        activityDetails = "visibleGlyphRange=\(visibleGlyphRange.location):\(visibleGlyphRange.length) clip=\(editorPaddingTraceNumber(clipOrigin.x)),\(editorPaddingTraceNumber(clipOrigin.y)) dirty=\(editorPaddingTraceNumber(dirtyRect.width))x\(editorPaddingTraceNumber(dirtyRect.height))"
         let text = textView.string as NSString
         let textLength = text.length
         let selectedLine = selectedLineNumber(in: textView, textLength: textLength)

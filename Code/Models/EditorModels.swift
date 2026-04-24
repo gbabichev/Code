@@ -7,75 +7,6 @@ import AppKit
 import Combine
 import Foundation
 
-enum EditorDebugTrace {
-    #if DEBUG
-    static var isEnabled = true
-    private static let lock = NSLock()
-    private static var nextEventID = 0
-    private static var activeEventID: Int?
-    #endif
-
-    static func beginKeystroke(replacementString: String?, range: NSRange) -> Int? {
-        #if DEBUG
-        guard isEnabled else { return nil }
-        let eventID = lock.withLock { () -> Int in
-            nextEventID += 1
-            activeEventID = nextEventID
-            return nextEventID
-        }
-        print("[EditorTrace #\(eventID)] Coordinator.shouldChangeTextIn range=\(range.location):\(range.length) replacement=\(preview(replacementString))")
-        return eventID
-        #else
-        return nil
-        #endif
-    }
-
-    static func log(_ message: String, eventID: Int? = nil) {
-        #if DEBUG
-        guard isEnabled else { return }
-        let resolvedEventID = eventID ?? lock.withLock { activeEventID }
-        if let resolvedEventID {
-            print("[EditorTrace #\(resolvedEventID)] \(message)")
-        } else {
-            print("[EditorTrace] \(message)")
-        }
-        #endif
-    }
-
-    static func endKeystroke(eventID: Int?) {
-        #if DEBUG
-        guard isEnabled else { return }
-        guard let eventID else { return }
-        print("[EditorTrace #\(eventID)] end")
-        lock.withLock {
-            if activeEventID == eventID {
-                activeEventID = nil
-            }
-        }
-        #endif
-    }
-
-    private static func preview(_ replacementString: String?) -> String {
-        guard let replacementString else { return "<nil>" }
-        let normalized = replacementString
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-            .replacingOccurrences(of: "\t", with: "\\t")
-        if normalized.count <= 24 {
-            return "\"\(normalized)\""
-        }
-        return "\"\(normalized.prefix(24))...\""
-    }
-}
-
-private extension NSLock {
-    func withLock<T>(_ body: () -> T) -> T {
-        lock()
-        defer { unlock() }
-        return body()
-    }
-}
-
 enum AppTheme: String, Codable, CaseIterable, Identifiable {
     case system
     case light
@@ -603,7 +534,6 @@ final class EditorTab: ObservableObject, Identifiable {
     /// Use `notify: false` for per-keystroke updates and `notify: true`
     /// when the change should propagate to sidebar / tab bar.
     func setContent(_ newContent: String, notify: Bool = false, exactDirtyCheck: Bool = true) {
-        EditorDebugTrace.log("EditorTab.setContent chars=\(newContent.utf16.count) notify=\(notify) exactDirtyCheck=\(exactDirtyCheck)")
         content = newContent
         refreshDirtyState(exactContentCheck: exactDirtyCheck)
         if notify {
@@ -622,7 +552,6 @@ final class EditorTab: ObservableObject, Identifiable {
         let newDirty = contentIsDirty
             || textEncoding != lastSavedEncoding
             || lineEnding != lastSavedLineEnding
-        EditorDebugTrace.log("EditorTab.refreshDirtyState exactContentCheck=\(exactContentCheck) wasDirty=\(isDirty) newDirty=\(newDirty)")
         if isDirty != newDirty {
             isDirty = newDirty
         }
