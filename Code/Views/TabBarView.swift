@@ -131,6 +131,11 @@ private struct TabItemView: View {
         }
         .shadow(color: isSelected ? Color.black.opacity(0.08) : .clear, radius: 2, y: 1)
         .contentShape(Rectangle())
+        .background {
+            MiddleClickCaptureView {
+                onClose(tab.id)
+            }
+        }
         .simultaneousGesture(
             TapGesture().onEnded {
                 onSelect(tab.id)
@@ -156,6 +161,69 @@ private struct TabItemView: View {
             draggedTabID: $draggedTabID,
             onMove: onMove
         ))
+    }
+}
+
+private struct MiddleClickCaptureView: NSViewRepresentable {
+    let onMiddleClick: () -> Void
+
+    func makeNSView(context: Context) -> MiddleClickCaptureNSView {
+        let view = MiddleClickCaptureNSView()
+        view.onMiddleClick = onMiddleClick
+        return view
+    }
+
+    func updateNSView(_ nsView: MiddleClickCaptureNSView, context: Context) {
+        nsView.onMiddleClick = onMiddleClick
+        nsView.installMonitorIfNeeded()
+    }
+}
+
+private final class MiddleClickCaptureNSView: NSView {
+    var onMiddleClick: (() -> Void)?
+    private var monitor: Any?
+    private weak var monitoredWindow: NSWindow?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        installMonitorIfNeeded()
+    }
+
+    deinit {
+        MainActor.assumeIsolated {
+            removeMonitor()
+        }
+    }
+
+    func installMonitorIfNeeded() {
+        guard let window = unsafe self.window else {
+            removeMonitor()
+            return
+        }
+
+        guard monitor == nil || monitoredWindow !== window else { return }
+        removeMonitor()
+        monitoredWindow = window
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .otherMouseDown) { [weak self] event in
+            guard let self,
+                  event.buttonNumber == 2,
+                  event.window === window else {
+                return event
+            }
+
+            let location = self.convert(event.locationInWindow, from: nil)
+            guard self.bounds.contains(location) else { return event }
+            self.onMiddleClick?()
+            return nil
+        }
+    }
+
+    private func removeMonitor() {
+        if let monitor {
+            NSEvent.removeMonitor(monitor)
+            self.monitor = nil
+        }
+        monitoredWindow = nil
     }
 }
 
