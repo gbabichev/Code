@@ -46,6 +46,11 @@ final class ActiveEditorTextViewRegistry {
     }
 }
 
+private func editorPaddingTraceNumber(_ value: CGFloat) -> String {
+    let rounded = (Double(value) * 10).rounded() / 10
+    return "\(rounded)"
+}
+
 private struct GutterLineIndex {
     private var lineStarts: [Int] = [0]
 
@@ -196,7 +201,7 @@ struct CodeEditorView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 14, height: 16)
         textView.allowsUndo = true
-        textView.autoresizingMask = []
+        textView.autoresizingMask = [.width]
         textView.isVerticallyResizable = true
         textView.string = text
         let documentView = PaddedEditorDocumentView(textView: textView)
@@ -290,7 +295,8 @@ struct CodeEditorView: NSViewRepresentable {
         private static let backgroundHighlightDelay: TimeInterval = 0.03
         private static let initialBackgroundHighlightDelay: TimeInterval = 0.2
         private static let largeDocumentBackgroundHighlightLimit = 500_000
-        private static let largeDocumentVisibleHighlightDelay: TimeInterval = 0.04
+        private static let largeDocumentVisibleHighlightDelay: TimeInterval = 0.12
+        private static let scrollIdleBackgroundHighlightDelay: TimeInterval = 0.25
         private static let largeDocumentCompletionWindow = 200_000
 
         private struct SyntaxHighlighterCacheKey: Equatable {
@@ -330,9 +336,13 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingBackgroundHighlightWorkItem: DispatchWorkItem?
         private var backgroundHighlightNextLocation: Int?
         private var backgroundHighlightStartedAt: Date?
+        private var lastScrollEventAt: CFAbsoluteTime = 0
         private var cachedSyntaxHighlighter: SyntaxHighlighting?
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
         private let completionController = CompletionController()
+        #if DEBUG
+        private var lastPaddingLayoutLog: String?
+        #endif
 
         init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
             self.textBinding = textBinding
@@ -363,7 +373,7 @@ struct CodeEditorView: NSViewRepresentable {
             gutterView.rebuildLineIndex(for: textView.string as NSString)
             completionController.attach(to: containerView)
             containerView.onLayout = { [weak self] in
-                self?.handleContainerLayout()
+                self?.updateDocumentLayout()
             }
 
             if let lineClickableTextView = textView as? LineClickableTextView {
@@ -401,6 +411,13 @@ struct CodeEditorView: NSViewRepresentable {
                 selector: #selector(handleBoundsDidChange),
                 name: NSView.boundsDidChangeNotification,
                 object: scrollView.contentView
+            )
+            textView.postsFrameChangedNotifications = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleTextViewFrameDidChange),
+                name: NSView.frameDidChangeNotification,
+                object: textView
             )
         }
 
@@ -518,7 +535,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             if isWordWrapEnabled {
                 textView.isHorizontallyResizable = false
-                textView.autoresizingMask = []
+                textView.autoresizingMask = [.width]
                 textView.minSize = NSSize(width: 0, height: 0)
                 textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = true
@@ -528,7 +545,7 @@ struct CodeEditorView: NSViewRepresentable {
                 scrollView?.hasHorizontalScroller = false
             } else {
                 textView.isHorizontallyResizable = true
-                textView.autoresizingMask = []
+                textView.autoresizingMask = [.width]
                 textView.minSize = NSSize(width: 0, height: 0)
                 textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = false
@@ -548,6 +565,7 @@ struct CodeEditorView: NSViewRepresentable {
                 textView.frame.size.height = minimumHeight
             }
             updateDocumentLayout()
+            logPaddingLayout(reason: "configureLayout", textView: textView)
             textView.needsDisplay = true
         }
 
@@ -605,9 +623,10 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func updateDocumentLayout() {
-            guard let scrollView, let documentView else { return }
+            guard let scrollView,
+                  let documentView,
+                  let textView = textView as? LineClickableTextView else { return }
             if isWordWrapEnabled,
-               let textView = textView as? LineClickableTextView,
                let textContainer = unsafe textView.textContainer {
                 let width = max(scrollView.contentSize.width, 0)
                 if abs(textView.frame.width - width) > 0.5 {
@@ -617,13 +636,26 @@ struct CodeEditorView: NSViewRepresentable {
                 }
             }
             documentView.updateLayout(minimumSize: scrollView.contentSize)
+            logPaddingLayout(reason: "updateDocumentLayout", textView: textView)
         }
 
-        private func handleContainerLayout() {
+        @objc
+        private func handleTextViewFrameDidChange() {
             updateDocumentLayout()
-            unsafe textView?.layoutManager?.invalidateDisplay(forCharacterRange: NSRange(location: 0, length: unsafe textView?.textStorage?.length ?? 0))
-            textView?.needsDisplay = true
-            gutterView.needsDisplay = true
+        }
+
+        private func logPaddingLayout(reason: String, textView: LineClickableTextView) {
+            #if DEBUG
+            guard EditorDebugTrace.isEnabled else { return }
+            let contentSize = scrollView?.contentSize ?? .zero
+            let textContainerSize = unsafe textView.textContainer?.containerSize ?? .zero
+            let documentFrame = documentView?.frame ?? .zero
+            let bottomPadding = documentView?.bottomPadding ?? 0
+            let message = "EditorPadding.\(reason) textFrame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height)) documentFrame=\(editorPaddingTraceNumber(documentFrame.width))x\(editorPaddingTraceNumber(documentFrame.height)) contentSize=\(editorPaddingTraceNumber(contentSize.width))x\(editorPaddingTraceNumber(contentSize.height)) container=\(editorPaddingTraceNumber(textContainerSize.width))x\(editorPaddingTraceNumber(textContainerSize.height)) padding=\(editorPaddingTraceNumber(bottomPadding)) wordWrap=\(isWordWrapEnabled) syntax=\(isSyntaxHighlightingEnabled)"
+            guard message != lastPaddingLayoutLog else { return }
+            lastPaddingLayoutLog = message
+            EditorDebugTrace.log(message)
+            #endif
         }
 
         private func shouldDeferBindingSync(for textLength: Int) -> Bool {
@@ -740,7 +772,6 @@ struct CodeEditorView: NSViewRepresentable {
 
             isApplyingHighlighting = true
             let selectedRanges = textView.selectedRanges
-            let visibleOrigin = scrollView?.contentView.bounds.origin
             textStorage.beginEditing()
 
             if isSyntaxHighlightingEnabled {
@@ -752,12 +783,6 @@ struct CodeEditorView: NSViewRepresentable {
 
             textStorage.endEditing()
             textView.selectedRanges = selectedRanges
-            if let visibleOrigin,
-               let clipView = scrollView?.contentView,
-               clipView.bounds.origin != visibleOrigin {
-                clipView.scroll(to: visibleOrigin)
-                scrollView?.reflectScrolledClipView(clipView)
-            }
 
             if shouldForceLayoutForHighlightedRange,
                let layoutManager = unsafe textView.layoutManager,
@@ -772,6 +797,10 @@ struct CodeEditorView: NSViewRepresentable {
             }
 
             gutterView.needsDisplay = true
+            updateDocumentLayout()
+            DispatchQueue.main.async { [weak self] in
+                self?.updateDocumentLayout()
+            }
             isApplyingHighlighting = false
             requiresHighlightRefresh = false
             if activeKeystrokeTraceID != nil {
@@ -812,6 +841,7 @@ struct CodeEditorView: NSViewRepresentable {
                   scrollView.contentView.bounds.origin != gutterView.lastClipOrigin else {
                 return
             }
+            lastScrollEventAt = CFAbsoluteTimeGetCurrent()
             gutterView.needsDisplay = true
             scheduleVisibleRangeHighlightIfNeeded()
             if completionController.isVisible {
@@ -841,14 +871,14 @@ struct CodeEditorView: NSViewRepresentable {
             pendingVisibleRangeHighlightWorkItem?.cancel()
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self else { return }
-                guard let visibleRange = self.visibleCharacterRange(verticalPadding: 2_000) else { return }
+                guard let visibleRange = self.visibleCharacterRange() else { return }
                 self.applyHighlightingToVisibleRange(visibleRange)
             }
             pendingVisibleRangeHighlightWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.largeDocumentVisibleHighlightDelay, execute: workItem)
         }
 
-        private func scheduleBackgroundHighlightIfNeeded(resetProgress: Bool) {
+        private func scheduleBackgroundHighlightIfNeeded(resetProgress: Bool, delayOverride: TimeInterval? = nil) {
             guard let textView,
                   let textLength = unsafe textView.textStorage?.length else {
                 cancelBackgroundHighlighting()
@@ -874,7 +904,7 @@ struct CodeEditorView: NSViewRepresentable {
                 self?.performBackgroundHighlightChunk()
             }
             pendingBackgroundHighlightWorkItem = workItem
-            let delay = resetProgress ? Self.initialBackgroundHighlightDelay : Self.backgroundHighlightDelay
+            let delay = delayOverride ?? (resetProgress ? Self.initialBackgroundHighlightDelay : Self.backgroundHighlightDelay)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
         }
 
@@ -883,6 +913,14 @@ struct CodeEditorView: NSViewRepresentable {
                   let textLength = unsafe textView.textStorage?.length,
                   shouldUseBackgroundHighlighting(for: textLength) else {
                 cancelBackgroundHighlighting()
+                return
+            }
+
+            if CFAbsoluteTimeGetCurrent() - lastScrollEventAt < Self.scrollIdleBackgroundHighlightDelay {
+                scheduleBackgroundHighlightIfNeeded(
+                    resetProgress: false,
+                    delayOverride: Self.scrollIdleBackgroundHighlightDelay
+                )
                 return
             }
 
@@ -1927,6 +1965,7 @@ final class LineClickableTextView: NSTextView {
 final class PaddedEditorDocumentView: NSView {
     private weak var textView: LineClickableTextView?
     private var lastMinimumSize: NSSize = .zero
+    private var isUpdatingLayout = false
 
     var backgroundColor: NSColor = .textBackgroundColor {
         didSet {
@@ -1937,6 +1976,7 @@ final class PaddedEditorDocumentView: NSView {
 
     var bottomPadding: CGFloat = 0 {
         didSet {
+            guard abs(bottomPadding - oldValue) > 0.5 else { return }
             updateLayout(minimumSize: lastMinimumSize)
         }
     }
@@ -1959,19 +1999,24 @@ final class PaddedEditorDocumentView: NSView {
     }
 
     func updateLayout(minimumSize: NSSize) {
+        guard !isUpdatingLayout else { return }
+        isUpdatingLayout = true
+        defer { isUpdatingLayout = false }
+
         lastMinimumSize = minimumSize
         guard let textView else { return }
 
         if textView.frame.origin != .zero {
             textView.setFrameOrigin(.zero)
         }
-
-        let width = max(textView.frame.width, minimumSize.width)
-        let height = max(textView.frame.height + bottomPadding, minimumSize.height)
         if textView.frame.width < minimumSize.width {
             textView.setFrameSize(NSSize(width: minimumSize.width, height: textView.frame.height))
         }
-        let newSize = NSSize(width: width, height: height)
+
+        let newSize = NSSize(
+            width: max(textView.frame.width, minimumSize.width),
+            height: max(textView.frame.height + bottomPadding, minimumSize.height)
+        )
         if abs(frame.width - newSize.width) > 0.5 || abs(frame.height - newSize.height) > 0.5 {
             setFrameSize(newSize)
         }
