@@ -220,6 +220,7 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
         context.coordinator.configureLayout(isWordWrapEnabled: effectiveWordWrapEnabled)
         _ = context.coordinator.syncWithBindingText(text)
+        documentView.requestInitialFocus()
         DispatchQueue.main.async {
             context.coordinator.enableNonContiguousLayout()
             if isSyntaxHighlightingEnabled {
@@ -1490,6 +1491,18 @@ final class LineClickableTextView: NSTextView {
         return didBecomeFirstResponder
     }
 
+    @discardableResult
+    func focusEditor() -> Bool {
+        guard let window = unsafe self.window else { return false }
+        let wasFirstResponder = window.firstResponder === self
+        let didFocus = window.makeFirstResponder(self)
+        if didFocus, wasFirstResponder {
+            ActiveEditorTextViewRegistry.shared.register(self)
+            didBecomeActive?()
+        }
+        return didFocus
+    }
+
     override func resignFirstResponder() -> Bool {
         let didResignFirstResponder = super.resignFirstResponder()
         if didResignFirstResponder {
@@ -1758,6 +1771,7 @@ final class PaddedEditorDocumentView: NSView {
     private weak var textView: LineClickableTextView?
     private var lastMinimumSize: NSSize = .zero
     private var isUpdatingLayout = false
+    private var shouldRequestInitialFocus = false
 
     var backgroundColor: NSColor = .textBackgroundColor {
         didSet {
@@ -1775,6 +1789,10 @@ final class PaddedEditorDocumentView: NSView {
 
     override var isFlipped: Bool { true }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     init(textView: LineClickableTextView) {
         self.textView = textView
         super.init(frame: .zero)
@@ -1785,9 +1803,34 @@ final class PaddedEditorDocumentView: NSView {
         nil
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        focusEditorIfRequested()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let textView else {
+            super.mouseDown(with: event)
+            return
+        }
+
+        textView.focusEditor()
+        if !textView.frame.contains(convert(event.locationInWindow, from: nil)) {
+            textView.moveToEndOfDocument(nil)
+            return
+        }
+
+        super.mouseDown(with: event)
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         backgroundColor.setFill()
         dirtyRect.fill()
+    }
+
+    func requestInitialFocus() {
+        shouldRequestInitialFocus = true
+        focusEditorIfRequested()
     }
 
     func updateLayout(minimumSize: NSSize) {
@@ -1813,6 +1856,32 @@ final class PaddedEditorDocumentView: NSView {
             setFrameSize(newSize)
         }
         needsDisplay = true
+    }
+
+    private func focusEditorIfRequested() {
+        guard shouldRequestInitialFocus,
+              let textView,
+              let window = unsafe self.window else { return }
+        shouldRequestInitialFocus = false
+
+        DispatchQueue.main.async { [weak textView, weak window] in
+            guard let textView,
+                  let window,
+                  unsafe textView.window === window,
+                  Self.canClaimInitialFocus(in: window, textView: textView) else {
+                return
+            }
+            textView.focusEditor()
+        }
+    }
+
+    private static func canClaimInitialFocus(in window: NSWindow, textView: LineClickableTextView) -> Bool {
+        guard let firstResponder = window.firstResponder else { return true }
+        if firstResponder === textView { return false }
+        if firstResponder is NSTextView || firstResponder is NSTextField {
+            return false
+        }
+        return true
     }
 }
 
