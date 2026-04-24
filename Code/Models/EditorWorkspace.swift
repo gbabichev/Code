@@ -1089,4 +1089,9 @@ private struct ClosedTabState {
 private struct FileDiskState: Equatable {
     let modificationDate: Date?
     let fileSize: Int?
+
+    static func == (lhs: FileDiskState, rhs: FileDiskState) -> Bool {
+        lhs.modificationDate == rhs.modificationDate
+            && lhs.fileSize == rhs.fileSize
+    }
 }

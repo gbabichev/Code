@@ -169,7 +169,6 @@ private struct WorkspaceContentView: View {
     @StateObject private var searchController = EditorSearchController()
     @EnvironmentObject private var activeWorkspaceRegistry: ActiveWorkspaceRegistry
     @EnvironmentObject private var workspacePersistenceRegistry: WorkspacePersistenceRegistry
-    @EnvironmentObject private var sessionRegistry: WorkspaceSessionRegistry
     @EnvironmentObject private var detachedTabTransfer: DetachedTabTransferCoordinator
     @EnvironmentObject private var externalFileRouter: ExternalFileRouter
     @EnvironmentObject private var recentItemRouter: RecentItemRouter
@@ -316,7 +315,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         RecentItemRouter.shared.enqueue(item)
     }
 
-    @objc private func clearDockRecentItems(_ sender: NSMenuItem) {
+    @objc private func clearDockRecentItems(_ _: NSMenuItem) {
         AppPreferences.shared.clearRecentItems()
     }
 

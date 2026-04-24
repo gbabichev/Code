@@ -14,10 +14,6 @@ protocol SyntaxHighlighting {
 /// Beyond this, only the visible/edited range is highlighted
 private let maxFullHighlightSize = 10_000
 
-private func intersects(_ range: NSRange, with ranges: [NSRange]) -> Bool {
-    ranges.contains { NSIntersectionRange(range, $0).length > 0 }
-}
-
 private func applyAttributes(
     _ attributes: [NSAttributedString.Key: Any],
     range: NSRange,
@@ -1240,6 +1236,16 @@ final class JSONSyntaxHighlighter: SyntaxHighlighting {
     private struct CacheKey: Hashable {
         let text: String
         let initialState: LineState
+
+        static func == (lhs: CacheKey, rhs: CacheKey) -> Bool {
+            lhs.text == rhs.text
+                && lhs.initialState == rhs.initialState
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(text)
+            hasher.combine(initialState)
+        }
     }
 
     private struct CacheValue {

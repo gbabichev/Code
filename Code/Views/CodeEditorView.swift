@@ -277,16 +277,8 @@ struct CodeEditorView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
-        private static let largeDocumentSyntaxThreshold = 50_000
         private static let largeFileDeferredBindingThreshold = 100_000
         private static let largeFileDeferredBindingDelay: TimeInterval = 0.35
-        private static let backgroundHighlightChunkSize = 4_000
-        private static let backgroundHighlightDelay: TimeInterval = 0.03
-        private static let initialBackgroundHighlightDelay: TimeInterval = 0.2
-        private static let largeDocumentBackgroundHighlightLimit = 500_000
-        private static let isViewportSyntaxHighlightingEnabled = false
-        private static let largeDocumentVisibleHighlightDelay: TimeInterval = 0.12
-        private static let scrollIdleBackgroundHighlightDelay: TimeInterval = 0.25
         private static let largeDocumentCompletionWindow = 200_000
 
         private struct SyntaxHighlighterCacheKey: Equatable {
@@ -296,6 +288,15 @@ struct CodeEditorView: NSViewRepresentable {
             let editorFontSize: CGFloat
             let semiboldFontName: String
             let semiboldFontSize: CGFloat
+
+            static func == (lhs: SyntaxHighlighterCacheKey, rhs: SyntaxHighlighterCacheKey) -> Bool {
+                lhs.language == rhs.language
+                    && lhs.skin == rhs.skin
+                    && lhs.editorFontName == rhs.editorFontName
+                    && lhs.editorFontSize == rhs.editorFontSize
+                    && lhs.semiboldFontName == rhs.semiboldFontName
+                    && lhs.semiboldFontSize == rhs.semiboldFontSize
+            }
         }
 
         var textBinding: Binding<String>
@@ -321,11 +322,6 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingBindingSyncWorkItem: DispatchWorkItem?
         private var pendingEditedRange: NSRange?
         private var pendingTextEdit: (range: NSRange, replacement: NSString)?
-        private var pendingVisibleRangeHighlightWorkItem: DispatchWorkItem?
-        private var pendingBackgroundHighlightWorkItem: DispatchWorkItem?
-        private var backgroundHighlightNextLocation: Int?
-        private var lastVisibleHighlightRange: NSRange?
-        private var lastScrollEventAt: CFAbsoluteTime = 0
         private var isUpdatingDocumentLayout = false
         private var cachedSyntaxHighlighter: SyntaxHighlighting?
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
@@ -470,7 +466,11 @@ struct CodeEditorView: NSViewRepresentable {
 
         func textViewDidChangeSelection(_ notification: Notification) {
             if isApplyingHighlighting { return }
-            refreshCompletionItems()
+            let wasShowingCompletions = completionController.isVisible
+            (textView as? LineClickableTextView)?.noteSelectionDidChange()
+            if wasShowingCompletions {
+                refreshCompletionItems()
+            }
             textView?.needsDisplay = true
             gutterView.needsDisplay = true
         }
@@ -626,9 +626,6 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func markHighlightingCurrent() {
-            pendingVisibleRangeHighlightWorkItem?.cancel()
-            pendingVisibleRangeHighlightWorkItem = nil
-            cancelBackgroundHighlighting()
             requiresHighlightRefresh = false
         }
 
@@ -641,56 +638,24 @@ struct CodeEditorView: NSViewRepresentable {
             let highlightRange: NSRange
             let requestedHighlightRange: NSRange?
             if let range = editedRange {
-                lastVisibleHighlightRange = nil
-                cancelBackgroundHighlighting()
                 let expansion = textStorage.length > 50_000 ? 500 : 2000
                 let start = max(range.location - expansion, 0)
                 let end = min(range.location + range.length + expansion, textStorage.length)
                 highlightRange = NSRange(location: start, length: end - start)
                 requestedHighlightRange = highlightRange
-            } else if isSyntaxHighlightingEnabled,
-                      shouldUseVisibleRangeSyntaxHighlighting(for: textStorage.length) {
-                let visibleRange = visibleCharacterRange() ?? NSRange(location: 0, length: min(5000, textStorage.length))
-                highlightRange = visibleRange
-                requestedHighlightRange = visibleRange
-                lastVisibleHighlightRange = visibleRange
             } else {
-                lastVisibleHighlightRange = nil
                 // Full-document pass (initial load, theme/language change)
                 highlightRange = NSRange(location: 0, length: textStorage.length)
                 requestedHighlightRange = nil
             }
 
             let shouldForceLayoutForHighlightedRange = editedRange != nil
-                ? !shouldUseVisibleRangeSyntaxHighlighting(for: textStorage.length)
+                ? true
                 : highlightRange.length <= 100_000
             applyHighlightingPass(
                 highlightRange: highlightRange,
                 requestedHighlightRange: requestedHighlightRange,
                 shouldForceLayoutForHighlightedRange: shouldForceLayoutForHighlightedRange
-            )
-
-            if editedRange == nil {
-                if isSyntaxHighlightingEnabled,
-                   shouldUseVisibleRangeSyntaxHighlighting(for: textStorage.length) {
-                    scheduleBackgroundHighlightIfNeeded(resetProgress: true)
-                }
-            }
-        }
-
-        private func applyHighlightingToVisibleRange(_ range: NSRange) {
-            applyHighlightingPass(
-                highlightRange: range,
-                requestedHighlightRange: range,
-                shouldForceLayoutForHighlightedRange: false
-            )
-        }
-
-        private func applyBackgroundHighlightChunk(_ range: NSRange) {
-            applyHighlightingPass(
-                highlightRange: range,
-                requestedHighlightRange: range,
-                shouldForceLayoutForHighlightedRange: false
             )
         }
 
@@ -769,130 +734,11 @@ struct CodeEditorView: NSViewRepresentable {
             let origin = scrollView.contentView.bounds.origin
             let didChange = origin != gutterView.lastClipOrigin
             guard didChange else { return }
-            lastScrollEventAt = CFAbsoluteTimeGetCurrent()
             gutterView.needsDisplay = true
             guard !isApplyingHighlighting, !isUpdatingDocumentLayout else { return }
-            scheduleVisibleRangeHighlightIfNeeded()
             if completionController.isVisible {
                 completionController.reposition(anchorRect: completionAnchor()?.rect)
             }
-        }
-
-        private func shouldUseVisibleRangeSyntaxHighlighting(for textLength: Int) -> Bool {
-            Self.isViewportSyntaxHighlightingEnabled
-                && isSyntaxHighlightingEnabled
-                && textLength > Self.largeDocumentSyntaxThreshold
-        }
-
-        private func shouldUseBackgroundHighlighting(for textLength: Int) -> Bool {
-            isSyntaxHighlightingEnabled
-                && textLength > Self.largeDocumentSyntaxThreshold
-                && textLength <= Self.largeDocumentBackgroundHighlightLimit
-        }
-
-        private func scheduleVisibleRangeHighlightIfNeeded() {
-            guard let textView,
-                  let textLength = unsafe textView.textStorage?.length,
-                  shouldUseVisibleRangeSyntaxHighlighting(for: textLength) else {
-                pendingVisibleRangeHighlightWorkItem?.cancel()
-                pendingVisibleRangeHighlightWorkItem = nil
-                return
-            }
-
-            pendingVisibleRangeHighlightWorkItem?.cancel()
-            let workItem = DispatchWorkItem { [weak self] in
-                guard let self else { return }
-                guard let visibleRange = self.visibleCharacterRange() else { return }
-                guard visibleRange != self.lastVisibleHighlightRange else { return }
-                self.lastVisibleHighlightRange = visibleRange
-                self.applyHighlightingToVisibleRange(visibleRange)
-            }
-            pendingVisibleRangeHighlightWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.largeDocumentVisibleHighlightDelay, execute: workItem)
-        }
-
-        private func scheduleBackgroundHighlightIfNeeded(resetProgress: Bool, delayOverride: TimeInterval? = nil) {
-            guard let textView,
-                  let textLength = unsafe textView.textStorage?.length else {
-                cancelBackgroundHighlighting()
-                return
-            }
-
-            guard shouldUseBackgroundHighlighting(for: textLength) else {
-                cancelBackgroundHighlighting()
-                return
-            }
-
-            if resetProgress || backgroundHighlightNextLocation == nil || backgroundHighlightNextLocation == 0 {
-                backgroundHighlightNextLocation = 0
-            } else {
-                backgroundHighlightNextLocation = min(backgroundHighlightNextLocation ?? 0, textLength)
-            }
-
-            pendingBackgroundHighlightWorkItem?.cancel()
-            let workItem = DispatchWorkItem { [weak self] in
-                self?.performBackgroundHighlightChunk()
-            }
-            pendingBackgroundHighlightWorkItem = workItem
-            let delay = delayOverride ?? (resetProgress ? Self.initialBackgroundHighlightDelay : Self.backgroundHighlightDelay)
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
-        }
-
-        private func performBackgroundHighlightChunk() {
-            guard let textView,
-                  let textLength = unsafe textView.textStorage?.length,
-                  shouldUseBackgroundHighlighting(for: textLength) else {
-                cancelBackgroundHighlighting()
-                return
-            }
-
-            if CFAbsoluteTimeGetCurrent() - lastScrollEventAt < Self.scrollIdleBackgroundHighlightDelay {
-                scheduleBackgroundHighlightIfNeeded(
-                    resetProgress: false,
-                    delayOverride: Self.scrollIdleBackgroundHighlightDelay
-                )
-                return
-            }
-
-            let nextLocation = min(max(backgroundHighlightNextLocation ?? 0, 0), textLength)
-            guard nextLocation < textLength else {
-                pendingBackgroundHighlightWorkItem = nil
-                return
-            }
-
-            let chunkLength = min(Self.backgroundHighlightChunkSize, textLength - nextLocation)
-            let chunkRange = NSRange(location: nextLocation, length: chunkLength)
-            backgroundHighlightNextLocation = nextLocation + chunkLength
-            applyBackgroundHighlightChunk(chunkRange)
-
-            if (backgroundHighlightNextLocation ?? textLength) < textLength {
-                scheduleBackgroundHighlightIfNeeded(resetProgress: false)
-            } else {
-                pendingBackgroundHighlightWorkItem = nil
-            }
-        }
-
-        private func cancelBackgroundHighlighting() {
-            pendingBackgroundHighlightWorkItem?.cancel()
-            pendingBackgroundHighlightWorkItem = nil
-            backgroundHighlightNextLocation = nil
-        }
-
-        private func visibleCharacterRange(verticalPadding: CGFloat = 400) -> NSRange? {
-            guard let textView,
-                  let scrollView,
-                  let layoutManager = unsafe textView.layoutManager,
-                  let textContainer = unsafe textView.textContainer else { return nil }
-
-            let expandedVisibleRect = scrollView.contentView.bounds.insetBy(dx: 0, dy: -verticalPadding)
-            let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: expandedVisibleRect, in: textContainer)
-            guard visibleGlyphRange.location != NSNotFound else { return nil }
-
-            let characterRange = unsafe layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
-            let text = textView.string as NSString
-            guard characterRange.location != NSNotFound, characterRange.location <= text.length else { return nil }
-            let lineRange = text.lineRange(for: characterRange)
-            return lineRange
         }
 
         private func completionCandidates(in text: String, partial: String, excluding reservedWords: Set<String>) -> [String] {
@@ -1314,11 +1160,10 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func handleAutocompleteModeChange() {
-            guard autocompleteMode == .on else {
+            if autocompleteMode == .off {
+                (textView as? LineClickableTextView)?.cancelPendingCompletionTrigger()
                 completionController.hide()
-                return
             }
-            refreshCompletionItems()
         }
 
         private func refreshCompletionItems() {
@@ -1484,6 +1329,7 @@ final class LineClickableTextView: NSTextView {
     var autocompleteModeProvider: (() -> EditorAutocompleteMode)?
     var flushPendingModelSync: (() -> Void)?
     var didBecomeActive: (() -> Void)?
+    private var pendingCompletionTriggerSelection: NSRange?
 
     override func mouseDown(with event: NSEvent) {
         ActiveEditorTextViewRegistry.shared.register(self)
@@ -1730,13 +1576,13 @@ final class LineClickableTextView: NSTextView {
 
     func notePendingCompletionTrigger(replacementString: String?, affectedRange: NSRange) {
         guard autocompleteModeProvider?() != .off else {
-            cancelCompletionTimer()
+            cancelPendingCompletionTrigger()
             cancelCompletions?()
             return
         }
 
         guard !isApplyingAcceptedCompletion else {
-            cancelCompletionTimer()
+            cancelPendingCompletionTrigger()
             return
         }
 
@@ -1744,7 +1590,7 @@ final class LineClickableTextView: NSTextView {
               let replacementString,
               replacementString.count == 1,
               let scalar = replacementString.unicodeScalars.first else {
-            cancelCompletionTimer()
+            cancelPendingCompletionTrigger()
             return
         }
 
@@ -1752,16 +1598,37 @@ final class LineClickableTextView: NSTextView {
         if isValidChar {
             switch autocompleteModeProvider?() ?? .on {
             case .on:
-                // Reset debounce timer on each valid character — only show completions after a pause.
-                scheduleCompletion(after: Self.completionDelay)
+                let insertedLength = (replacementString as NSString).length
+                pendingCompletionTriggerSelection = NSRange(location: affectedRange.location + insertedLength, length: 0)
+                if isCompletionVisible?() == true {
+                    cancelCompletionTimer()
+                } else {
+                    // Reset debounce timer on each valid character — only show completions after a pause.
+                    scheduleCompletion(after: Self.completionDelay)
+                }
             case .off:
-                cancelCompletionTimer()
+                cancelPendingCompletionTrigger()
                 cancelCompletions?()
             }
         } else {
-            cancelCompletionTimer()
+            cancelPendingCompletionTrigger()
             cancelCompletions?()
         }
+    }
+
+    func noteSelectionDidChange() {
+        if let pendingSelection = pendingCompletionTriggerSelection {
+            pendingCompletionTriggerSelection = nil
+            if NSEqualRanges(selectedRange(), pendingSelection) {
+                return
+            }
+        }
+        cancelCompletionTimer()
+    }
+
+    func cancelPendingCompletionTrigger() {
+        pendingCompletionTriggerSelection = nil
+        cancelCompletionTimer()
     }
 
     func performAutomaticCompletionIfNeeded() {
@@ -1774,7 +1641,15 @@ final class LineClickableTextView: NSTextView {
         cancelCompletionTimer()
         completionTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                self?.showCompletionIfReady()
+                guard let self else { return }
+                self.completionTimer = nil
+                if let pendingSelection = self.pendingCompletionTriggerSelection,
+                   !NSEqualRanges(self.selectedRange(), pendingSelection) {
+                    self.pendingCompletionTriggerSelection = nil
+                    return
+                }
+                self.pendingCompletionTriggerSelection = nil
+                self.showCompletionIfReady()
             }
         }
     }
