@@ -349,6 +349,7 @@ struct CodeEditorView: NSViewRepresentable {
         private static let backgroundHighlightDelay: TimeInterval = 0.03
         private static let initialBackgroundHighlightDelay: TimeInterval = 0.2
         private static let largeDocumentBackgroundHighlightLimit = 500_000
+        private static let isViewportSyntaxHighlightingEnabled = false
         private static let largeDocumentVisibleHighlightDelay: TimeInterval = 0.12
         private static let scrollIdleBackgroundHighlightDelay: TimeInterval = 0.25
         private static let largeDocumentCompletionWindow = 200_000
@@ -974,7 +975,9 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func shouldUseVisibleRangeSyntaxHighlighting(for textLength: Int) -> Bool {
-            isSyntaxHighlightingEnabled && textLength > Self.largeDocumentSyntaxThreshold
+            Self.isViewportSyntaxHighlightingEnabled
+                && isSyntaxHighlightingEnabled
+                && textLength > Self.largeDocumentSyntaxThreshold
         }
 
         private func shouldUseBackgroundHighlighting(for textLength: Int) -> Bool {
