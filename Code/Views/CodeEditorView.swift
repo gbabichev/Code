@@ -197,9 +197,11 @@ struct CodeEditorView: NSViewRepresentable {
         textView.textContainerInset = NSSize(width: 14, height: 16)
         textView.allowsUndo = true
         textView.autoresizingMask = [.width]
+        textView.translatesAutoresizingMaskIntoConstraints = false
         textView.isVerticallyResizable = true
         textView.string = text
         let documentView = PaddedEditorDocumentView(textView: textView)
+        documentView.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -292,14 +294,6 @@ struct CodeEditorView: NSViewRepresentable {
         private static let largeDocumentBackgroundHighlightLimit = 500_000
         private static let largeDocumentVisibleHighlightDelay: TimeInterval = 0.04
         private static let largeDocumentCompletionWindow = 200_000
-        private static let identifierPattern = try! NSRegularExpression(pattern: #"\b[A-Za-z_][A-Za-z0-9_]*\b"#)
-        private static let pythonFunctionPattern = try! NSRegularExpression(pattern: #"(?m)^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\("#)
-        private static let pythonVariablePattern = try! NSRegularExpression(pattern: #"(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"#)
-        private static let shellFunctionPattern = try! NSRegularExpression(pattern: #"(?m)^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\(\s*\))?\s*\{"#)
-        private static let shellVariablePattern = try! NSRegularExpression(pattern: #"(?m)(?:^|[^A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)="#)
-        private static let shellVariableReferencePattern = try! NSRegularExpression(pattern: #"\$([A-Za-z_][A-Za-z0-9_]*)"#)
-        private static let powerShellFunctionPattern = try! NSRegularExpression(pattern: #"(?im)^\s*function\s+([A-Za-z_][A-Za-z0-9_-]*)\b"#)
-        private static let powerShellVariablePattern = try! NSRegularExpression(pattern: #"\$([A-Za-z_][A-Za-z0-9_]*)"#)
 
         private struct SyntaxHighlighterCacheKey: Equatable {
             let language: EditorLanguage
@@ -952,183 +946,401 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func autocompleteSymbols(in text: String, language: EditorLanguage) -> [String] {
+            let source = text as NSString
             switch language {
             case .python:
-                let excludedRanges = pythonCommentAndStringRanges(in: text as NSString)
-                return symbols(
-                    in: text,
-                    using: [
-                        (Self.pythonFunctionPattern, 1),
-                        (Self.pythonVariablePattern, 1)
-                    ],
-                    excluding: excludedRanges
-                )
+                return pythonCompletionSymbols(in: source)
             case .shell:
-                let excludedRanges = shellLikeCommentAndStringRanges(in: text as NSString)
-                return symbols(
-                    in: text,
-                    using: [
-                        (Self.shellFunctionPattern, 1),
-                        (Self.shellVariablePattern, 1),
-                        (Self.shellVariableReferencePattern, 1)
-                    ],
-                    excluding: excludedRanges
-                )
+                return shellCompletionSymbols(in: source)
             case .powerShell:
-                let excludedRanges = shellLikeCommentAndStringRanges(in: text as NSString)
-                return symbols(
-                    in: text,
-                    using: [
-                        (Self.powerShellFunctionPattern, 1),
-                        (Self.powerShellVariablePattern, 1)
-                    ],
-                    excluding: excludedRanges
-                )
+                return powerShellCompletionSymbols(in: source)
             default:
-                let nsText = text as NSString
-                return Self.identifierPattern.matches(in: text, range: NSRange(location: 0, length: nsText.length))
-                    .map { nsText.substring(with: $0.range) }
+                return genericCompletionSymbols(in: source)
             }
         }
 
-        private func symbols(
-            in text: String,
-            using patterns: [(regex: NSRegularExpression, captureGroup: Int)],
-            excluding excludedRanges: [NSRange]
-        ) -> [String] {
-            let nsText = text as NSString
+        private func genericCompletionSymbols(in text: NSString) -> [String] {
             var seen = Set<String>()
             var results: [String] = []
+            var index = 0
 
-            for (regex, captureGroup) in patterns {
-                let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
-                for match in matches {
-                    guard match.numberOfRanges > captureGroup else { continue }
-                    let captureRange = match.range(at: captureGroup)
-                    guard captureRange.location != NSNotFound, captureRange.length > 0 else { continue }
-                    guard !excludedRanges.contains(where: { NSIntersectionRange($0, captureRange).length > 0 }) else { continue }
+            while index < text.length {
+                let ch = text.character(at: index)
+                guard isIdentifierStart(ch) else {
+                    index += 1
+                    continue
+                }
 
-                    let candidate = nsText.substring(with: captureRange)
-                    guard seen.insert(candidate).inserted else { continue }
+                let end = identifierEnd(in: text, startingAt: index)
+                let candidate = text.substring(with: NSRange(location: index, length: end - index))
+                if seen.insert(candidate).inserted {
                     results.append(candidate)
                 }
+                index = end
             }
 
             return results
         }
 
-        private func shellLikeCommentAndStringRanges(in text: NSString) -> [NSRange] {
-            var excludedRanges: [NSRange] = []
+        private func pythonCompletionSymbols(in text: NSString) -> [String] {
+            var seen = Set<String>()
+            var results: [String] = []
             var index = 0
-            let newline: unichar = 10
-            let hash: unichar = 35
-            let singleQuote: unichar = 39
-            let doubleQuote: unichar = 34
-            let backslash: unichar = 92
+            var state = PythonCompletionState.normal
 
             while index < text.length {
-                let character = text.character(at: index)
-
-                if character == hash {
-                    let start = index
-                    while index < text.length, text.character(at: index) != newline {
-                        index += 1
+                let lineRange = NSRange(location: index, length: lineEnd(in: text, at: index) - index)
+                state = scanPythonCompletionLine(in: text, lineRange: lineRange, state: state) { symbol in
+                    if seen.insert(symbol).inserted {
+                        results.append(symbol)
                     }
-                    excludedRanges.append(NSRange(location: start, length: index - start))
-                    continue
                 }
-
-                if character == singleQuote || character == doubleQuote {
-                    let delimiter = character
-                    let start = index
-                    index += 1
-
-                    while index < text.length {
-                        let current = text.character(at: index)
-                        if current == delimiter {
-                            index += 1
-                            break
-                        }
-                        if delimiter == doubleQuote, current == backslash, index + 1 < text.length {
-                            index += 2
-                            continue
-                        }
-                        index += 1
-                    }
-
-                    excludedRanges.append(NSRange(location: start, length: index - start))
-                    continue
-                }
-
-                index += 1
+                index = NSMaxRange(lineRange)
             }
 
-            return excludedRanges
+            return results
         }
 
-        private func pythonCommentAndStringRanges(in text: NSString) -> [NSRange] {
-            var excludedRanges: [NSRange] = []
-            var index = 0
-            let newline: unichar = 10
-            let hash: unichar = 35
-            let singleQuote: unichar = 39
-            let doubleQuote: unichar = 34
-            let backslash: unichar = 92
+        private enum PythonCompletionState {
+            case normal
+            case tripleSingle
+            case tripleDouble
+        }
 
-            while index < text.length {
-                let character = text.character(at: index)
+        private func scanPythonCompletionLine(
+            in text: NSString,
+            lineRange: NSRange,
+            state initialState: PythonCompletionState,
+            emit: (String) -> Void
+        ) -> PythonCompletionState {
+            var state = initialState
+            var index = lineRange.location
+            let end = NSMaxRange(lineRange)
 
-                if character == hash {
-                    let start = index
-                    while index < text.length, text.character(at: index) != newline {
-                        index += 1
-                    }
-                    excludedRanges.append(NSRange(location: start, length: index - start))
-                    continue
+            if state != .normal {
+                let quote: unichar = state == .tripleSingle ? 39 : 34
+                let stringEnd = pythonTripleStringEnd(in: text, startingAt: index, quote: quote, end: end)
+                index = stringEnd.location
+                state = stringEnd.closed ? .normal : state
+            }
+
+            let first = firstCodeCharacter(in: text, lineRange: lineRange)
+            if first < end, startsWord("def", in: text, at: first, end: end) {
+                let nameStart = skipWhitespace(in: text, from: first + 3, to: end)
+                if nameStart < end, isIdentifierStart(text.character(at: nameStart)) {
+                    let nameEnd = identifierEnd(in: text, startingAt: nameStart)
+                    emit(text.substring(with: NSRange(location: nameStart, length: nameEnd - nameStart)))
                 }
+            }
 
-                if character == singleQuote || character == doubleQuote {
-                    let delimiter = character
-                    let start = index
-                    let isTripleQuoted = index + 2 < text.length
-                        && text.character(at: index + 1) == delimiter
-                        && text.character(at: index + 2) == delimiter
-
-                    index += isTripleQuoted ? 3 : 1
-
-                    while index < text.length {
-                        if isTripleQuoted {
-                            if index + 2 < text.length,
-                               text.character(at: index) == delimiter,
-                               text.character(at: index + 1) == delimiter,
-                               text.character(at: index + 2) == delimiter {
-                                index += 3
-                                break
-                            }
-                            index += 1
-                            continue
-                        }
-
-                        let current = text.character(at: index)
-                        if current == delimiter {
-                            index += 1
-                            break
-                        }
-                        if current == backslash, index + 1 < text.length {
-                            index += 2
-                            continue
-                        }
-                        index += 1
-                    }
-
-                    excludedRanges.append(NSRange(location: start, length: index - start))
-                    continue
+            if first < end, isIdentifierStart(text.character(at: first)) {
+                let nameEnd = identifierEnd(in: text, startingAt: first)
+                let equals = skipWhitespace(in: text, from: nameEnd, to: end)
+                if equals < end,
+                   text.character(at: equals) == 61,
+                   !(equals + 1 < end && text.character(at: equals + 1) == 61) {
+                    emit(text.substring(with: NSRange(location: first, length: nameEnd - first)))
                 }
+            }
 
+            while index < end {
+                let ch = text.character(at: index)
+                if ch == 35 || ch == 10 || ch == 13 { break }
+                let prefixLength = pythonStringPrefixLength(in: text, at: index, end: end)
+                let quoteIndex = index + prefixLength
+                if quoteIndex < end {
+                    let quote = text.character(at: quoteIndex)
+                    if quote == 34 || quote == 39 {
+                        if quoteIndex + 2 < end,
+                           text.character(at: quoteIndex + 1) == quote,
+                           text.character(at: quoteIndex + 2) == quote {
+                            let stringEnd = pythonTripleStringEnd(in: text, startingAt: quoteIndex + 3, quote: quote, end: end)
+                            state = stringEnd.closed ? .normal : (quote == 34 ? .tripleDouble : .tripleSingle)
+                            index = stringEnd.location
+                        } else {
+                            index = quotedStringEnd(in: text, startingAt: quoteIndex, quote: quote, end: end)
+                        }
+                        continue
+                    }
+                }
                 index += 1
             }
 
-            return excludedRanges
+            return state
+        }
+
+        private func shellCompletionSymbols(in text: NSString) -> [String] {
+            var seen = Set<String>()
+            var results: [String] = []
+            var index = 0
+
+            while index < text.length {
+                let lineRange = NSRange(location: index, length: lineEnd(in: text, at: index) - index)
+                scanShellCompletionLine(in: text, lineRange: lineRange) { symbol in
+                    if seen.insert(symbol).inserted {
+                        results.append(symbol)
+                    }
+                }
+                index = NSMaxRange(lineRange)
+            }
+
+            return results
+        }
+
+        private func scanShellCompletionLine(in text: NSString, lineRange: NSRange, emit: (String) -> Void) {
+            var index = lineRange.location
+            let end = NSMaxRange(lineRange)
+            let first = firstCodeCharacter(in: text, lineRange: lineRange)
+
+            if first < end {
+                var commandStart = first
+                if startsWord("function", in: text, at: first, end: end) {
+                    commandStart = skipWhitespace(in: text, from: first + 8, to: end)
+                }
+                if commandStart < end, isShellIdentifierStart(text.character(at: commandStart)) {
+                    let commandEnd = shellIdentifierEnd(in: text, startingAt: commandStart, end: end)
+                    let afterCommand = skipWhitespace(in: text, from: commandEnd, to: end)
+                    if afterCommand + 2 <= end,
+                       text.character(at: afterCommand) == 40,
+                       text.character(at: afterCommand + 1) == 41 {
+                        emit(text.substring(with: NSRange(location: commandStart, length: commandEnd - commandStart)))
+                    } else if afterCommand < end, text.character(at: afterCommand) == 123 {
+                        emit(text.substring(with: NSRange(location: commandStart, length: commandEnd - commandStart)))
+                    }
+                }
+            }
+
+            while index < end {
+                let ch = text.character(at: index)
+                if ch == 35 || ch == 10 || ch == 13 { break }
+                if ch == 34 || ch == 39 {
+                    index = quotedStringEnd(in: text, startingAt: index, quote: ch, end: end)
+                    continue
+                }
+                if ch == 36 {
+                    if let variable = shellVariableName(in: text, startingAt: index, end: end) {
+                        emit(variable.name)
+                        index = variable.end
+                        continue
+                    }
+                }
+                if isIdentifierStart(ch) {
+                    let nameEnd = identifierEnd(in: text, startingAt: index)
+                    if nameEnd < end, text.character(at: nameEnd) == 61 {
+                        emit(text.substring(with: NSRange(location: index, length: nameEnd - index)))
+                    }
+                    index = nameEnd
+                    continue
+                }
+                index += 1
+            }
+        }
+
+        private func powerShellCompletionSymbols(in text: NSString) -> [String] {
+            var seen = Set<String>()
+            var results: [String] = []
+            var index = 0
+
+            while index < text.length {
+                let lineRange = NSRange(location: index, length: lineEnd(in: text, at: index) - index)
+                scanPowerShellCompletionLine(in: text, lineRange: lineRange) { symbol in
+                    if seen.insert(symbol).inserted {
+                        results.append(symbol)
+                    }
+                }
+                index = NSMaxRange(lineRange)
+            }
+
+            return results
+        }
+
+        private func scanPowerShellCompletionLine(in text: NSString, lineRange: NSRange, emit: (String) -> Void) {
+            var index = lineRange.location
+            let end = NSMaxRange(lineRange)
+            let first = firstCodeCharacter(in: text, lineRange: lineRange)
+
+            if first < end, startsWord("function", in: text, at: first, end: end, caseInsensitive: true) {
+                let nameStart = skipWhitespace(in: text, from: first + 8, to: end)
+                if nameStart < end, isShellIdentifierStart(text.character(at: nameStart)) {
+                    let nameEnd = shellIdentifierEnd(in: text, startingAt: nameStart, end: end)
+                    emit(text.substring(with: NSRange(location: nameStart, length: nameEnd - nameStart)))
+                }
+            }
+
+            while index < end {
+                let ch = text.character(at: index)
+                if ch == 35 || ch == 10 || ch == 13 { break }
+                if ch == 34 || ch == 39 {
+                    index = quotedStringEnd(in: text, startingAt: index, quote: ch, end: end)
+                    continue
+                }
+                if ch == 36 {
+                    if let variable = shellVariableName(in: text, startingAt: index, end: end) {
+                        emit(variable.name)
+                        index = variable.end
+                        continue
+                    }
+                }
+                index += 1
+            }
+        }
+
+        private func lineEnd(in text: NSString, at location: Int) -> Int {
+            var index = min(max(location, 0), text.length)
+            while index < text.length, text.character(at: index) != 10 {
+                index += 1
+            }
+            if index < text.length {
+                index += 1
+            }
+            return index
+        }
+
+        private func firstCodeCharacter(in text: NSString, lineRange: NSRange) -> Int {
+            var index = lineRange.location
+            let end = NSMaxRange(lineRange)
+            while index < end, isWhitespace(text.character(at: index)) {
+                index += 1
+            }
+            return index
+        }
+
+        private func skipWhitespace(in text: NSString, from start: Int, to end: Int) -> Int {
+            var index = start
+            while index < end, isWhitespace(text.character(at: index)) {
+                index += 1
+            }
+            return index
+        }
+
+        private func isWhitespace(_ ch: unichar) -> Bool {
+            ch == 32 || ch == 9
+        }
+
+        private func isIdentifierStart(_ ch: unichar) -> Bool {
+            (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || ch == 95
+        }
+
+        private func isIdentifierCharacter(_ ch: unichar) -> Bool {
+            isIdentifierStart(ch) || (ch >= 48 && ch <= 57)
+        }
+
+        private func identifierEnd(in text: NSString, startingAt start: Int) -> Int {
+            var index = start
+            guard index < text.length, isIdentifierStart(text.character(at: index)) else { return index }
+            index += 1
+            while index < text.length, isIdentifierCharacter(text.character(at: index)) {
+                index += 1
+            }
+            return index
+        }
+
+        private func isShellIdentifierStart(_ ch: unichar) -> Bool {
+            isIdentifierStart(ch) || ch == 46 || ch == 47
+        }
+
+        private func isShellIdentifierCharacter(_ ch: unichar) -> Bool {
+            isIdentifierCharacter(ch) || ch == 45 || ch == 46 || ch == 47 || ch == 58
+        }
+
+        private func shellIdentifierEnd(in text: NSString, startingAt start: Int, end: Int) -> Int {
+            var index = start
+            while index < end, isShellIdentifierCharacter(text.character(at: index)) {
+                index += 1
+            }
+            return index
+        }
+
+        private func startsWord(
+            _ word: String,
+            in text: NSString,
+            at index: Int,
+            end: Int,
+            caseInsensitive: Bool = false
+        ) -> Bool {
+            let length = (word as NSString).length
+            guard index + length <= end else { return false }
+            let candidate = text.substring(with: NSRange(location: index, length: length))
+            let matches = caseInsensitive
+                ? candidate.caseInsensitiveCompare(word) == .orderedSame
+                : candidate == word
+            guard matches else { return false }
+            let beforeOK = index == 0 || !isIdentifierCharacter(text.character(at: index - 1))
+            let afterOK = index + length >= end || !isIdentifierCharacter(text.character(at: index + length))
+            return beforeOK && afterOK
+        }
+
+        private func quotedStringEnd(in text: NSString, startingAt start: Int, quote: unichar, end: Int) -> Int {
+            var index = start + 1
+            var escaped = false
+            while index < end {
+                let ch = text.character(at: index)
+                if quote == 34, ch == 92, !escaped {
+                    escaped = true
+                    index += 1
+                    continue
+                }
+                if ch == quote, !escaped {
+                    return index + 1
+                }
+                escaped = false
+                index += 1
+            }
+            return index
+        }
+
+        private func pythonStringPrefixLength(in text: NSString, at index: Int, end: Int) -> Int {
+            var cursor = index
+            while cursor < end {
+                let ch = text.character(at: cursor)
+                if ch == 70 || ch == 82 || ch == 66 || ch == 85 || ch == 102 || ch == 114 || ch == 98 || ch == 117 {
+                    cursor += 1
+                } else {
+                    break
+                }
+            }
+            return min(cursor - index, 2)
+        }
+
+        private func pythonTripleStringEnd(
+            in text: NSString,
+            startingAt start: Int,
+            quote: unichar,
+            end: Int
+        ) -> (location: Int, closed: Bool) {
+            var index = start
+            while index + 2 < end {
+                if text.character(at: index) == quote,
+                   text.character(at: index + 1) == quote,
+                   text.character(at: index + 2) == quote {
+                    return (index + 3, true)
+                }
+                index += 1
+            }
+            return (end, false)
+        }
+
+        private func shellVariableName(in text: NSString, startingAt start: Int, end: Int) -> (name: String, end: Int)? {
+            guard start + 1 < end else { return nil }
+            if text.character(at: start + 1) == 123 {
+                var index = start + 2
+                let nameStart = index
+                while index < end, text.character(at: index) != 125 {
+                    index += 1
+                }
+                guard index > nameStart else { return nil }
+                let name = text.substring(with: NSRange(location: nameStart, length: index - nameStart))
+                return (name, index < end ? index + 1 : index)
+            }
+
+            let nameStart = start + 1
+            guard isIdentifierStart(text.character(at: nameStart)) else { return nil }
+            var index = nameStart + 1
+            while index < end, isIdentifierCharacter(text.character(at: index)) {
+                index += 1
+            }
+            let name = text.substring(with: NSRange(location: nameStart, length: index - nameStart))
+            return (name, index)
         }
 
         func handleAutocompleteModeChange() {
@@ -1738,6 +1950,9 @@ final class PaddedEditorDocumentView: NSView {
 
         let width = max(textView.frame.width, minimumSize.width)
         let height = max(textView.frame.height + bottomPadding, minimumSize.height)
+        if textView.frame.width < minimumSize.width {
+            textView.setFrameSize(NSSize(width: minimumSize.width, height: textView.frame.height))
+        }
         let newSize = NSSize(width: width, height: height)
         if abs(frame.width - newSize.width) > 0.5 || abs(frame.height - newSize.height) > 0.5 {
             setFrameSize(newSize)
