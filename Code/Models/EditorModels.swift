@@ -541,6 +541,16 @@ final class EditorTab: ObservableObject, Identifiable {
         }
     }
 
+    func setContentAssumingDirty(_ newContent: String, notify: Bool = false) {
+        content = newContent
+        if !isDirty {
+            isDirty = true
+        }
+        if notify {
+            objectWillChange.send()
+        }
+    }
+
     func refreshDirtyState(exactContentCheck: Bool = true) {
         let contentIsDirty: Bool
         if exactContentCheck || !isDirty {

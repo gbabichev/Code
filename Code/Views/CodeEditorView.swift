@@ -36,11 +36,14 @@ final class ActiveEditorTextViewRegistry {
     }
 
     func flushPendingModelSync() {
-        (textView as? LineClickableTextView)?.flushPendingModelSync?()
+        guard let textView = textView as? LineClickableTextView,
+              textView.hasPendingModelSync?() == true else { return }
+        textView.flushPendingModelSync?()
     }
 
     func flushAllPendingModelSync() {
         for textView in textViews.allObjects {
+            guard textView.hasPendingModelSync?() == true else { continue }
             textView.flushPendingModelSync?()
         }
     }
@@ -48,13 +51,19 @@ final class ActiveEditorTextViewRegistry {
 
 private struct GutterLineIndex {
     private var lineStarts: [Int] = [0]
+    private var maxLineLength = 0
 
     var lineCount: Int {
         max(lineStarts.count, 1)
     }
 
+    var maximumLineLength: Int {
+        max(maxLineLength, 1)
+    }
+
     mutating func rebuild(with text: NSString) {
         lineStarts = [0]
+        maxLineLength = 0
         guard text.length > 0 else { return }
 
         var location = 0
@@ -62,6 +71,7 @@ private struct GutterLineIndex {
             var lineEnd = 0
             var contentsEnd = 0
             unsafe text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+            maxLineLength = max(maxLineLength, max(contentsEnd - location, 0))
 
             if lineEnd >= text.length {
                 if lineEnd > contentsEnd {
@@ -94,11 +104,26 @@ private struct GutterLineIndex {
                 lineStarts[index] += delta
             }
         }
+        maxLineLength = max(maxLineLength, Self.maximumLineLength(in: replacement))
     }
 
     func lineNumber(atCharacterIndex characterIndex: Int, textLength: Int) -> Int {
         let clampedIndex = min(max(characterIndex, 0), textLength)
         return max(upperBound(of: clampedIndex), 1)
+    }
+
+    func estimatedVisualLineCount(charactersPerLine: Int, textLength: Int) -> Int {
+        let charactersPerLine = max(charactersPerLine, 1)
+        guard textLength > 0 else { return 1 }
+
+        var count = 0
+        for index in lineStarts.indices {
+            let start = lineStarts[index]
+            let end = index + 1 < lineStarts.count ? lineStarts[index + 1] : textLength
+            let lineLength = max(end - start, 0)
+            count += max(Int(ceil(Double(max(lineLength, 1)) / Double(charactersPerLine))), 1)
+        }
+        return max(count, 1)
     }
 
     private func upperBound(of value: Int) -> Int {
@@ -140,6 +165,24 @@ private struct GutterLineIndex {
         }
 
         return starts
+    }
+
+    private static func maximumLineLength(in text: NSString) -> Int {
+        guard text.length > 0 else { return 0 }
+
+        var maximumLength = 0
+        var location = 0
+        while location < text.length {
+            var lineEnd = 0
+            var contentsEnd = 0
+            unsafe text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+            maximumLength = max(maximumLength, max(contentsEnd - location, 0))
+            if lineEnd >= text.length {
+                break
+            }
+            location = lineEnd
+        }
+        return maximumLength
     }
 }
 
@@ -196,6 +239,7 @@ struct CodeEditorView: NSViewRepresentable {
         textView.allowsUndo = true
         textView.autoresizingMask = [.width]
         textView.isVerticallyResizable = true
+        unsafe textView.layoutManager?.allowsNonContiguousLayout = true
         textView.string = text
         let documentView = PaddedEditorDocumentView(textView: textView)
 
@@ -219,7 +263,6 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.applyTheme(theme)
         context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
         context.coordinator.configureLayout(isWordWrapEnabled: effectiveWordWrapEnabled)
-        _ = context.coordinator.syncWithBindingText(text)
         documentView.requestInitialFocus()
         DispatchQueue.main.async {
             context.coordinator.enableNonContiguousLayout()
@@ -278,6 +321,7 @@ struct CodeEditorView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
+        private static let largeLayoutTextLengthThreshold = 100_000
         private static let largeFileDeferredBindingThreshold = 100_000
         private static let largeFileDeferredBindingDelay: TimeInterval = 0.35
         private static let largeDocumentCompletionWindow = 200_000
@@ -321,6 +365,7 @@ struct CodeEditorView: NSViewRepresentable {
         private(set) var requiresHighlightRefresh = true
         private var suppressNextBindingSync = false
         private var pendingBindingSyncWorkItem: DispatchWorkItem?
+        private var hasUnsyncedBindingText = false
         private var pendingEditedRange: NSRange?
         private var pendingTextEdit: (range: NSRange, replacement: NSString)?
         private var isUpdatingDocumentLayout = false
@@ -384,6 +429,9 @@ struct CodeEditorView: NSViewRepresentable {
                 }
                 lineClickableTextView.flushPendingModelSync = { [weak self] in
                     self?.flushPendingBindingSync()
+                }
+                lineClickableTextView.hasPendingModelSync = { [weak self] in
+                    self?.hasPendingBindingSync() ?? false
                 }
                 lineClickableTextView.didBecomeActive = { [weak self] in
                     self?.onDidFocus()
@@ -458,11 +506,13 @@ struct CodeEditorView: NSViewRepresentable {
                     let updated = NSMutableString(string: sourceText)
                     updated.replaceCharacters(in: affectedRange, with: pendingTextEdit.replacement as String)
                     sourceText = updated as String
+                    hasUnsyncedBindingText = true
                     return
                 }
             }
 
             sourceText = textView.string
+            hasUnsyncedBindingText = true
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -506,11 +556,18 @@ struct CodeEditorView: NSViewRepresentable {
                 scrollView?.hasHorizontalScroller = true
             }
 
+            let minimumWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
+            let minimumHeight = max((scrollView?.contentSize.height ?? textView.bounds.height), 0)
+            if shouldUseEstimatedLayout(for: textView) {
+                applyEstimatedTextViewSize(minimumSize: NSSize(width: minimumWidth, height: minimumHeight))
+                updateDocumentLayout()
+                textView.needsDisplay = true
+                return
+            }
+
             layoutManager.ensureLayout(for: textContainer)
             textView.sizeToFit()
 
-            let minimumWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
-            let minimumHeight = max((scrollView?.contentSize.height ?? textView.bounds.height), 0)
             if textView.frame.width < minimumWidth {
                 textView.frame.size.width = minimumWidth
             }
@@ -546,6 +603,7 @@ struct CodeEditorView: NSViewRepresentable {
         func syncWithBindingText(_ text: String) -> Bool {
             if suppressNextBindingSync {
                 lastSyncedBindingText = text
+                hasUnsyncedBindingText = false
                 suppressNextBindingSync = false
                 return false
             }
@@ -553,17 +611,19 @@ struct CodeEditorView: NSViewRepresentable {
             guard let textView else {
                 sourceText = text
                 lastSyncedBindingText = text
+                hasUnsyncedBindingText = false
                 return false
             }
             if pendingBindingSyncWorkItem != nil, text == lastSyncedBindingText {
                 return false
             }
-            guard sourceText != text || textView.string != text else { return false }
+            guard sourceText != text else { return false }
 
             pendingBindingSyncWorkItem?.cancel()
             pendingBindingSyncWorkItem = nil
             sourceText = text
             lastSyncedBindingText = text
+            hasUnsyncedBindingText = false
             textView.string = text
             gutterView.rebuildLineIndex(for: text as NSString)
             updateDocumentLayout()
@@ -581,16 +641,64 @@ struct CodeEditorView: NSViewRepresentable {
             guard let scrollView,
                   let documentView,
                   let textView = textView as? LineClickableTextView else { return }
+            let shouldUseEstimatedLayout = shouldUseEstimatedLayout(for: textView)
             if isWordWrapEnabled,
                let textContainer = unsafe textView.textContainer {
                 let width = max(scrollView.contentSize.width, 0)
                 if abs(textView.frame.width - width) > 0.5 {
                     textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
                     textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
-                    textView.sizeToFit()
+                    if shouldUseEstimatedLayout {
+                        applyEstimatedTextViewSize(minimumSize: scrollView.contentSize)
+                    } else {
+                        textView.sizeToFit()
+                    }
                 }
             }
+            if shouldUseEstimatedLayout {
+                applyEstimatedTextViewSize(minimumSize: scrollView.contentSize)
+            }
             documentView.updateLayout(minimumSize: scrollView.contentSize)
+        }
+
+        private func shouldUseEstimatedLayout(for textView: NSTextView) -> Bool {
+            (unsafe textView.textStorage?.length ?? 0) > Self.largeLayoutTextLengthThreshold
+        }
+
+        private func applyEstimatedTextViewSize(minimumSize: NSSize) {
+            guard let textView = textView as? LineClickableTextView,
+                  let layoutManager = unsafe textView.layoutManager else { return }
+
+            let font = textView.font ?? NSFont.systemFont(ofSize: 12)
+            let lineHeight = max(layoutManager.defaultLineHeight(for: font), 1)
+            let textLength = unsafe textView.textStorage?.length ?? 0
+            let horizontalInset = textView.textContainerInset.width * 2
+            let verticalInset = textView.textContainerInset.height * 2
+            let contentWidth = max(minimumSize.width - horizontalInset, 1)
+            let characterWidth = max(("M" as NSString).size(withAttributes: [.font: font]).width, 1)
+            let estimatedWidth: CGFloat
+            let estimatedLineCount: Int
+
+            if isWordWrapEnabled {
+                estimatedWidth = minimumSize.width
+                let charactersPerLine = max(Int(contentWidth / characterWidth), 1)
+                estimatedLineCount = gutterView.estimatedVisualLineCount(charactersPerLine: charactersPerLine, textLength: textLength)
+            } else {
+                estimatedWidth = max(
+                    minimumSize.width,
+                    CGFloat(gutterView.maximumLineLength) * characterWidth + horizontalInset + 32
+                )
+                estimatedLineCount = gutterView.lineCount
+            }
+
+            let estimatedHeight = CGFloat(max(estimatedLineCount, 1)) * lineHeight + verticalInset
+            let nextSize = NSSize(
+                width: max(estimatedWidth, minimumSize.width),
+                height: max(estimatedHeight, minimumSize.height)
+            )
+            if abs(textView.frame.width - nextSize.width) > 0.5 || abs(textView.frame.height - nextSize.height) > 0.5 {
+                textView.setFrameSize(nextSize)
+            }
         }
 
         @objc
@@ -612,12 +720,17 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         private func flushPendingBindingSync() {
-            guard sourceText != lastSyncedBindingText || pendingBindingSyncWorkItem != nil else { return }
+            guard hasPendingBindingSync() else { return }
             pendingBindingSyncWorkItem?.cancel()
             pendingBindingSyncWorkItem = nil
             suppressNextBindingSync = true
             lastSyncedBindingText = sourceText
+            hasUnsyncedBindingText = false
             textBinding.wrappedValue = sourceText
+        }
+
+        private func hasPendingBindingSync() -> Bool {
+            hasUnsyncedBindingText || pendingBindingSyncWorkItem != nil
         }
 
         func enableNonContiguousLayout() {
@@ -1329,6 +1442,7 @@ final class LineClickableTextView: NSTextView {
     var acceptSelectedCompletion: (() -> Bool)?
     var autocompleteModeProvider: (() -> EditorAutocompleteMode)?
     var flushPendingModelSync: (() -> Void)?
+    var hasPendingModelSync: (() -> Bool)?
     var didBecomeActive: (() -> Void)?
     private var pendingCompletionTriggerSelection: NSRange?
 
@@ -2142,6 +2256,14 @@ final class GutterView: NSView {
     // Cache for scroll offset to avoid redundant redraws
     var lastClipOrigin: CGPoint = .zero
 
+    var lineCount: Int {
+        lineIndex.lineCount
+    }
+
+    var maximumLineLength: Int {
+        lineIndex.maximumLineLength
+    }
+
     override var isFlipped: Bool {
         true
     }
@@ -2231,6 +2353,10 @@ final class GutterView: NSView {
 
     private func lineNumber(atCharacterIndex characterIndex: Int, textLength: Int) -> Int {
         lineIndex.lineNumber(atCharacterIndex: characterIndex, textLength: textLength)
+    }
+
+    func estimatedVisualLineCount(charactersPerLine: Int, textLength: Int) -> Int {
+        lineIndex.estimatedVisualLineCount(charactersPerLine: charactersPerLine, textLength: textLength)
     }
 
     private func updatePreferredWidth() {

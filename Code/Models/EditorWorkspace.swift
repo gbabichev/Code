@@ -250,29 +250,41 @@ final class EditorWorkspace: ObservableObject {
     }
 
     func reopenLastClosedTab() {
-        guard let closedState = recentlyClosedTabs.popLast() else { return }
+        guard let closedState = recentlyClosedTabs.last else { return }
+        let restoredState: ClosedTabState
+        do {
+            restoredState = try restoredClosedTabState(closedState)
+        } catch {
+            if let fileName = closedState.fileURL?.lastPathComponent {
+                errorMessage = "Failed to reopen \(fileName): \(error.localizedDescription)"
+            } else {
+                errorMessage = "Failed to reopen closed tab: \(error.localizedDescription)"
+            }
+            return
+        }
+        recentlyClosedTabs.removeLast()
 
         let tab = EditorTab(
-            fileURL: closedState.fileURL,
-            languageOverride: closedState.languageOverride,
-            textEncoding: closedState.textEncoding,
-            lineEnding: closedState.lineEnding,
-            customTitle: closedState.customTitle,
-            content: closedState.content,
-            lastSavedContent: closedState.lastSavedContent,
-            lastSavedEncoding: closedState.lastSavedEncoding,
-            lastSavedLineEnding: closedState.lastSavedLineEnding,
-            isDirty: closedState.isDirty
+            fileURL: restoredState.fileURL,
+            languageOverride: restoredState.languageOverride,
+            textEncoding: restoredState.textEncoding,
+            lineEnding: restoredState.lineEnding,
+            customTitle: restoredState.customTitle,
+            content: restoredState.content,
+            lastSavedContent: restoredState.lastSavedContent,
+            lastSavedEncoding: restoredState.lastSavedEncoding,
+            lastSavedLineEnding: restoredState.lastSavedLineEnding,
+            isDirty: restoredState.isDirty
         )
 
         attachObserver(to: tab)
         openTabs.append(tab)
-        if let lastKnownDiskState = closedState.lastKnownDiskState {
+        if let lastKnownDiskState = restoredState.lastKnownDiskState {
             knownDiskStatesByTabID[tab.id] = lastKnownDiskState
         } else {
             recordKnownDiskState(for: tab.id, fileURL: tab.fileURL)
         }
-        if let externalModificationVersion = closedState.externalModificationVersion {
+        if let externalModificationVersion = restoredState.externalModificationVersion {
             externalModificationVersionByTabID[tab.id] = externalModificationVersion
         }
         selectTab(tab.id, persist: false)
@@ -540,9 +552,13 @@ final class EditorWorkspace: ObservableObject {
 
     func updateContent(_ content: String, for id: EditorTab.ID) {
         guard let tab = openTabs.first(where: { $0.id == id }) else { return }
-        // Large dirty files should not re-compare the entire buffer on every keypress.
-        let shouldUseDeferredDirtyCheck = tab.isDirty && content.utf16.count > Self.largeFileTypingThreshold
-        tab.setContent(content, notify: false, exactDirtyCheck: !shouldUseDeferredDirtyCheck)
+        // Large files should not re-compare the entire buffer on every keystroke or close-time sync.
+        let shouldUseDeferredDirtyCheck = content.utf16.count > Self.largeFileTypingThreshold
+        if shouldUseDeferredDirtyCheck {
+            tab.setContentAssumingDirty(content, notify: false)
+        } else {
+            tab.setContent(content, notify: false)
+        }
         if shouldUseDeferredDirtyCheck {
             pendingDirtyStateRecheckTabIDs.insert(tab.id)
         } else {
@@ -859,18 +875,41 @@ final class EditorWorkspace: ObservableObject {
         }
     }
 
+    private func restoredClosedTabState(_ closedState: ClosedTabState) throws -> ClosedTabState {
+        guard let fileURL = closedState.fileURL, !closedState.isDirty else {
+            return closedState
+        }
+
+        let fileContents = try readTextFile(at: fileURL)
+        return ClosedTabState(
+            fileURL: closedState.fileURL,
+            customTitle: closedState.customTitle,
+            languageOverride: closedState.languageOverride,
+            textEncoding: fileContents.encoding,
+            lineEnding: fileContents.lineEnding,
+            content: fileContents.content,
+            lastSavedContent: fileContents.content,
+            lastSavedEncoding: fileContents.encoding,
+            lastSavedLineEnding: fileContents.lineEnding,
+            isDirty: false,
+            lastKnownDiskState: try? diskState(for: fileURL),
+            externalModificationVersion: nil
+        )
+    }
+
     private func closedTabState(for id: EditorTab.ID, preserveUnsavedChanges: Bool) -> ClosedTabState? {
         guard let tab = tab(withID: id) else { return nil }
 
         if preserveUnsavedChanges {
+            let shouldPreserveContent = tab.fileURL == nil || tab.isDirty
             return ClosedTabState(
                 fileURL: tab.fileURL,
                 customTitle: tab.customTitle,
                 languageOverride: tab.languageOverride,
                 textEncoding: tab.textEncoding,
                 lineEnding: tab.lineEnding,
-                content: tab.content,
-                lastSavedContent: tab.lastSavedContent,
+                content: shouldPreserveContent ? tab.content : "",
+                lastSavedContent: shouldPreserveContent ? tab.lastSavedContent : "",
                 lastSavedEncoding: tab.lastSavedEncoding,
                 lastSavedLineEnding: tab.lastSavedLineEnding,
                 isDirty: tab.isDirty,
@@ -879,14 +918,15 @@ final class EditorWorkspace: ObservableObject {
             )
         }
 
+        let shouldPreserveSavedContent = tab.fileURL == nil
         return ClosedTabState(
             fileURL: tab.fileURL,
             customTitle: tab.customTitle,
             languageOverride: tab.languageOverride,
             textEncoding: tab.lastSavedEncoding,
             lineEnding: tab.lastSavedLineEnding,
-            content: tab.lastSavedContent,
-            lastSavedContent: tab.lastSavedContent,
+            content: shouldPreserveSavedContent ? tab.lastSavedContent : "",
+            lastSavedContent: shouldPreserveSavedContent ? tab.lastSavedContent : "",
             lastSavedEncoding: tab.lastSavedEncoding,
             lastSavedLineEnding: tab.lastSavedLineEnding,
             isDirty: false,

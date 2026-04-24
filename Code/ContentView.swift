@@ -482,6 +482,7 @@ struct ContentView: View {
                             showsExternalModificationBanner: workspace.externalModificationVersion(for: primaryTab.id) != nil,
                             isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: primaryTab.id),
                             onExternalModificationRefresh: { workspace.requestRefreshFile(for: primaryTab.id) },
+                            editorID: primaryTab.id,
                             title: primaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(primaryTab),
@@ -501,6 +502,7 @@ struct ContentView: View {
                             showsExternalModificationBanner: workspace.externalModificationVersion(for: secondaryTab.id) != nil,
                             isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: secondaryTab.id),
                             onExternalModificationRefresh: { workspace.requestRefreshFile(for: secondaryTab.id) },
+                            editorID: secondaryTab.id,
                             title: secondaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(secondaryTab),
@@ -521,6 +523,7 @@ struct ContentView: View {
                         showsExternalModificationBanner: workspace.externalModificationVersion(for: primaryTab.id) != nil,
                         isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: primaryTab.id),
                         onExternalModificationRefresh: { workspace.requestRefreshFile(for: primaryTab.id) },
+                        editorID: primaryTab.id,
                         text: selectedTabBinding(primaryTab),
                         isWordWrapEnabled: preferences.isWordWrapEnabled,
                         isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
@@ -929,6 +932,7 @@ private struct EditorAreaView: View {
     let showsExternalModificationBanner: Bool
     let isExternalModificationBannerDismissed: Binding<Bool>
     let onExternalModificationRefresh: () -> Void
+    let editorID: EditorTab.ID
     let text: Binding<String>
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
@@ -969,6 +973,7 @@ private struct EditorAreaView: View {
                 editorSemiboldFont: editorSemiboldFont,
                 onDidFocus: onFocus
             )
+            .id(editorID)
         }
     }
 
@@ -1018,6 +1023,7 @@ private struct EditorSplitPaneView: View {
     let showsExternalModificationBanner: Bool
     let isExternalModificationBannerDismissed: Binding<Bool>
     let onExternalModificationRefresh: () -> Void
+    let editorID: EditorTab.ID
     let title: String
     let showsCloseButton: Bool
     let text: Binding<String>
@@ -1075,6 +1081,7 @@ private struct EditorSplitPaneView: View {
                 showsExternalModificationBanner: showsExternalModificationBanner,
                 isExternalModificationBannerDismissed: isExternalModificationBannerDismissed,
                 onExternalModificationRefresh: onExternalModificationRefresh,
+                editorID: editorID,
                 text: text,
                 isWordWrapEnabled: isWordWrapEnabled,
                 isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
