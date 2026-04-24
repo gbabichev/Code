@@ -7,10 +7,16 @@
 	objects = {
 
 /* Begin PBXFileReference section */
+		C0DE10000000000000000002 /* CodeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FFDE5E2D2F82ADA3008C9D62 /* Code.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Code.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		C0DE10000000000000000001 /* CodeTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CodeTests;
+			sourceTree = "<group>";
+		};
 		FFDE5E2F2F82ADA3008C9D62 /* Code */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Code;
@@ -19,6 +25,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		C0DE10000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FFDE5E2A2F82ADA3008C9D62 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -33,6 +46,7 @@
 			isa = PBXGroup;
 			children = (
 				FFDE5E2F2F82ADA3008C9D62 /* Code */,
+				C0DE10000000000000000001 /* CodeTests */,
 				FFDE5E2E2F82ADA3008C9D62 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -41,6 +55,7 @@
 			isa = PBXGroup;
 			children = (
 				FFDE5E2D2F82ADA3008C9D62 /* Code.app */,
+				C0DE10000000000000000002 /* CodeTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -48,6 +63,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		C0DE10000000000000000006 /* CodeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C0DE10000000000000000009 /* Build configuration list for PBXNativeTarget "CodeTests" */;
+			buildPhases = (
+				C0DE10000000000000000005 /* Sources */,
+				C0DE10000000000000000003 /* Frameworks */,
+				C0DE10000000000000000004 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C0DE1000000000000000000B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				C0DE10000000000000000001 /* CodeTests */,
+			);
+			name = CodeTests;
+			packageProductDependencies = (
+			);
+			productName = CodeTests;
+			productReference = C0DE10000000000000000002 /* CodeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		FFDE5E2C2F82ADA3008C9D62 /* Code */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = FFDE5E382F82ADA4008C9D62 /* Build configuration list for PBXNativeTarget "Code" */;
@@ -80,6 +118,10 @@
 				LastSwiftUpdateCheck = 2640;
 				LastUpgradeCheck = 2640;
 				TargetAttributes = {
+					C0DE10000000000000000006 = {
+						CreatedOnToolsVersion = 26.4;
+						TestTargetID = FFDE5E2C2F82ADA3008C9D62;
+					};
 					FFDE5E2C2F82ADA3008C9D62 = {
 						CreatedOnToolsVersion = 26.4;
 					};
@@ -100,11 +142,19 @@
 			projectRoot = "";
 			targets = (
 				FFDE5E2C2F82ADA3008C9D62 /* Code */,
+				C0DE10000000000000000006 /* CodeTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		C0DE10000000000000000004 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FFDE5E2B2F82ADA3008C9D62 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -115,6 +165,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		C0DE10000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FFDE5E292F82ADA3008C9D62 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -124,7 +181,77 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXContainerItemProxy section */
+		C0DE1000000000000000000A /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FFDE5E252F82ADA2008C9D62 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FFDE5E2C2F82ADA3008C9D62;
+			remoteInfo = Code;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		C0DE1000000000000000000B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FFDE5E2C2F82ADA3008C9D62 /* Code */;
+			targetProxy = C0DE1000000000000000000A /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		C0DE10000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7GK58M2353;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.georgebabichev.CodeTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_MEMORY_SAFETY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Code";
+			};
+			name = Debug;
+		};
+		C0DE10000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7GK58M2353;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.georgebabichev.CodeTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_STRICT_MEMORY_SAFETY = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Code.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Code";
+			};
+			name = Release;
+		};
 		FFDE5E362F82ADA4008C9D62 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -316,6 +443,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		C0DE10000000000000000009 /* Build configuration list for PBXNativeTarget "CodeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C0DE10000000000000000007 /* Debug */,
+				C0DE10000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		FFDE5E282F82ADA2008C9D62 /* Build configuration list for PBXProject "Code" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

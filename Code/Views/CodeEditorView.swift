@@ -196,12 +196,10 @@ struct CodeEditorView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 14, height: 16)
         textView.allowsUndo = true
-        textView.autoresizingMask = [.width]
-        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.autoresizingMask = []
         textView.isVerticallyResizable = true
         textView.string = text
         let documentView = PaddedEditorDocumentView(textView: textView)
-        documentView.translatesAutoresizingMaskIntoConstraints = false
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -364,6 +362,9 @@ struct CodeEditorView: NSViewRepresentable {
             gutterView.textView = textView
             gutterView.rebuildLineIndex(for: textView.string as NSString)
             completionController.attach(to: containerView)
+            containerView.onLayout = { [weak self] in
+                self?.handleContainerLayout()
+            }
 
             if let lineClickableTextView = textView as? LineClickableTextView {
                 ActiveEditorTextViewRegistry.shared.track(lineClickableTextView)
@@ -517,7 +518,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             if isWordWrapEnabled {
                 textView.isHorizontallyResizable = false
-                textView.autoresizingMask = [.width]
+                textView.autoresizingMask = []
                 textView.minSize = NSSize(width: 0, height: 0)
                 textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = true
@@ -527,7 +528,7 @@ struct CodeEditorView: NSViewRepresentable {
                 scrollView?.hasHorizontalScroller = false
             } else {
                 textView.isHorizontallyResizable = true
-                textView.autoresizingMask = [.width]
+                textView.autoresizingMask = []
                 textView.minSize = NSSize(width: 0, height: 0)
                 textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = false
@@ -605,7 +606,24 @@ struct CodeEditorView: NSViewRepresentable {
 
         private func updateDocumentLayout() {
             guard let scrollView, let documentView else { return }
+            if isWordWrapEnabled,
+               let textView = textView as? LineClickableTextView,
+               let textContainer = unsafe textView.textContainer {
+                let width = max(scrollView.contentSize.width, 0)
+                if abs(textView.frame.width - width) > 0.5 {
+                    textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+                    textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
+                    textView.sizeToFit()
+                }
+            }
             documentView.updateLayout(minimumSize: scrollView.contentSize)
+        }
+
+        private func handleContainerLayout() {
+            updateDocumentLayout()
+            unsafe textView?.layoutManager?.invalidateDisplay(forCharacterRange: NSRange(location: 0, length: unsafe textView?.textStorage?.length ?? 0))
+            textView?.needsDisplay = true
+            gutterView.needsDisplay = true
         }
 
         private func shouldDeferBindingSync(for textLength: Int) -> Bool {
@@ -1966,6 +1984,7 @@ final class EditorContainerView: NSView {
     private var gutterView: GutterView?
     private var scrollView: NSScrollView?
     private let completionPopupView = CompletionPopupView()
+    var onLayout: (() -> Void)?
 
     private var gutterWidth: CGFloat {
         max(minimumGutterWidth, gutterView?.preferredWidth ?? minimumGutterWidth)
@@ -1991,6 +2010,7 @@ final class EditorContainerView: NSView {
         gutterView.frame = NSRect(x: 0, y: 0, width: gutterWidth, height: bounds.height)
         scrollView.frame = NSRect(x: gutterWidth, y: 0, width: bounds.width - gutterWidth, height: bounds.height)
         completionPopupView.constrainFrame(to: bounds, minimumX: gutterWidth + 8)
+        onLayout?()
     }
 
     fileprivate func updateCompletionPopup(items: [CompletionItem], selectedIndex: Int, anchorRect: NSRect, placement: CompletionPopupPlacement, theme: CompletionPopupTheme) {
