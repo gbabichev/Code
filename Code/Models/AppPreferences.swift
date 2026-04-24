@@ -88,6 +88,7 @@ final class AppPreferences: ObservableObject {
     @Published var appTheme: AppTheme {
         didSet {
             userDefaults.set(appTheme.rawValue, forKey: Keys.appTheme)
+            applyAppAppearance()
         }
     }
 
@@ -256,6 +257,7 @@ final class AppPreferences: ObservableObject {
         userDefaults.set(isSyntaxHighlightingEnabled, forKey: Keys.isSyntaxHighlightingEnabled)
         userDefaults.set(recentItemLimit, forKey: Keys.recentItemLimit)
         persistRecentItems()
+        applyAppAppearance()
     }
 
     var selectedSkin: SkinDefinition {
@@ -406,6 +408,17 @@ final class AppPreferences: ObservableObject {
     func clearRecentItems() {
         recentItems.removeAll()
         persistRecentItems()
+    }
+
+    private func applyAppAppearance() {
+        switch appTheme {
+        case .system:
+            NSApplication.shared.appearance = nil
+        case .light:
+            NSApplication.shared.appearance = NSAppearance(named: .aqua)
+        case .dark:
+            NSApplication.shared.appearance = NSAppearance(named: .darkAqua)
+        }
     }
 
     private func reloadEditorFonts() {

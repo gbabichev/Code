@@ -237,7 +237,8 @@ struct CodeEditorView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 14, height: 16)
         textView.allowsUndo = true
-        textView.autoresizingMask = [.width]
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.autoresizingMask = []
         textView.isVerticallyResizable = true
         unsafe textView.layoutManager?.allowsNonContiguousLayout = true
         textView.string = text
@@ -538,7 +539,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             if isWordWrapEnabled {
                 textView.isHorizontallyResizable = false
-                textView.autoresizingMask = [.width]
+                textView.autoresizingMask = []
                 textView.minSize = NSSize(width: 0, height: 0)
                 textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = true
@@ -548,7 +549,7 @@ struct CodeEditorView: NSViewRepresentable {
                 scrollView?.hasHorizontalScroller = false
             } else {
                 textView.isHorizontallyResizable = true
-                textView.autoresizingMask = [.width]
+                textView.autoresizingMask = []
                 textView.minSize = NSSize(width: 0, height: 0)
                 textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = false

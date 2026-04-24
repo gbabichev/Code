@@ -33,7 +33,15 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: Binding(
             get: { preferences.isSidebarVisible ? .all : .detailOnly },
-            set: { preferences.isSidebarVisible = $0 != .detailOnly }
+            set: { newVisibility in
+                let isVisible = newVisibility != .detailOnly
+                guard preferences.isSidebarVisible != isVisible else { return }
+
+                DispatchQueue.main.async {
+                    guard preferences.isSidebarVisible != isVisible else { return }
+                    preferences.isSidebarVisible = isVisible
+                }
+            }
         )) {
             sidebar
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280)
@@ -67,7 +75,6 @@ struct ContentView: View {
                 .modifier(GlassStyleIfAvailable())
             }
         }
-        .preferredColorScheme(preferredColorScheme)
         .alert("Save Changes?", isPresented: pendingTabCloseBinding, presenting: workspace.pendingTabClose) { pending in
             Button("Save") {
                 Task {
@@ -910,16 +917,6 @@ struct ContentView: View {
         workspace.errorMessage ?? preferences.errorMessage ?? ""
     }
 
-    private var preferredColorScheme: ColorScheme? {
-        switch preferences.appTheme {
-        case .system:
-            nil
-        case .light:
-            .light
-        case .dark:
-            .dark
-        }
-    }
 }
 
 private struct SearchMatchSummary {
@@ -1221,7 +1218,7 @@ private struct SettingsPopoverView: View {
                 caption: "Window-wide theme and color presentation"
             ) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker("Theme", selection: $preferences.appTheme) {
+                    Picker("Theme", selection: appThemeBinding) {
                         ForEach(AppTheme.allCases) { theme in
                             Text(theme.title).tag(theme)
                         }
@@ -1370,6 +1367,20 @@ private struct SettingsPopoverView: View {
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
+        )
+    }
+
+    private var appThemeBinding: Binding<AppTheme> {
+        Binding(
+            get: { preferences.appTheme },
+            set: { newTheme in
+                guard preferences.appTheme.rawValue != newTheme.rawValue else { return }
+
+                DispatchQueue.main.async {
+                    guard preferences.appTheme.rawValue != newTheme.rawValue else { return }
+                    preferences.appTheme = newTheme
+                }
+            }
         )
     }
 
