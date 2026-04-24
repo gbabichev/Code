@@ -195,8 +195,6 @@ private struct GutterLineIndex {
 }
 
 struct CodeEditorView: NSViewRepresentable {
-    static let largeFileWordWrapThreshold = 100_000
-
     @Binding var text: String
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
@@ -227,7 +225,7 @@ struct CodeEditorView: NSViewRepresentable {
         let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
         let container = EditorContainerView()
         let textView = LineClickableTextView()
-        let effectiveWordWrapEnabled = Self.effectiveWordWrapEnabled(requested: isWordWrapEnabled, textLength: (text as NSString).length)
+        let effectiveWordWrapEnabled = isWordWrapEnabled
 
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
@@ -287,7 +285,7 @@ struct CodeEditorView: NSViewRepresentable {
 
     func updateNSView(_ container: EditorContainerView, context: Context) {
         let updateStartedAt = CFAbsoluteTimeGetCurrent()
-        let effectiveWordWrapEnabled = Self.effectiveWordWrapEnabled(requested: isWordWrapEnabled, textLength: (text as NSString).length)
+        let effectiveWordWrapEnabled = isWordWrapEnabled
         let didLanguageChange = context.coordinator.language != language
         let didSkinChange = context.coordinator.skin != skin
         let didFontChange = context.coordinator.editorFont.fontName != editorFont.fontName
@@ -335,10 +333,6 @@ struct CodeEditorView: NSViewRepresentable {
         if didLanguageChange || didSkinChange || didFontChange || didTextChange || didSyntaxHighlightingChange || context.coordinator.requiresHighlightRefresh {
             context.coordinator.applyHighlighting()
         }
-    }
-
-    private static func effectiveWordWrapEnabled(requested: Bool, textLength: Int) -> Bool {
-        requested && textLength <= largeFileWordWrapThreshold
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -582,6 +576,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         func configureLayout(isWordWrapEnabled: Bool) {
+            let startedAt = CFAbsoluteTimeGetCurrent()
             guard let textView = textView as? LineClickableTextView,
                   let textContainer = unsafe textView.textContainer,
                   let layoutManager = unsafe textView.layoutManager else { return }
@@ -611,8 +606,20 @@ struct CodeEditorView: NSViewRepresentable {
                 scrollView?.hasHorizontalScroller = true
             }
 
+            let ensureLayoutStartedAt = CFAbsoluteTimeGetCurrent()
             layoutManager.ensureLayout(for: textContainer)
+            EditorActivityTrace.record(
+                "WordWrap.configureLayout.ensureLayout",
+                details: "wordWrap=\(isWordWrapEnabled) textLength=\(unsafe textView.textStorage?.length ?? -1) container=\(editorPaddingTraceNumber(textContainer.containerSize.width))x\(editorPaddingTraceNumber(textContainer.containerSize.height))",
+                duration: CFAbsoluteTimeGetCurrent() - ensureLayoutStartedAt
+            )
+            let sizeToFitStartedAt = CFAbsoluteTimeGetCurrent()
             textView.sizeToFit()
+            EditorActivityTrace.record(
+                "WordWrap.configureLayout.sizeToFit",
+                details: "wordWrap=\(isWordWrapEnabled) frame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height))",
+                duration: CFAbsoluteTimeGetCurrent() - sizeToFitStartedAt
+            )
 
             let minimumWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
             let minimumHeight = max((scrollView?.contentSize.height ?? textView.bounds.height), 0)
@@ -625,6 +632,11 @@ struct CodeEditorView: NSViewRepresentable {
             updateDocumentLayout()
             logPaddingLayout(reason: "configureLayout", textView: textView)
             textView.needsDisplay = true
+            EditorActivityTrace.record(
+                "WordWrap.configureLayout",
+                details: "wordWrap=\(isWordWrapEnabled) textLength=\(unsafe textView.textStorage?.length ?? -1) frame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height)) contentSize=\(editorPaddingTraceNumber(scrollView?.contentSize.width ?? 0))x\(editorPaddingTraceNumber(scrollView?.contentSize.height ?? 0))",
+                duration: CFAbsoluteTimeGetCurrent() - startedAt
+            )
         }
 
         func applyTheme(_ theme: SkinTheme) {
@@ -700,9 +712,21 @@ struct CodeEditorView: NSViewRepresentable {
                let textContainer = unsafe textView.textContainer {
                 let width = max(scrollView.contentSize.width, 0)
                 if abs(textView.frame.width - width) > 0.5 {
+                    let wrapResizeStartedAt = CFAbsoluteTimeGetCurrent()
                     textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
                     textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
+                    let sizeToFitStartedAt = CFAbsoluteTimeGetCurrent()
                     textView.sizeToFit()
+                    EditorActivityTrace.record(
+                        "WordWrap.updateDocumentLayout.sizeToFit",
+                        details: "width=\(editorPaddingTraceNumber(width)) frame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height))",
+                        duration: CFAbsoluteTimeGetCurrent() - sizeToFitStartedAt
+                    )
+                    EditorActivityTrace.record(
+                        "WordWrap.updateDocumentLayout.widthChange",
+                        details: "targetWidth=\(editorPaddingTraceNumber(width)) frame=\(editorPaddingTraceNumber(textView.frame.width))x\(editorPaddingTraceNumber(textView.frame.height))",
+                        duration: CFAbsoluteTimeGetCurrent() - wrapResizeStartedAt
+                    )
                 }
             }
             documentView.updateLayout(minimumSize: scrollView.contentSize)
