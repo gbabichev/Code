@@ -984,16 +984,28 @@ private final class WindowCloseInterceptingView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        guard unsafe self.window != nil else {
+            detachFromObservedWindow()
+            return
+        }
         attachIfNeeded()
+    }
+
+    deinit {
+        MainActor.assumeIsolated {
+            detachFromObservedWindow()
+        }
     }
 
     func attachIfNeeded() {
         guard let window = unsafe self.window else { return }
         guard observedWindow !== window else { return }
 
-        detachCommandWMonitor()
+        detachFromObservedWindow()
         observedWindow = window
-        unsafe delegateProxy.originalDelegate = window.delegate
+        if window.delegate !== delegateProxy {
+            unsafe delegateProxy.originalDelegate = window.delegate
+        }
         delegateProxy.shouldAllowWindowClose = { [weak self] _ in
             guard let self, let workspace = self.workspace else { return true }
 
@@ -1019,6 +1031,15 @@ private final class WindowCloseInterceptingView: NSView {
         }
     }
 
+    private func detachFromObservedWindow() {
+        detachCommandWMonitor()
+        if let observedWindow, observedWindow.delegate === delegateProxy {
+            unsafe observedWindow.delegate = delegateProxy.originalDelegate
+        }
+        delegateProxy.reset()
+        observedWindow = nil
+    }
+
     private func detachCommandWMonitor() {
         if let commandWMonitor {
             NSEvent.removeMonitor(commandWMonitor)
@@ -1033,7 +1054,7 @@ private final class WindowCloseInterceptingView: NSView {
 }
 
 private final class WindowCloseDelegateProxy: NSObject, NSWindowDelegate {
-    nonisolated(unsafe) weak var originalDelegate: (NSObjectProtocol & NSWindowDelegate)?
+    nonisolated(unsafe) var originalDelegate: (NSObjectProtocol & NSWindowDelegate)?
     var shouldAllowWindowClose: ((NSWindow) -> Bool)?
     private var shouldBypassNextClose = false
 
@@ -1070,6 +1091,12 @@ private final class WindowCloseDelegateProxy: NSObject, NSWindowDelegate {
                 window.close()
             }
         }
+    }
+
+    func reset() {
+        unsafe originalDelegate = nil
+        shouldAllowWindowClose = nil
+        shouldBypassNextClose = false
     }
 }
 

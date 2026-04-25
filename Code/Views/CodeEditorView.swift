@@ -51,6 +51,7 @@ final class ActiveEditorTextViewRegistry {
 
 private struct GutterLineIndex {
     private var lineStarts: [Int] = [0]
+    private var lineLengths: [Int] = [0]
     private var maxLineLength = 0
 
     var lineCount: Int {
@@ -63,19 +64,26 @@ private struct GutterLineIndex {
 
     mutating func rebuild(with text: NSString) {
         lineStarts = [0]
+        lineLengths = []
         maxLineLength = 0
-        guard text.length > 0 else { return }
+        guard text.length > 0 else {
+            lineLengths = [0]
+            return
+        }
 
         var location = 0
         while location < text.length {
             var lineEnd = 0
             var contentsEnd = 0
             unsafe text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
-            maxLineLength = max(maxLineLength, max(contentsEnd - location, 0))
+            let lineLength = max(contentsEnd - location, 0)
+            lineLengths.append(lineLength)
+            maxLineLength = max(maxLineLength, lineLength)
 
             if lineEnd >= text.length {
                 if lineEnd > contentsEnd {
                     lineStarts.append(text.length)
+                    lineLengths.append(0)
                 }
                 break
             }
@@ -86,6 +94,7 @@ private struct GutterLineIndex {
     }
 
     mutating func applyEdit(range: NSRange, replacement: NSString) {
+        lineLengths = []
         let lowerBound = upperBound(of: range.location)
         let upperBound = upperBound(of: NSMaxRange(range))
         if lowerBound < upperBound {
@@ -115,6 +124,12 @@ private struct GutterLineIndex {
     func estimatedVisualLineCount(charactersPerLine: Int, textLength: Int) -> Int {
         let charactersPerLine = max(charactersPerLine, 1)
         guard textLength > 0 else { return 1 }
+
+        if lineLengths.count == lineStarts.count {
+            return lineLengths.reduce(0) { count, lineLength in
+                count + max(Int(ceil(Double(max(lineLength, 1)) / Double(charactersPerLine))), 1)
+            }
+        }
 
         var count = 0
         for index in lineStarts.indices {
@@ -237,7 +252,8 @@ struct CodeEditorView: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 14, height: 16)
         textView.allowsUndo = true
-        textView.autoresizingMask = [.width]
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.autoresizingMask = []
         textView.isVerticallyResizable = true
         unsafe textView.layoutManager?.allowsNonContiguousLayout = true
         textView.string = text
@@ -303,7 +319,7 @@ struct CodeEditorView: NSViewRepresentable {
             context.coordinator.applyTheme(theme)
         }
 
-        if didWordWrapChange {
+        if didWordWrapChange || didFontChange {
             context.coordinator.configureLayout(isWordWrapEnabled: effectiveWordWrapEnabled)
         }
         if didAutocompleteModeChange {
@@ -369,6 +385,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingEditedRange: NSRange?
         private var pendingTextEdit: (range: NSRange, replacement: NSString)?
         private var isUpdatingDocumentLayout = false
+        private var exactLayoutMeasurementWorkItem: DispatchWorkItem?
         private var cachedSyntaxHighlighter: SyntaxHighlighting?
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
         private let completionController = CompletionController()
@@ -483,7 +500,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
             gutterView.needsDisplay = true
-            updateDocumentLayout()
+            updateDocumentLayout(measureTextView: true)
         }
 
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
@@ -538,17 +555,17 @@ struct CodeEditorView: NSViewRepresentable {
 
             if isWordWrapEnabled {
                 textView.isHorizontallyResizable = false
-                textView.autoresizingMask = [.width]
+                textView.autoresizingMask = []
                 textView.minSize = NSSize(width: 0, height: 0)
                 textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = true
                 let availableWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
                 textContainer.containerSize = NSSize(width: availableWidth, height: CGFloat.greatestFiniteMagnitude)
-                textView.frame.size.width = availableWidth
+                documentView?.updateTextViewSize(NSSize(width: availableWidth, height: textView.frame.height))
                 scrollView?.hasHorizontalScroller = false
             } else {
                 textView.isHorizontallyResizable = true
-                textView.autoresizingMask = [.width]
+                textView.autoresizingMask = []
                 textView.minSize = NSSize(width: 0, height: 0)
                 textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
                 textContainer.widthTracksTextView = false
@@ -558,23 +575,11 @@ struct CodeEditorView: NSViewRepresentable {
 
             let minimumWidth = max((scrollView?.contentSize.width ?? textView.bounds.width), 0)
             let minimumHeight = max((scrollView?.contentSize.height ?? textView.bounds.height), 0)
-            if shouldUseEstimatedLayout(for: textView) {
-                applyEstimatedTextViewSize(minimumSize: NSSize(width: minimumWidth, height: minimumHeight))
-                updateDocumentLayout()
-                textView.needsDisplay = true
-                return
-            }
-
-            layoutManager.ensureLayout(for: textContainer)
-            textView.sizeToFit()
-
-            if textView.frame.width < minimumWidth {
-                textView.frame.size.width = minimumWidth
-            }
-            if textView.frame.height < minimumHeight {
-                textView.frame.size.height = minimumHeight
-            }
+            applyContentTextViewSize(minimumSize: NSSize(width: minimumWidth, height: minimumHeight))
             updateDocumentLayout()
+            if shouldUseFastLayout(for: textView) {
+                scheduleExactLayoutMeasurement(after: 0.05)
+            }
             textView.needsDisplay = true
         }
 
@@ -626,12 +631,12 @@ struct CodeEditorView: NSViewRepresentable {
             hasUnsyncedBindingText = false
             textView.string = text
             gutterView.rebuildLineIndex(for: text as NSString)
-            updateDocumentLayout()
+            updateDocumentLayout(measureTextView: true)
             requiresHighlightRefresh = true
             return true
         }
 
-        private func updateDocumentLayout() {
+        private func updateDocumentLayout(measureTextView: Bool = false) {
             guard !isUpdatingDocumentLayout else {
                 return
             }
@@ -641,64 +646,136 @@ struct CodeEditorView: NSViewRepresentable {
             guard let scrollView,
                   let documentView,
                   let textView = textView as? LineClickableTextView else { return }
-            let shouldUseEstimatedLayout = shouldUseEstimatedLayout(for: textView)
+            var shouldMeasureTextView = measureTextView
             if isWordWrapEnabled,
                let textContainer = unsafe textView.textContainer {
                 let width = max(scrollView.contentSize.width, 0)
                 if abs(textView.frame.width - width) > 0.5 {
                     textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
-                    textView.setFrameSize(NSSize(width: width, height: textView.frame.height))
-                    if shouldUseEstimatedLayout {
-                        applyEstimatedTextViewSize(minimumSize: scrollView.contentSize)
-                    } else {
-                        textView.sizeToFit()
-                    }
+                    documentView.updateTextViewSize(NSSize(width: width, height: textView.frame.height))
+                    shouldMeasureTextView = true
                 }
             }
-            if shouldUseEstimatedLayout {
-                applyEstimatedTextViewSize(minimumSize: scrollView.contentSize)
+            if shouldMeasureTextView {
+                applyContentTextViewSize(minimumSize: scrollView.contentSize)
+                if shouldUseFastLayout(for: textView) {
+                    scheduleExactLayoutMeasurement()
+                }
             }
             documentView.updateLayout(minimumSize: scrollView.contentSize)
         }
 
-        private func shouldUseEstimatedLayout(for textView: NSTextView) -> Bool {
+        private func applyContentTextViewSize(minimumSize: NSSize) {
+            guard let textView else { return }
+            if shouldUseFastLayout(for: textView) {
+                applyFastTextViewSize(minimumSize: minimumSize)
+            } else {
+                applyMeasuredTextViewSize(minimumSize: minimumSize)
+            }
+        }
+
+        private func shouldUseFastLayout(for textView: NSTextView) -> Bool {
             (unsafe textView.textStorage?.length ?? 0) > Self.largeLayoutTextLengthThreshold
         }
 
-        private func applyEstimatedTextViewSize(minimumSize: NSSize) {
+        private func applyFastTextViewSize(minimumSize: NSSize) {
             guard let textView = textView as? LineClickableTextView,
-                  let layoutManager = unsafe textView.layoutManager else { return }
+                  let layoutManager = unsafe textView.layoutManager,
+                  let textContainer = unsafe textView.textContainer else { return }
 
             let font = textView.font ?? NSFont.systemFont(ofSize: 12)
             let lineHeight = max(layoutManager.defaultLineHeight(for: font), 1)
-            let textLength = unsafe textView.textStorage?.length ?? 0
-            let horizontalInset = textView.textContainerInset.width * 2
+            let characterWidth = self.characterWidth(for: textView)
             let verticalInset = textView.textContainerInset.height * 2
-            let contentWidth = max(minimumSize.width - horizontalInset, 1)
-            let characterWidth = max(("M" as NSString).size(withAttributes: [.font: font]).width, 1)
-            let estimatedWidth: CGFloat
-            let estimatedLineCount: Int
+            let horizontalInset = textView.textContainerInset.width * 2
+            let textLength = unsafe textView.textStorage?.length ?? 0
+            let measuredWidth: CGFloat
+            let visualLineCount: Int
 
             if isWordWrapEnabled {
-                estimatedWidth = minimumSize.width
-                let charactersPerLine = max(Int(contentWidth / characterWidth), 1)
-                estimatedLineCount = gutterView.estimatedVisualLineCount(charactersPerLine: charactersPerLine, textLength: textLength)
+                let containerWidth = textContainer.containerSize.width.isFinite && textContainer.containerSize.width > 1
+                    ? textContainer.containerSize.width
+                    : max(minimumSize.width, textView.bounds.width, 800)
+                let wrappingWidth = max(containerWidth - textContainer.lineFragmentPadding * 2, 1)
+                let charactersPerLine = max(Int(floor(wrappingWidth / characterWidth)), 1)
+                measuredWidth = minimumSize.width
+                visualLineCount = gutterView.estimatedVisualLineCount(charactersPerLine: charactersPerLine, textLength: textLength)
             } else {
-                estimatedWidth = max(
+                measuredWidth = max(
                     minimumSize.width,
-                    CGFloat(gutterView.maximumLineLength) * characterWidth + horizontalInset + 32
+                    CGFloat(gutterView.maximumLineLength) * characterWidth + horizontalInset + textContainer.lineFragmentPadding * 2 + 32
                 )
-                estimatedLineCount = gutterView.lineCount
+                visualLineCount = gutterView.lineCount
             }
 
-            let estimatedHeight = CGFloat(max(estimatedLineCount, 1)) * lineHeight + verticalInset
             let nextSize = NSSize(
-                width: max(estimatedWidth, minimumSize.width),
-                height: max(estimatedHeight, minimumSize.height)
+                width: ceil(max(measuredWidth, minimumSize.width)),
+                height: ceil(max(CGFloat(max(visualLineCount, 1)) * lineHeight + verticalInset, minimumSize.height))
             )
             if abs(textView.frame.width - nextSize.width) > 0.5 || abs(textView.frame.height - nextSize.height) > 0.5 {
-                textView.setFrameSize(nextSize)
+                documentView?.updateTextViewSize(nextSize) ?? textView.setFrameSize(nextSize)
             }
+        }
+
+        private func applyMeasuredTextViewSize(minimumSize: NSSize) {
+            guard let textView = textView as? LineClickableTextView,
+                  let layoutManager = unsafe textView.layoutManager,
+                  let textContainer = unsafe textView.textContainer else { return }
+
+            let horizontalInset = textView.textContainerInset.width * 2
+            let verticalInset = textView.textContainerInset.height * 2
+            layoutManager.ensureLayout(for: textContainer)
+            let usedRect = layoutManager.usedRect(for: textContainer)
+            let measuredWidth = isWordWrapEnabled
+                ? minimumSize.width
+                : max(
+                    minimumSize.width,
+                    CGFloat(gutterView.maximumLineLength) * characterWidth(for: textView) + horizontalInset + textContainer.lineFragmentPadding * 2 + 32
+                )
+            let measuredHeight = usedRect.maxY + verticalInset
+            let nextSize = NSSize(
+                width: ceil(max(measuredWidth, minimumSize.width)),
+                height: ceil(max(measuredHeight, minimumSize.height))
+            )
+            if abs(textView.frame.width - nextSize.width) > 0.5 || abs(textView.frame.height - nextSize.height) > 0.5 {
+                documentView?.updateTextViewSize(nextSize) ?? textView.setFrameSize(nextSize)
+            }
+        }
+
+        private func characterWidth(for textView: NSTextView) -> CGFloat {
+            let font = textView.font ?? NSFont.systemFont(ofSize: 12)
+            return max(("M" as NSString).size(withAttributes: [.font: font]).width, 1)
+        }
+
+        private func scheduleExactLayoutMeasurement(after delay: TimeInterval = 0.2) {
+            exactLayoutMeasurementWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.performExactLayoutMeasurement()
+            }
+            exactLayoutMeasurementWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+
+        private func performExactLayoutMeasurement() {
+            exactLayoutMeasurementWorkItem = nil
+            guard !isUpdatingDocumentLayout else {
+                scheduleExactLayoutMeasurement()
+                return
+            }
+            isUpdatingDocumentLayout = true
+            defer { isUpdatingDocumentLayout = false }
+
+            guard let scrollView,
+                  let documentView,
+                  let textView = textView as? LineClickableTextView,
+                  shouldUseFastLayout(for: textView) else { return }
+            if isWordWrapEnabled, scrollView.contentSize.width <= 1 {
+                scheduleExactLayoutMeasurement(after: 0.05)
+                return
+            }
+
+            applyMeasuredTextViewSize(minimumSize: scrollView.contentSize)
+            documentView.updateLayout(minimumSize: scrollView.contentSize)
         }
 
         @objc
@@ -807,10 +884,11 @@ struct CodeEditorView: NSViewRepresentable {
                 textView.needsDisplay = true
             }
 
+            let shouldMeasureLayoutAfterHighlighting = requestedHighlightRange == nil
             gutterView.needsDisplay = true
-            updateDocumentLayout()
+            updateDocumentLayout(measureTextView: shouldMeasureLayoutAfterHighlighting)
             DispatchQueue.main.async { [weak self] in
-                self?.updateDocumentLayout()
+                self?.updateDocumentLayout(measureTextView: shouldMeasureLayoutAfterHighlighting)
             }
             isApplyingHighlighting = false
             requiresHighlightRefresh = false
@@ -1883,6 +1961,9 @@ final class LineClickableTextView: NSTextView {
 
 final class PaddedEditorDocumentView: NSView {
     private weak var textView: LineClickableTextView?
+    private var textViewWidthConstraint: NSLayoutConstraint?
+    private var textViewHeightConstraint: NSLayoutConstraint?
+    private var intendedTextViewSize: NSSize = .zero
     private var lastMinimumSize: NSSize = .zero
     private var isUpdatingLayout = false
     private var shouldRequestInitialFocus = false
@@ -1911,6 +1992,18 @@ final class PaddedEditorDocumentView: NSView {
         self.textView = textView
         super.init(frame: .zero)
         addSubview(textView)
+        let leadingConstraint = textView.leadingAnchor.constraint(equalTo: leadingAnchor)
+        let topConstraint = textView.topAnchor.constraint(equalTo: topAnchor)
+        let widthConstraint = textView.widthAnchor.constraint(equalToConstant: max(textView.frame.width, 0))
+        let heightConstraint = textView.heightAnchor.constraint(equalToConstant: max(textView.frame.height, 0))
+        textViewWidthConstraint = widthConstraint
+        textViewHeightConstraint = heightConstraint
+        NSLayoutConstraint.activate([
+            leadingConstraint,
+            topConstraint,
+            widthConstraint,
+            heightConstraint
+        ])
     }
 
     required init?(coder: NSCoder) {
@@ -1955,21 +2048,47 @@ final class PaddedEditorDocumentView: NSView {
         lastMinimumSize = minimumSize
         guard let textView else { return }
 
-        if textView.frame.origin != .zero {
-            textView.setFrameOrigin(.zero)
-        }
-        if textView.frame.width < minimumSize.width {
-            textView.setFrameSize(NSSize(width: minimumSize.width, height: textView.frame.height))
-        }
+        let currentTextSize = intendedTextViewSize == .zero ? textView.frame.size : intendedTextViewSize
+        let textSize = NSSize(
+            width: max(currentTextSize.width, minimumSize.width),
+            height: max(currentTextSize.height, 0)
+        )
+        updateTextViewSize(textSize)
 
         let newSize = NSSize(
-            width: max(textView.frame.width, minimumSize.width),
-            height: max(textView.frame.height + bottomPadding, minimumSize.height)
+            width: textSize.width,
+            height: max(textSize.height + bottomPadding, minimumSize.height)
         )
         if abs(frame.width - newSize.width) > 0.5 || abs(frame.height - newSize.height) > 0.5 {
             setFrameSize(newSize)
         }
         needsDisplay = true
+    }
+
+    func updateTextViewSize(_ size: NSSize) {
+        guard let textView else { return }
+        let textSize = NSSize(width: max(size.width, 0), height: max(size.height, 0))
+        intendedTextViewSize = textSize
+        if textView.frame.origin != .zero || abs(textView.frame.width - textSize.width) > 0.5 || abs(textView.frame.height - textSize.height) > 0.5 {
+            textView.frame = NSRect(origin: .zero, size: textSize)
+        }
+        updateTextViewConstraints(size: textSize)
+    }
+
+    private func updateTextViewConstraints(size: NSSize) {
+        var didChange = false
+        if let textViewWidthConstraint, abs(textViewWidthConstraint.constant - size.width) > 0.5 {
+            textViewWidthConstraint.constant = size.width
+            didChange = true
+        }
+        if let textViewHeightConstraint, abs(textViewHeightConstraint.constant - size.height) > 0.5 {
+            textViewHeightConstraint.constant = size.height
+            didChange = true
+        }
+        if didChange {
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+        }
     }
 
     private func focusEditorIfRequested() {
