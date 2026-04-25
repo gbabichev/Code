@@ -393,6 +393,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var exactLayoutMeasurementWorkItem: DispatchWorkItem?
         private var scrollPositionRestoreWorkItems: [DispatchWorkItem] = []
         private var isRestoringScrollPosition = false
+        private var isInitialScrollPositionRestorePending = false
         private var cachedSyntaxHighlighter: SyntaxHighlighting?
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
         private let completionController = CompletionController()
@@ -427,7 +428,7 @@ struct CodeEditorView: NSViewRepresentable {
             gutterView.rebuildLineIndex(for: textView.string as NSString)
             completionController.attach(to: containerView)
             containerView.onLayout = { [weak self] in
-                self?.updateDocumentLayout()
+                self?.handleContainerLayout()
             }
 
             if let lineClickableTextView = textView as? LineClickableTextView {
@@ -677,6 +678,11 @@ struct CodeEditorView: NSViewRepresentable {
             documentView.updateLayout(minimumSize: scrollView.contentSize)
         }
 
+        private func handleContainerLayout() {
+            updateDocumentLayout()
+            restorePendingInitialScrollPositionIfNeeded()
+        }
+
         private func applyContentTextViewSize(minimumSize: NSSize) {
             guard let textView else { return }
             if shouldUseFastLayout(for: textView) {
@@ -788,20 +794,26 @@ struct CodeEditorView: NSViewRepresentable {
 
             applyMeasuredTextViewSize(minimumSize: scrollView.contentSize)
             documentView.updateLayout(minimumSize: scrollView.contentSize)
-            restoreInitialScrollPosition()
+            restoreCurrentScrollPositionAfterLayout()
         }
 
         func restoreInitialScrollPosition() {
             guard let position = scrollPosition.wrappedValue else { return }
+            isInitialScrollPositionRestorePending = true
             cancelScrollPositionRestores()
-            scheduleScrollPositionRestore(position, after: 0)
+            if restoreScrollPosition(position) {
+                isInitialScrollPositionRestorePending = false
+            }
             scheduleScrollPositionRestore(position, after: 0.05)
             scheduleScrollPositionRestore(position, after: 0.2)
         }
 
         private func scheduleScrollPositionRestore(_ position: EditorScrollPosition, after delay: TimeInterval) {
             let workItem = DispatchWorkItem { [weak self] in
-                self?.restoreScrollPosition(position)
+                guard let self else { return }
+                if self.restoreScrollPosition(position), self.isInitialScrollPositionRestorePending {
+                    self.isInitialScrollPositionRestorePending = false
+                }
             }
             scrollPositionRestoreWorkItems.append(workItem)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
@@ -812,11 +824,28 @@ struct CodeEditorView: NSViewRepresentable {
             scrollPositionRestoreWorkItems.removeAll()
         }
 
-        private func restoreScrollPosition(_ position: EditorScrollPosition) {
+        private func restorePendingInitialScrollPositionIfNeeded() {
+            guard isInitialScrollPositionRestorePending,
+                  let position = scrollPosition.wrappedValue,
+                  restoreScrollPosition(position) else { return }
+            isInitialScrollPositionRestorePending = false
+        }
+
+        private func restoreCurrentScrollPositionAfterLayout() {
+            guard let position = scrollPosition.wrappedValue else { return }
+            _ = restoreScrollPosition(position)
+        }
+
+        @discardableResult
+        private func restoreScrollPosition(_ position: EditorScrollPosition) -> Bool {
             guard let scrollView,
-                  let documentView = scrollView.documentView else { return }
+                  let documentView = scrollView.documentView else { return false }
 
             let clipSize = scrollView.contentView.bounds.size
+            guard clipSize.width > 1,
+                  clipSize.height > 1,
+                  documentView.frame.height > 1 else { return false }
+
             let maxX = max(documentView.frame.width - clipSize.width, 0)
             let maxY = max(documentView.frame.height - clipSize.height, 0)
             let restoredOrigin = NSPoint(
@@ -825,14 +854,26 @@ struct CodeEditorView: NSViewRepresentable {
             )
             let currentOrigin = scrollView.contentView.bounds.origin
             guard abs(currentOrigin.x - restoredOrigin.x) > 0.5 || abs(currentOrigin.y - restoredOrigin.y) > 0.5 else {
-                return
+                return true
             }
 
+            prepareVisibleLayout(at: restoredOrigin, clipSize: clipSize)
             isRestoringScrollPosition = true
             scrollView.contentView.scroll(to: restoredOrigin)
             scrollView.reflectScrolledClipView(scrollView.contentView)
             isRestoringScrollPosition = false
             gutterView.needsDisplay = true
+            return true
+        }
+
+        private func prepareVisibleLayout(at origin: NSPoint, clipSize: NSSize) {
+            guard let textView,
+                  let layoutManager = unsafe textView.layoutManager,
+                  let textContainer = unsafe textView.textContainer else { return }
+
+            let visibleRect = NSRect(origin: origin, size: clipSize)
+            layoutManager.ensureLayout(forBoundingRect: visibleRect, in: textContainer)
+            textView.setNeedsDisplay(visibleRect)
         }
 
         @objc
