@@ -17,7 +17,7 @@
 			containerPortal = FFDE5E252F82ADA2008C9D62 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = C0DEC1E00000000000000005;
-			remoteInfo = code;
+			remoteInfo = CodeCLI;
 		};
 		C0DE1000000000000000000A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -118,9 +118,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		C0DEC1E00000000000000005 /* code */ = {
+		C0DEC1E00000000000000005 /* CodeCLI */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = C0DEC1E00000000000000008 /* Build configuration list for PBXNativeTarget "code" */;
+			buildConfigurationList = C0DEC1E00000000000000008 /* Build configuration list for PBXNativeTarget "CodeCLI" */;
 			buildPhases = (
 				C0DEC1E00000000000000004 /* Sources */,
 				C0DEC1E00000000000000003 /* Frameworks */,
@@ -131,7 +131,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 			);
-			name = code;
+			name = CodeCLI;
 			packageProductDependencies = (
 			);
 			productName = code;
@@ -222,7 +222,7 @@
 			projectRoot = "";
 			targets = (
 				FFDE5E2C2F82ADA3008C9D62 /* Code */,
-				C0DEC1E00000000000000005 /* code */,
+				C0DEC1E00000000000000005 /* CodeCLI */,
 				C0DE10000000000000000006 /* CodeTests */,
 			);
 		};
@@ -273,7 +273,7 @@
 /* Begin PBXTargetDependency section */
 		C0DEC1E0000000000000000A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = C0DEC1E00000000000000005 /* code */;
+			target = C0DEC1E00000000000000005 /* CodeCLI */;
 			targetProxy = C0DEC1E00000000000000009 /* PBXContainerItemProxy */;
 		};
 		C0DE1000000000000000000B /* PBXTargetDependency */ = {
@@ -295,6 +295,7 @@
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_NAME = code;
 				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_STRICT_MEMORY_SAFETY = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -313,6 +314,7 @@
 				MARKETING_VERSION = 1.0.0;
 				PRODUCT_NAME = code;
 				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_STRICT_MEMORY_SAFETY = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -516,6 +518,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.georgebabichev.Code;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = NO;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -550,6 +553,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.georgebabichev.Code;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = NO;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -563,7 +567,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		C0DEC1E00000000000000008 /* Build configuration list for PBXNativeTarget "code" */ = {
+		C0DEC1E00000000000000008 /* Build configuration list for PBXNativeTarget "CodeCLI" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				C0DEC1E00000000000000006 /* Debug */,
