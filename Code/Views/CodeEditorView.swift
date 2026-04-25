@@ -203,6 +203,7 @@ private struct GutterLineIndex {
 
 struct CodeEditorView: NSViewRepresentable {
     @Binding var text: String
+    @Binding var scrollPosition: EditorScrollPosition?
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
     let skin: SkinDefinition
@@ -216,6 +217,7 @@ struct CodeEditorView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             textBinding: $text,
+            scrollPosition: $scrollPosition,
             language: language,
             skin: skin,
             indentWidth: indentWidth,
@@ -279,6 +281,7 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.applyTheme(theme)
         context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
         context.coordinator.configureLayout(isWordWrapEnabled: effectiveWordWrapEnabled)
+        context.coordinator.restoreInitialScrollPosition()
         documentView.requestInitialFocus()
         DispatchQueue.main.async {
             context.coordinator.enableNonContiguousLayout()
@@ -310,6 +313,7 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
         context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
         context.coordinator.textBinding = $text
+        context.coordinator.scrollPosition = $scrollPosition
         context.coordinator.editorFont = editorFont
         context.coordinator.editorSemiboldFont = editorSemiboldFont
         context.coordinator.onDidFocus = onDidFocus
@@ -361,6 +365,7 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         var textBinding: Binding<String>
+        var scrollPosition: Binding<EditorScrollPosition?>
         var language: EditorLanguage
         var skin: SkinDefinition
         var indentWidth: Int
@@ -386,12 +391,15 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingTextEdit: (range: NSRange, replacement: NSString)?
         private var isUpdatingDocumentLayout = false
         private var exactLayoutMeasurementWorkItem: DispatchWorkItem?
+        private var scrollPositionRestoreWorkItems: [DispatchWorkItem] = []
+        private var isRestoringScrollPosition = false
         private var cachedSyntaxHighlighter: SyntaxHighlighting?
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
         private let completionController = CompletionController()
 
-        init(textBinding: Binding<String>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
+        init(textBinding: Binding<String>, scrollPosition: Binding<EditorScrollPosition?>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
             self.textBinding = textBinding
+            self.scrollPosition = scrollPosition
             self.language = language
             self.skin = skin
             self.indentWidth = indentWidth
@@ -471,6 +479,10 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         deinit {
+            MainActor.assumeIsolated {
+                exactLayoutMeasurementWorkItem?.cancel()
+                cancelScrollPositionRestores()
+            }
             NotificationCenter.default.removeObserver(self)
         }
 
@@ -776,6 +788,51 @@ struct CodeEditorView: NSViewRepresentable {
 
             applyMeasuredTextViewSize(minimumSize: scrollView.contentSize)
             documentView.updateLayout(minimumSize: scrollView.contentSize)
+            restoreInitialScrollPosition()
+        }
+
+        func restoreInitialScrollPosition() {
+            guard let position = scrollPosition.wrappedValue else { return }
+            cancelScrollPositionRestores()
+            scheduleScrollPositionRestore(position, after: 0)
+            scheduleScrollPositionRestore(position, after: 0.05)
+            scheduleScrollPositionRestore(position, after: 0.2)
+        }
+
+        private func scheduleScrollPositionRestore(_ position: EditorScrollPosition, after delay: TimeInterval) {
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.restoreScrollPosition(position)
+            }
+            scrollPositionRestoreWorkItems.append(workItem)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+
+        private func cancelScrollPositionRestores() {
+            scrollPositionRestoreWorkItems.forEach { $0.cancel() }
+            scrollPositionRestoreWorkItems.removeAll()
+        }
+
+        private func restoreScrollPosition(_ position: EditorScrollPosition) {
+            guard let scrollView,
+                  let documentView = scrollView.documentView else { return }
+
+            let clipSize = scrollView.contentView.bounds.size
+            let maxX = max(documentView.frame.width - clipSize.width, 0)
+            let maxY = max(documentView.frame.height - clipSize.height, 0)
+            let restoredOrigin = NSPoint(
+                x: min(max(position.x, 0), maxX),
+                y: min(max(position.y, 0), maxY)
+            )
+            let currentOrigin = scrollView.contentView.bounds.origin
+            guard abs(currentOrigin.x - restoredOrigin.x) > 0.5 || abs(currentOrigin.y - restoredOrigin.y) > 0.5 else {
+                return
+            }
+
+            isRestoringScrollPosition = true
+            scrollView.contentView.scroll(to: restoredOrigin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            isRestoringScrollPosition = false
+            gutterView.needsDisplay = true
         }
 
         @objc
@@ -926,6 +983,13 @@ struct CodeEditorView: NSViewRepresentable {
             let origin = scrollView.contentView.bounds.origin
             let didChange = origin != gutterView.lastClipOrigin
             guard didChange else { return }
+            if !isRestoringScrollPosition {
+                let newPosition = EditorScrollPosition(origin)
+                let oldPosition = scrollPosition.wrappedValue
+                if abs((oldPosition?.x ?? -1) - newPosition.x) > 0.5 || abs((oldPosition?.y ?? -1) - newPosition.y) > 0.5 {
+                    scrollPosition.wrappedValue = newPosition
+                }
+            }
             gutterView.needsDisplay = true
             guard !isApplyingHighlighting, !isUpdatingDocumentLayout else { return }
             if completionController.isVisible {

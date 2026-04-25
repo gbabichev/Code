@@ -371,6 +371,7 @@ struct EditorTabSnapshot: Codable {
     let lineEnding: EditorLineEnding?
     let lastSavedEncoding: EditorTextEncoding?
     let lastSavedLineEnding: EditorLineEnding?
+    let scrollPosition: EditorScrollPosition?
     let content: String
     let isDirty: Bool
 
@@ -383,6 +384,7 @@ struct EditorTabSnapshot: Codable {
         lineEnding: EditorLineEnding? = nil,
         lastSavedEncoding: EditorTextEncoding? = nil,
         lastSavedLineEnding: EditorLineEnding? = nil,
+        scrollPosition: EditorScrollPosition? = nil,
         content: String,
         isDirty: Bool
     ) {
@@ -394,6 +396,7 @@ struct EditorTabSnapshot: Codable {
         self.lineEnding = lineEnding
         self.lastSavedEncoding = lastSavedEncoding
         self.lastSavedLineEnding = lastSavedLineEnding
+        self.scrollPosition = scrollPosition
         self.content = content
         self.isDirty = isDirty
     }
@@ -402,6 +405,25 @@ struct EditorTabSnapshot: Codable {
 extension EditorTabSnapshot {
     var isBlankUntitledTab: Bool {
         filePath == nil && !isDirty && content.isEmpty
+    }
+}
+
+struct EditorScrollPosition: Codable, Equatable {
+    var x: CGFloat
+    var y: CGFloat
+
+    init(x: CGFloat = 0, y: CGFloat = 0) {
+        self.x = x
+        self.y = y
+    }
+
+    init(_ point: NSPoint) {
+        self.x = point.x
+        self.y = point.y
+    }
+
+    var point: NSPoint {
+        NSPoint(x: x, y: y)
     }
 }
 
@@ -490,6 +512,7 @@ final class EditorTab: ObservableObject, Identifiable {
     @Published var languageOverride: EditorLanguage?
     @Published var textEncoding: EditorTextEncoding
     @Published var lineEnding: EditorLineEnding
+    var scrollPosition: EditorScrollPosition?
 
     // `content` is NOT @Published — we manually trigger objectWillChange
     // only when metadata changes so that typing doesn't rebuild the whole UI.
@@ -515,6 +538,7 @@ final class EditorTab: ObservableObject, Identifiable {
         lastSavedContent: String,
         lastSavedEncoding: EditorTextEncoding? = nil,
         lastSavedLineEnding: EditorLineEnding? = nil,
+        scrollPosition: EditorScrollPosition? = nil,
         isDirty: Bool
     ) {
         self.id = id
@@ -527,6 +551,7 @@ final class EditorTab: ObservableObject, Identifiable {
         self.lastSavedContent = lastSavedContent
         self.lastSavedEncoding = lastSavedEncoding ?? textEncoding
         self.lastSavedLineEnding = lastSavedLineEnding ?? lineEnding
+        self.scrollPosition = scrollPosition
         self.isDirty = isDirty
     }
 

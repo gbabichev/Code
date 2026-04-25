@@ -274,6 +274,7 @@ final class EditorWorkspace: ObservableObject {
             lastSavedContent: restoredState.lastSavedContent,
             lastSavedEncoding: restoredState.lastSavedEncoding,
             lastSavedLineEnding: restoredState.lastSavedLineEnding,
+            scrollPosition: restoredState.scrollPosition,
             isDirty: restoredState.isDirty
         )
 
@@ -729,6 +730,7 @@ final class EditorWorkspace: ObservableObject {
                     lineEnding: $0.lineEnding,
                     lastSavedEncoding: $0.lastSavedEncoding,
                     lastSavedLineEnding: $0.lastSavedLineEnding,
+                    scrollPosition: $0.scrollPosition,
                     content: ($0.fileURL != nil && !$0.isDirty) ? "" : $0.content,
                     isDirty: $0.isDirty
                 )
@@ -792,6 +794,7 @@ final class EditorWorkspace: ObservableObject {
                     lastSavedContent: diskContents.content,
                     lastSavedEncoding: item.isDirty ? diskContents.encoding : currentEncoding,
                     lastSavedLineEnding: item.isDirty ? diskContents.lineEnding : currentLineEnding,
+                    scrollPosition: item.scrollPosition,
                     isDirty: item.isDirty
                 )
                 attachObserver(to: tab)
@@ -810,6 +813,7 @@ final class EditorWorkspace: ObservableObject {
                 lastSavedContent: item.content,
                 lastSavedEncoding: item.lastSavedEncoding ?? item.encoding ?? .utf8,
                 lastSavedLineEnding: item.lastSavedLineEnding ?? item.lineEnding ?? .lf,
+                scrollPosition: item.scrollPosition,
                 isDirty: item.isDirty
             )
             attachObserver(to: tab)
@@ -891,6 +895,7 @@ final class EditorWorkspace: ObservableObject {
             lastSavedContent: fileContents.content,
             lastSavedEncoding: fileContents.encoding,
             lastSavedLineEnding: fileContents.lineEnding,
+            scrollPosition: closedState.scrollPosition,
             isDirty: false,
             lastKnownDiskState: try? diskState(for: fileURL),
             externalModificationVersion: nil
@@ -912,6 +917,7 @@ final class EditorWorkspace: ObservableObject {
                 lastSavedContent: shouldPreserveContent ? tab.lastSavedContent : "",
                 lastSavedEncoding: tab.lastSavedEncoding,
                 lastSavedLineEnding: tab.lastSavedLineEnding,
+                scrollPosition: tab.scrollPosition,
                 isDirty: tab.isDirty,
                 lastKnownDiskState: knownDiskStatesByTabID[id],
                 externalModificationVersion: externalModificationVersionByTabID[id]
@@ -929,6 +935,7 @@ final class EditorWorkspace: ObservableObject {
             lastSavedContent: shouldPreserveSavedContent ? tab.lastSavedContent : "",
             lastSavedEncoding: tab.lastSavedEncoding,
             lastSavedLineEnding: tab.lastSavedLineEnding,
+            scrollPosition: tab.scrollPosition,
             isDirty: false,
             lastKnownDiskState: knownDiskStatesByTabID[id],
             externalModificationVersion: externalModificationVersionByTabID[id]
@@ -1121,6 +1128,7 @@ private struct ClosedTabState {
     let lastSavedContent: String
     let lastSavedEncoding: EditorTextEncoding
     let lastSavedLineEnding: EditorLineEnding
+    let scrollPosition: EditorScrollPosition?
     let isDirty: Bool
     let lastKnownDiskState: FileDiskState?
     let externalModificationVersion: Int?

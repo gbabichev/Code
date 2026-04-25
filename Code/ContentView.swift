@@ -459,6 +459,13 @@ struct ContentView: View {
         )
     }
 
+    private func scrollPositionBinding(_ tab: EditorTab) -> Binding<EditorScrollPosition?> {
+        Binding(
+            get: { tab.scrollPosition },
+            set: { tab.scrollPosition = $0 }
+        )
+    }
+
     private func externalModificationBannerDismissedBinding(for tabID: EditorTab.ID) -> Binding<Bool> {
         Binding(
             get: {
@@ -493,6 +500,7 @@ struct ContentView: View {
                             title: primaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(primaryTab),
+                            scrollPosition: scrollPositionBinding(primaryTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
                             isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
                             skin: preferences.selectedSkin,
@@ -513,6 +521,7 @@ struct ContentView: View {
                             title: secondaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(secondaryTab),
+                            scrollPosition: scrollPositionBinding(secondaryTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
                             isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
                             skin: preferences.selectedSkin,
@@ -532,6 +541,7 @@ struct ContentView: View {
                         onExternalModificationRefresh: { workspace.requestRefreshFile(for: primaryTab.id) },
                         editorID: primaryTab.id,
                         text: selectedTabBinding(primaryTab),
+                        scrollPosition: scrollPositionBinding(primaryTab),
                         isWordWrapEnabled: preferences.isWordWrapEnabled,
                         isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
                         skin: preferences.selectedSkin,
@@ -931,6 +941,7 @@ private struct EditorAreaView: View {
     let onExternalModificationRefresh: () -> Void
     let editorID: EditorTab.ID
     let text: Binding<String>
+    let scrollPosition: Binding<EditorScrollPosition?>
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
     let skin: SkinDefinition
@@ -960,6 +971,7 @@ private struct EditorAreaView: View {
 
             CodeEditorView(
                 text: text,
+                scrollPosition: scrollPosition,
                 isWordWrapEnabled: isWordWrapEnabled,
                 isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
                 skin: skin,
@@ -1024,6 +1036,7 @@ private struct EditorSplitPaneView: View {
     let title: String
     let showsCloseButton: Bool
     let text: Binding<String>
+    let scrollPosition: Binding<EditorScrollPosition?>
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
     let skin: SkinDefinition
@@ -1080,6 +1093,7 @@ private struct EditorSplitPaneView: View {
                 onExternalModificationRefresh: onExternalModificationRefresh,
                 editorID: editorID,
                 text: text,
+                scrollPosition: scrollPosition,
                 isWordWrapEnabled: isWordWrapEnabled,
                 isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
                 skin: skin,
