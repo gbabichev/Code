@@ -218,8 +218,13 @@ private struct WorkspaceContentView: View {
     }
 
     private func openPendingExternalFiles() {
+        let folders = externalFileRouter.consumePendingFolders()
         let urls = externalFileRouter.consumePendingFiles()
-        guard !urls.isEmpty else { return }
+        guard !folders.isEmpty || !urls.isEmpty else { return }
+
+        for folderURL in folders {
+            workspace.setRootFolder(folderURL)
+        }
 
         for url in urls {
             workspace.openFile(url)
@@ -349,17 +354,21 @@ final class ExternalFileRouter: ObservableObject {
 
     @Published private(set) var pendingRequestID = UUID()
     private var pendingFiles: [URL] = []
+    private var pendingFolders: [URL] = []
 
     func enqueue(urls: [URL]) {
-        let fileURLs = urls.filter { $0.isFileURL && !$0.hasDirectoryPath }
-        guard !fileURLs.isEmpty else { return }
+        let fileURLs = urls.filter { $0.isFileURL }
+        let folders = fileURLs.filter(isDirectory)
+        let files = fileURLs.filter { !isDirectory($0) }
+        guard !files.isEmpty || !folders.isEmpty else { return }
 
-        pendingFiles.append(contentsOf: fileURLs)
+        pendingFiles.append(contentsOf: files)
+        pendingFolders.append(contentsOf: folders)
         pendingRequestID = UUID()
     }
 
     func hasPendingFiles() -> Bool {
-        !pendingFiles.isEmpty
+        !pendingFiles.isEmpty || !pendingFolders.isEmpty
     }
 
     @MainActor
@@ -376,6 +385,25 @@ final class ExternalFileRouter: ObservableObject {
         }
 
         return files
+    }
+
+    @MainActor
+    func consumePendingFolders() -> [URL] {
+        let folders = pendingFolders
+        pendingFolders.removeAll()
+
+        if !folders.isEmpty {
+            NSApp.activate(ignoringOtherApps: true)
+            if let window = NSApp.windows.first(where: { $0.isVisible }) {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+
+        return folders
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? url.hasDirectoryPath
     }
 }
 
@@ -509,6 +537,7 @@ final class WorkspacePersistenceRegistry: ObservableObject {
 private struct EditorCommands: Commands {
     @FocusedValue(\.activeEditorWorkspace) private var workspace
     @FocusedValue(\.activeEditorSearchController) private var searchController
+    @State private var isCommandLineToolInstalled = CommandLineToolInstaller.canRemoveInstalledTool
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var aboutController: AboutOverlayController
     @ObservedObject var settingsController: SettingsPopoverController
@@ -538,6 +567,20 @@ private struct EditorCommands: Commands {
         }
     }
 
+    private func refreshCommandLineToolState() {
+        isCommandLineToolInstalled = CommandLineToolInstaller.canRemoveInstalledTool
+    }
+
+    private func installCommandLineTool() {
+        CommandLineToolInstaller.installFromMenu()
+        refreshCommandLineToolState()
+    }
+
+    private func uninstallCommandLineTool() {
+        CommandLineToolInstaller.removeFromMenu()
+        refreshCommandLineToolState()
+    }
+
     var body: some Commands {
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") {
@@ -559,6 +602,22 @@ private struct EditorCommands: Commands {
                 Label("Check for Updates…", systemImage: "arrow.triangle.2.circlepath.circle")
             }
             .disabled(updateCenter.isChecking)
+
+            Divider()
+
+            if isCommandLineToolInstalled {
+                Button {
+                    uninstallCommandLineTool()
+                } label: {
+                    Label("Uninstall Command Line Tool…", systemImage: "trash")
+                }
+            } else {
+                Button {
+                    installCommandLineTool()
+                } label: {
+                    Label("Install Command Line Tool…", systemImage: "terminal")
+                }
+            }
         }
 
         CommandGroup(replacing: .newItem) {
