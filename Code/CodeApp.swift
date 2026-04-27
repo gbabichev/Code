@@ -572,13 +572,17 @@ private struct EditorCommands: Commands {
     }
 
     private func installCommandLineTool() {
-        CommandLineToolInstaller.installFromMenu()
-        refreshCommandLineToolState()
+        Task { @MainActor in
+            await CommandLineToolInstaller.installFromMenu()
+            refreshCommandLineToolState()
+        }
     }
 
     private func uninstallCommandLineTool() {
-        CommandLineToolInstaller.removeFromMenu()
-        refreshCommandLineToolState()
+        Task { @MainActor in
+            await CommandLineToolInstaller.removeFromMenu()
+            refreshCommandLineToolState()
+        }
     }
 
     var body: some Commands {

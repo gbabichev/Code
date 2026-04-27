@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 
 private let commandName = "code"
@@ -43,8 +44,80 @@ private func printUsage() {
 }
 
 private func appURLContainingThisTool() -> URL? {
-    let executablePath = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-    var cursor = executablePath.deletingLastPathComponent()
+    for executableURL in candidateExecutableURLs() {
+        if let appURL = appURLContainingExecutable(at: executableURL) {
+            return appURL
+        }
+    }
+
+    return nil
+}
+
+private func candidateExecutableURLs() -> [URL] {
+    var urls: [URL] = []
+
+    if let executableURL = currentProcessExecutableURL() {
+        urls.append(executableURL)
+    }
+
+    if let argumentURL = executableURL(fromArgument: CommandLine.arguments[0]) {
+        urls.append(argumentURL)
+    }
+
+    var seenPaths = Set<String>()
+    return urls.filter { url in
+        seenPaths.insert(url.path).inserted
+    }
+}
+
+private func currentProcessExecutableURL() -> URL? {
+    var length: UInt32 = 0
+    _ = unsafe _NSGetExecutablePath(nil, &length)
+    guard length > 0 else { return nil }
+
+    let buffer = UnsafeMutablePointer<CChar>.allocate(capacity: Int(length))
+    defer { unsafe buffer.deallocate() }
+
+    guard unsafe _NSGetExecutablePath(buffer, &length) == 0 else {
+        return nil
+    }
+
+    if let resolvedPath = unsafe realpath(buffer, nil) {
+        defer { unsafe free(resolvedPath) }
+        return URL(fileURLWithPath: unsafe String(cString: resolvedPath))
+    }
+
+    return URL(fileURLWithPath: unsafe String(cString: buffer))
+        .standardizedFileURL
+        .resolvingSymlinksInPath()
+}
+
+private func executableURL(fromArgument argument: String) -> URL? {
+    let expandedArgument = (argument as NSString).expandingTildeInPath
+    let executableURL: URL?
+
+    if expandedArgument.contains("/") {
+        if expandedArgument.hasPrefix("/") {
+            executableURL = URL(fileURLWithPath: expandedArgument)
+        } else {
+            executableURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent(expandedArgument)
+        }
+    } else {
+        executableURL = ProcessInfo.processInfo.environment["PATH"]?
+            .split(separator: ":")
+            .lazy
+            .map { URL(fileURLWithPath: String($0)).appendingPathComponent(expandedArgument) }
+            .first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    return executableURL?
+        .standardizedFileURL
+        .resolvingSymlinksInPath()
+}
+
+private func appURLContainingExecutable(at executableURL: URL) -> URL? {
+    var cursor = executableURL.deletingLastPathComponent()
 
     while cursor.path != "/" {
         if cursor.pathExtension == "app" {

@@ -23,6 +23,34 @@
          </BuildActionEntry>
          <BuildActionEntry
             buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "C0DE30000000000000000007"
+               BuildableName = "CodePrivilegedTool"
+               BlueprintName = "CodePrivilegedTool"
+               ReferencedContainer = "container:Code.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "C0DE40000000000000000007"
+               BuildableName = "CodeElevationRunner"
+               BlueprintName = "CodeElevationRunner"
+               ReferencedContainer = "container:Code.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
             buildForRunning = "NO"
             buildForProfiling = "NO"
             buildForArchiving = "NO"

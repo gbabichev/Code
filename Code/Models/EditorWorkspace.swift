@@ -609,25 +609,88 @@ final class EditorWorkspace: ObservableObject {
                 return
             }
 
-            try data.write(to: destinationURL, options: .atomic)
-            tab.fileURL = destinationURL
-            tab.customTitle = nil
-            tab.lastSavedContent = tab.content
-            tab.lastSavedEncoding = tab.textEncoding
-            tab.lastSavedLineEnding = tab.lineEnding
-            tab.refreshDirtyState()
-            preferences.recordRecentFile(destinationURL)
-            selectedFileID = destinationURL.path(percentEncoded: false)
-            recordKnownDiskState(for: tab.id, fileURL: destinationURL)
-            clearExternalModification(for: tab.id)
-            if let rootFolderURL,
-               destinationURL.path(percentEncoded: false).hasPrefix(rootFolderURL.path(percentEncoded: false)) {
-                reloadFileTree()
+            do {
+                try data.write(to: destinationURL, options: .atomic)
+            } catch where isPermissionDeniedError(error) {
+                guard await confirmPrivilegedSave(to: destinationURL) else {
+                    return
+                }
+
+                try await ElevatedToolService.writeFile(
+                    data: data,
+                    to: destinationURL,
+                    prompt: "Code needs administrator permission to save \(destinationURL.lastPathComponent)."
+                )
             }
-            persistSession()
+
+            finishSaving(tab: tab, destinationURL: destinationURL)
         } catch {
             errorMessage = "Failed to save \(destinationURL.lastPathComponent): \(error.localizedDescription)"
         }
+    }
+
+    private func finishSaving(tab: EditorTab, destinationURL: URL) {
+        tab.fileURL = destinationURL
+        tab.customTitle = nil
+        tab.lastSavedContent = tab.content
+        tab.lastSavedEncoding = tab.textEncoding
+        tab.lastSavedLineEnding = tab.lineEnding
+        tab.refreshDirtyState()
+        preferences.recordRecentFile(destinationURL)
+        selectedFileID = destinationURL.path(percentEncoded: false)
+        recordKnownDiskState(for: tab.id, fileURL: destinationURL)
+        clearExternalModification(for: tab.id)
+        if let rootFolderURL,
+           destinationURL.path(percentEncoded: false).hasPrefix(rootFolderURL.path(percentEncoded: false)) {
+            reloadFileTree()
+        }
+        persistSession()
+    }
+
+    private func confirmPrivilegedSave(to destinationURL: URL) async -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Save as Administrator?"
+        alert.informativeText = """
+        Code does not have permission to save \(destinationURL.lastPathComponent).
+
+        Administrator permission is required to replace:
+        \(destinationURL.path(percentEncoded: false))
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save as Administrator")
+        alert.addButton(withTitle: "Cancel")
+
+        if let hostWindow = NSApp.keyWindow ?? NSApp.mainWindow {
+            return await withCheckedContinuation { continuation in
+                alert.beginSheetModal(for: hostWindow) { response in
+                    continuation.resume(returning: response == .alertFirstButtonReturn)
+                }
+            }
+        }
+
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func isPermissionDeniedError(_ error: Error) -> Bool {
+        isPermissionDeniedNSError(error as NSError)
+    }
+
+    private func isPermissionDeniedNSError(_ error: NSError) -> Bool {
+        if error.domain == NSPOSIXErrorDomain {
+            return error.code == Int(EACCES) || error.code == Int(EPERM)
+        }
+
+        if error.domain == NSCocoaErrorDomain {
+            if error.code == NSFileWriteNoPermissionError || error.code == NSFileReadNoPermissionError {
+                return true
+            }
+
+            if let underlyingError = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+                return isPermissionDeniedNSError(underlyingError)
+            }
+        }
+
+        return false
     }
 
     private func presentSavePanel(

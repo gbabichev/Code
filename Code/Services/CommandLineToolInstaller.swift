@@ -4,12 +4,16 @@ import Foundation
 @MainActor
 enum CommandLineToolInstaller {
     private static let commandName = "code"
-    private static let installURL = URL(fileURLWithPath: "/usr/local/bin/code")
+    private static let systemInstallURL = URL(fileURLWithPath: "/usr/local/bin/code")
+    private static let userBinDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".local")
+        .appendingPathComponent("bin")
+    private static let userInstallURL = userBinDirectoryURL.appendingPathComponent(commandName)
 
     enum InstallResult {
-        case installed
-        case updated
-        case alreadyInstalled
+        case installed(URL)
+        case updated(URL)
+        case alreadyInstalled(URL)
 
         var title: String {
             switch self {
@@ -23,12 +27,20 @@ enum CommandLineToolInstaller {
         }
 
         var message: String {
-            "You can now run `code file.txt` or `code .` from Terminal."
+            let url = installedURL
+            return "You can now run `code file.txt` or `code .` from Terminal.\n\nInstalled at \(url.path)."
+        }
+
+        private var installedURL: URL {
+            switch self {
+            case .installed(let url), .updated(let url), .alreadyInstalled(let url):
+                return url
+            }
         }
     }
 
     enum RemovalResult {
-        case removed
+        case removed(URL)
         case notInstalled
 
         var title: String {
@@ -42,10 +54,10 @@ enum CommandLineToolInstaller {
 
         var message: String {
             switch self {
-            case .removed:
-                return "`code` was removed from /usr/local/bin."
+            case .removed(let url):
+                return "`code` was removed from \(url.deletingLastPathComponent().path)."
             case .notInstalled:
-                return "No Code command line tool is installed at /usr/local/bin/code."
+                return "No Code command line tool is installed."
             }
         }
     }
@@ -53,7 +65,7 @@ enum CommandLineToolInstaller {
     enum InstallError: LocalizedError {
         case bundledToolMissing(URL)
         case conflictingCommand(URL)
-        case appleScriptUnavailable
+        case authorizationCancelled
         case privilegedInstallFailed(String)
 
         var errorDescription: String? {
@@ -62,8 +74,8 @@ enum CommandLineToolInstaller {
                 return "The bundled command line tool was not found at \(url.path)."
             case .conflictingCommand(let url):
                 return "A different command already exists at \(url.path). It was left unchanged."
-            case .appleScriptUnavailable:
-                return "Could not start the privileged installer."
+            case .authorizationCancelled:
+                return "The command line tool was not installed because authorization was cancelled."
             case .privilegedInstallFailed(let message):
                 return message
             }
@@ -71,21 +83,27 @@ enum CommandLineToolInstaller {
     }
 
     static var canRemoveInstalledTool: Bool {
-        guard let state = try? existingCommandState() else {
+        guard let bundledToolURL = try? bundledTool() else {
             return false
         }
 
-        switch state {
-        case .current, .replaceable:
-            return true
-        case .absent, .conflict:
-            return false
+        return managedInstallURLs.contains { url in
+            guard let state = try? existingCommandState(installedURL: url, bundledToolURL: bundledToolURL) else {
+                return false
+            }
+
+            switch state {
+            case .current, .replaceable:
+                return true
+            case .absent, .conflict:
+                return false
+            }
         }
     }
 
-    static func installFromMenu() {
+    static func installFromMenu() async {
         do {
-            let result = try install()
+            let result = try await install()
             showAlert(title: result.title, message: result.message, style: .informational)
         } catch {
             showAlert(
@@ -96,9 +114,9 @@ enum CommandLineToolInstaller {
         }
     }
 
-    static func removeFromMenu() {
+    static func removeFromMenu() async {
         do {
-            let result = try remove()
+            let result = try await remove()
             showAlert(title: result.title, message: result.message, style: .informational)
         } catch {
             showAlert(
@@ -110,37 +128,43 @@ enum CommandLineToolInstaller {
     }
 
     @discardableResult
-    static func install() throws -> InstallResult {
+    static func install() async throws -> InstallResult {
         let bundledToolURL = try bundledTool()
+        let installURL = preferredInstallURL
         let existingState = try existingCommandState(installedURL: installURL, bundledToolURL: bundledToolURL)
 
         switch existingState {
         case .current:
-            return .alreadyInstalled
+            return .alreadyInstalled(installURL)
         case .conflict:
             throw InstallError.conflictingCommand(installURL)
         case .absent:
-            try installSymlink(to: bundledToolURL, replacingExistingItem: false)
-            return .installed
+            try await installSymlink(to: bundledToolURL, at: installURL, replacingExistingItem: false)
+            return .installed(installURL)
         case .replaceable:
-            try installSymlink(to: bundledToolURL, replacingExistingItem: true)
-            return .updated
+            try await installSymlink(to: bundledToolURL, at: installURL, replacingExistingItem: true)
+            return .updated(installURL)
         }
     }
 
     @discardableResult
-    static func remove() throws -> RemovalResult {
-        let existingState = try existingCommandState()
+    static func remove() async throws -> RemovalResult {
+        let bundledToolURL = try bundledTool()
 
-        switch existingState {
-        case .absent:
-            return .notInstalled
-        case .conflict:
-            throw InstallError.conflictingCommand(installURL)
-        case .current, .replaceable:
-            try removeInstalledSymlink()
-            return .removed
+        for installURL in managedInstallURLs {
+            let state = try existingCommandState(installedURL: installURL, bundledToolURL: bundledToolURL)
+            switch state {
+            case .absent:
+                continue
+            case .conflict:
+                throw InstallError.conflictingCommand(installURL)
+            case .current, .replaceable:
+                try await removeInstalledSymlink(at: installURL)
+                return .removed(installURL)
+            }
         }
+
+        return .notInstalled
     }
 
     private enum ExistingCommandState {
@@ -148,6 +172,21 @@ enum CommandLineToolInstaller {
         case current
         case replaceable
         case conflict
+    }
+
+    private static var managedInstallURLs: [URL] {
+        [userInstallURL, systemInstallURL]
+    }
+
+    private static var preferredInstallURL: URL {
+        isUserLocalBinOnPath ? userInstallURL : systemInstallURL
+    }
+
+    private static var isUserLocalBinOnPath: Bool {
+        let userBinPath = userBinDirectoryURL.standardizedFileURL.path
+        let pathValue = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        let paths = pathValue.split(separator: ":").map(String.init)
+        return paths.contains(userBinPath)
     }
 
     private static func bundledTool() throws -> URL {
@@ -159,10 +198,6 @@ enum CommandLineToolInstaller {
             throw InstallError.bundledToolMissing(url)
         }
         return url
-    }
-
-    private static func existingCommandState() throws -> ExistingCommandState {
-        try existingCommandState(installedURL: installURL, bundledToolURL: bundledTool())
     }
 
     private static func existingCommandState(
@@ -185,16 +220,29 @@ enum CommandLineToolInstaller {
         return .absent
     }
 
-    private static func installSymlink(to bundledToolURL: URL, replacingExistingItem: Bool) throws {
+    private static func installSymlink(
+        to bundledToolURL: URL,
+        at installURL: URL,
+        replacingExistingItem: Bool
+    ) async throws {
         do {
-            try installSymlinkWithoutPrivileges(to: bundledToolURL, replacingExistingItem: replacingExistingItem)
+            try installSymlinkWithoutPrivileges(
+                to: bundledToolURL,
+                at: installURL,
+                replacingExistingItem: replacingExistingItem
+            )
         } catch {
-            try installSymlinkWithPrivileges(to: bundledToolURL, replacingExistingItem: replacingExistingItem)
+            guard installURL == systemInstallURL else { throw error }
+            guard confirmPrivilegedInstall(replacingExistingItem: replacingExistingItem) else {
+                throw InstallError.authorizationCancelled
+            }
+            try await installSymlinkWithPrivileges(to: bundledToolURL)
         }
     }
 
     private static func installSymlinkWithoutPrivileges(
         to bundledToolURL: URL,
+        at installURL: URL,
         replacingExistingItem: Bool
     ) throws {
         let fileManager = FileManager.default
@@ -206,73 +254,37 @@ enum CommandLineToolInstaller {
         try fileManager.createSymbolicLink(at: installURL, withDestinationURL: bundledToolURL)
     }
 
-    private static func installSymlinkWithPrivileges(
-        to bundledToolURL: URL,
-        replacingExistingItem: Bool
-    ) throws {
-        let directoryPath = shellQuoted(installURL.deletingLastPathComponent().path)
-        let toolPath = shellQuoted(bundledToolURL.path)
-        let installedPath = shellQuoted(installURL.path)
-        let removeCommand = replacingExistingItem ? "/bin/rm -f \(installedPath) && " : ""
-        let command = "/bin/mkdir -p \(directoryPath) && \(removeCommand)/bin/ln -s \(toolPath) \(installedPath)"
-        let source = "do shell script \(appleScriptLiteral(command)) with administrator privileges"
-
-        let process = Process()
-        let standardError = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", source]
-        process.standardError = standardError
-
+    private static func installSymlinkWithPrivileges(to bundledToolURL: URL) async throws {
         do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            throw InstallError.appleScriptUnavailable
-        }
-
-        if process.terminationStatus != 0 {
-            let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
-            let message = String(data: errorData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw InstallError.privilegedInstallFailed(
-                (message?.isEmpty == false) ? (message ?? "") : "The privileged installer failed."
+            try await ElevatedToolService.runPrivileged(
+                arguments: ["--install-shell-command", bundledToolURL.path, systemInstallURL.path],
+                prompt: "Code needs administrator permission to install /usr/local/bin/code."
             )
+        } catch {
+            throw InstallError.privilegedInstallFailed(error.localizedDescription)
         }
     }
 
-    private static func removeInstalledSymlink() throws {
+    private static func removeInstalledSymlink(at installURL: URL) async throws {
         do {
             try FileManager.default.removeItem(at: installURL)
         } catch {
-            try removeInstalledSymlinkWithPrivileges()
+            guard installURL == systemInstallURL else { throw error }
+            guard confirmPrivilegedRemoval() else {
+                throw InstallError.authorizationCancelled
+            }
+            try await removeInstalledSymlinkWithPrivileges()
         }
     }
 
-    private static func removeInstalledSymlinkWithPrivileges() throws {
-        let installedPath = shellQuoted(installURL.path)
-        let command = "/bin/rm -f \(installedPath)"
-        let source = "do shell script \(appleScriptLiteral(command)) with administrator privileges"
-
-        let process = Process()
-        let standardError = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", source]
-        process.standardError = standardError
-
+    private static func removeInstalledSymlinkWithPrivileges() async throws {
         do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            throw InstallError.appleScriptUnavailable
-        }
-
-        if process.terminationStatus != 0 {
-            let errorData = standardError.fileHandleForReading.readDataToEndOfFile()
-            let message = String(data: errorData, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw InstallError.privilegedInstallFailed(
-                (message?.isEmpty == false) ? (message ?? "") : "The privileged remover failed."
+            try await ElevatedToolService.runPrivileged(
+                arguments: ["--remove-shell-command", systemInstallURL.path],
+                prompt: "Code needs administrator permission to remove /usr/local/bin/code."
             )
+        } catch {
+            throw InstallError.privilegedInstallFailed(error.localizedDescription)
         }
     }
 
@@ -316,17 +328,6 @@ enum CommandLineToolInstaller {
         return NSDictionary(contentsOf: infoPlistURL)?["CFBundleIdentifier"] as? String
     }
 
-    private static func shellQuoted(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
-    }
-
-    private static func appleScriptLiteral(_ value: String) -> String {
-        let escapedValue = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "\"\(escapedValue)\""
-    }
-
     private static func showAlert(title: String, message: String, style: NSAlert.Style) {
         let alert = NSAlert()
         alert.messageText = title
@@ -334,5 +335,31 @@ enum CommandLineToolInstaller {
         alert.alertStyle = style
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private static func confirmPrivilegedInstall(replacingExistingItem: Bool) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = replacingExistingItem
+            ? "Update Command Line Tool?"
+            : "Install Command Line Tool?"
+        alert.informativeText = """
+        Code needs administrator permission to \(replacingExistingItem ? "update" : "install") /usr/local/bin/code.
+
+        Code will only create a symbolic link to the command line tool inside this app.
+        """
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: replacingExistingItem ? "Update" : "Install")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private static func confirmPrivilegedRemoval() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Remove Command Line Tool?"
+        alert.informativeText = "Code needs administrator permission to remove /usr/local/bin/code."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Remove")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 }
