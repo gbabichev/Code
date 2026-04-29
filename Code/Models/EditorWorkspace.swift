@@ -481,8 +481,8 @@ final class EditorWorkspace: ObservableObject {
 
     func confirmPendingTabCloseSave() async {
         guard let pendingTabClose else { return }
-        await saveTab(id: pendingTabClose.id)
-        if errorMessage == nil {
+        let didSave = await saveTab(id: pendingTabClose.id)
+        if didSave {
             closeTab(pendingTabClose.id)
         }
         self.pendingTabClose = nil
@@ -518,8 +518,8 @@ final class EditorWorkspace: ObservableObject {
 
         let dirtyTabIDs = openTabs.filter(\.isDirty).map(\.id)
         for id in dirtyTabIDs {
-            await saveTab(id: id)
-            guard let tab = tab(withID: id), !tab.isDirty, errorMessage == nil else {
+            let didSave = await saveTab(id: id)
+            guard didSave, let tab = tab(withID: id), !tab.isDirty, errorMessage == nil else {
                 cancelPendingWindowClose()
                 return
             }
@@ -580,13 +580,15 @@ final class EditorWorkspace: ObservableObject {
         await saveTab(id: tab.id, forceSavePanel: true)
     }
 
-    func saveTab(id: EditorTab.ID) async {
+    @discardableResult
+    func saveTab(id: EditorTab.ID) async -> Bool {
         await saveTab(id: id, forceSavePanel: false)
     }
 
-    func saveTab(id: EditorTab.ID, forceSavePanel: Bool) async {
+    @discardableResult
+    func saveTab(id: EditorTab.ID, forceSavePanel: Bool) async -> Bool {
         ActiveEditorTextViewRegistry.shared.flushPendingModelSync()
-        guard let tab = openTabs.first(where: { $0.id == id }) else { return }
+        guard let tab = openTabs.first(where: { $0.id == id }) else { return false }
 
         let destinationURL: URL
         if let fileURL = tab.fileURL, !forceSavePanel {
@@ -596,7 +598,7 @@ final class EditorWorkspace: ObservableObject {
                 suggestedFileName: tab.title,
                 existingFileURL: tab.fileURL
             ) else {
-                return
+                return false
             }
 
             destinationURL = url
@@ -606,14 +608,14 @@ final class EditorWorkspace: ObservableObject {
             let output = contentWithPreferredLineEndings(for: tab)
             guard let data = output.data(using: tab.textEncoding.stringEncoding) else {
                 errorMessage = "Failed to encode \(destinationURL.lastPathComponent) as \(tab.textEncoding.title)."
-                return
+                return false
             }
 
             do {
                 try data.write(to: destinationURL, options: .atomic)
             } catch where isPermissionDeniedError(error) {
                 guard await confirmPrivilegedSave(to: destinationURL) else {
-                    return
+                    return false
                 }
 
                 try await ElevatedToolService.writeFile(
@@ -624,8 +626,10 @@ final class EditorWorkspace: ObservableObject {
             }
 
             finishSaving(tab: tab, destinationURL: destinationURL)
+            return true
         } catch {
             errorMessage = "Failed to save \(destinationURL.lastPathComponent): \(error.localizedDescription)"
+            return false
         }
     }
 

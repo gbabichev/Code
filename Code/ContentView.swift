@@ -857,33 +857,21 @@ struct ContentView: View {
     private var pendingTabCloseBinding: Binding<Bool> {
         Binding(
             get: { workspace.pendingTabClose != nil },
-            set: { newValue in
-                if !newValue {
-                    workspace.cancelPendingTabClose()
-                }
-            }
+            set: { _ in }
         )
     }
 
     private var pendingWindowCloseBinding: Binding<Bool> {
         Binding(
             get: { workspace.pendingWindowClose != nil },
-            set: { newValue in
-                if !newValue {
-                    workspace.cancelPendingWindowClose()
-                }
-            }
+            set: { _ in }
         )
     }
 
     private var pendingFileRefreshBinding: Binding<Bool> {
         Binding(
             get: { workspace.pendingFileRefresh != nil },
-            set: { newValue in
-                if !newValue {
-                    workspace.cancelPendingFileRefresh()
-                }
-            }
+            set: { _ in }
         )
     }
 
