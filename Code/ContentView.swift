@@ -227,7 +227,8 @@ struct ContentView: View {
                     onMove: workspace.moveTab,
                     onMoveToEnd: workspace.moveTabToEnd,
                     onMoveToNewWindow: moveTabToNewWindow,
-                    onOpenInSplitView: workspace.openTabInSplitView
+                    onOpenInSplitView: workspace.openTabInSplitView,
+                    onCloseOtherTabs: workspace.requestCloseOtherTabs
                 )
                 .onDrop(
                     of: [UTType.fileURL.identifier],
@@ -881,6 +882,8 @@ struct ContentView: View {
             "closing this window"
         case .closeFolder:
             "closing this folder"
+        case .closeTabs:
+            "closing these tabs"
         }
 
         if pending.dirtyTabNames.count == 1, let name = pending.dirtyTabNames.first {
@@ -894,6 +897,8 @@ struct ContentView: View {
         switch workspace.pendingWindowClose?.action {
         case .closeFolder:
             return "Save Changes Before Closing Folder?"
+        case .closeTabs:
+            return "Save Changes Before Closing Tabs?"
         case .closeWindow, nil:
             return "Save Changes Before Closing Window?"
         }

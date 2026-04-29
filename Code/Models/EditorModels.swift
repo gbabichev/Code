@@ -436,11 +436,23 @@ struct PendingWindowClose: Identifiable {
     enum Action {
         case closeWindow
         case closeFolder
+        case closeTabs
     }
 
     let id = UUID()
     let action: Action
     let dirtyTabNames: [String]
+    let targetTabIDs: [EditorTab.ID]?
+
+    init(
+        action: Action,
+        dirtyTabNames: [String],
+        targetTabIDs: [EditorTab.ID]? = nil
+    ) {
+        self.action = action
+        self.dirtyTabNames = dirtyTabNames
+        self.targetTabIDs = targetTabIDs
+    }
 }
 
 struct PendingFileRefresh: Identifiable, Equatable {

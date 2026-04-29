@@ -245,6 +245,33 @@ final class EditorWorkspace: ObservableObject {
         persistSession()
     }
 
+    private func closeTabs(
+        _ ids: [EditorTab.ID],
+        preserveUnsavedChangesForReopen: Bool = true,
+        selecting selectedID: EditorTab.ID? = nil
+    ) {
+        var didCloseAnyTab = false
+        for id in orderedUniqueTabIDs(ids) {
+            guard let closedState = closedTabState(for: id, preserveUnsavedChanges: preserveUnsavedChangesForReopen) else {
+                continue
+            }
+
+            recentlyClosedTabs.append(closedState)
+            didCloseAnyTab = removeTab(id, persist: false) != nil || didCloseAnyTab
+        }
+
+        guard didCloseAnyTab else { return }
+
+        if recentlyClosedTabs.count > Self.maxRecentlyClosedTabs {
+            recentlyClosedTabs.removeFirst(recentlyClosedTabs.count - Self.maxRecentlyClosedTabs)
+        }
+
+        if let selectedID, tab(withID: selectedID) != nil {
+            selectTab(selectedID, persist: false)
+        }
+        persistSession()
+    }
+
     var canReopenClosedTab: Bool {
         !recentlyClosedTabs.isEmpty
     }
@@ -426,6 +453,32 @@ final class EditorWorkspace: ObservableObject {
         }
     }
 
+    func requestCloseOtherTabs(keeping id: EditorTab.ID) {
+        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
+        guard tab(withID: id) != nil else { return }
+
+        let targetTabIDs = openTabs
+            .map(\.id)
+            .filter { $0 != id }
+        guard !targetTabIDs.isEmpty else { return }
+
+        let targetTabIDSet = Set(targetTabIDs)
+        let dirtyTabNames = openTabs
+            .filter { targetTabIDSet.contains($0.id) && $0.isDirty }
+            .map(\.title)
+
+        guard !dirtyTabNames.isEmpty else {
+            closeTabs(targetTabIDs, selecting: id)
+            return
+        }
+
+        pendingWindowClose = PendingWindowClose(
+            action: .closeTabs,
+            dirtyTabNames: dirtyTabNames,
+            targetTabIDs: targetTabIDs
+        )
+    }
+
     func requestCloseSelectedTab() {
         guard let selectedTabID else { return }
         requestCloseTab(selectedTabID)
@@ -514,9 +567,9 @@ final class EditorWorkspace: ObservableObject {
     }
 
     func confirmPendingWindowCloseSave() async {
-        guard pendingWindowClose != nil else { return }
+        guard let pendingWindowClose else { return }
 
-        let dirtyTabIDs = openTabs.filter(\.isDirty).map(\.id)
+        let dirtyTabIDs = dirtyTabIDs(for: pendingWindowClose)
         for id in dirtyTabIDs {
             let didSave = await saveTab(id: id)
             guard didSave, let tab = tab(withID: id), !tab.isDirty, errorMessage == nil else {
@@ -525,25 +578,30 @@ final class EditorWorkspace: ObservableObject {
             }
         }
 
-        let closeAction = pendingWindowCloseAction
-        pendingWindowClose = nil
-        pendingWindowCloseAction = nil
-        flushSession()
-        closeAction?()
+        completePendingWindowClose(pendingWindowClose)
     }
 
     func confirmPendingWindowCloseDiscard() {
-        guard pendingWindowClose != nil else { return }
+        guard let pendingWindowClose else { return }
 
-        for tab in openTabs where tab.isDirty {
-            discardChanges(for: tab)
+        switch pendingWindowClose.action {
+        case .closeTabs:
+            closeTabs(
+                pendingWindowClose.targetTabIDs ?? [],
+                preserveUnsavedChangesForReopen: false
+            )
+            self.pendingWindowClose = nil
+        case .closeWindow, .closeFolder:
+            for tab in openTabs where tab.isDirty {
+                discardChanges(for: tab)
+            }
+
+            let closeAction = pendingWindowCloseAction
+            self.pendingWindowClose = nil
+            pendingWindowCloseAction = nil
+            flushSession()
+            closeAction?()
         }
-
-        let closeAction = pendingWindowCloseAction
-        pendingWindowClose = nil
-        pendingWindowCloseAction = nil
-        flushSession()
-        closeAction?()
     }
 
     func cancelPendingWindowClose() {
@@ -1182,6 +1240,40 @@ final class EditorWorkspace: ObservableObject {
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "Unsupported text encoding for \(fileName)."]
         )
+    }
+
+    private func orderedUniqueTabIDs(_ ids: [EditorTab.ID]) -> [EditorTab.ID] {
+        var seenIDs = Set<EditorTab.ID>()
+        return ids.filter { seenIDs.insert($0).inserted }
+    }
+
+    private func dirtyTabIDs(for pendingWindowClose: PendingWindowClose) -> [EditorTab.ID] {
+        switch pendingWindowClose.action {
+        case .closeTabs:
+            let targetTabIDSet = Set(pendingWindowClose.targetTabIDs ?? [])
+            return openTabs
+                .filter { targetTabIDSet.contains($0.id) && $0.isDirty }
+                .map(\.id)
+        case .closeFolder, .closeWindow:
+            return openTabs.filter(\.isDirty).map(\.id)
+        }
+    }
+
+    private func completePendingWindowClose(_ pendingWindowClose: PendingWindowClose) {
+        switch pendingWindowClose.action {
+        case .closeTabs:
+            let selectedID = pendingWindowClose.targetTabIDs.flatMap { targetIDs in
+                openTabs.first { !targetIDs.contains($0.id) }?.id
+            }
+            closeTabs(pendingWindowClose.targetTabIDs ?? [], selecting: selectedID)
+            self.pendingWindowClose = nil
+        case .closeWindow, .closeFolder:
+            let closeAction = pendingWindowCloseAction
+            self.pendingWindowClose = nil
+            pendingWindowCloseAction = nil
+            flushSession()
+            closeAction?()
+        }
     }
 }
 
