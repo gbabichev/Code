@@ -27,7 +27,7 @@ Code is a small macOS-only editor built for the moments when a full IDE feels ex
 - Multiple tabs, split view, and multi-window support
 - Finder `Open With` support for quick edits from Finder
 - Optional `code` command for opening files and folders from Terminal
-- Open files by drag and drop, single-file open, or full folder open
+- Open files by drag and drop, single-file open, full folder open, or Dock menu shortcuts
 - Clear prompts when saving to protected folders
 - Per-window `Close Folder` reset and open-in-new-window workflow
 - Session recovery across relaunch, including unsaved work

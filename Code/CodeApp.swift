@@ -20,6 +20,7 @@ struct CodeApp: App {
     @StateObject private var detachedTabTransfer = DetachedTabTransferCoordinator.shared
     @StateObject private var externalFileRouter = ExternalFileRouter.shared
     @StateObject private var recentItemRouter = RecentItemRouter.shared
+    @StateObject private var dockCommandRouter = DockCommandRouter.shared
     @StateObject private var aboutController = AboutOverlayController()
     @StateObject private var settingsController = SettingsPopoverController()
     @StateObject private var updateCenter = AppUpdateCenter.shared
@@ -66,6 +67,29 @@ struct CodeApp: App {
                 openWindow(id: "workspace")
             }
         }
+        .onChange(of: dockCommandRouter.newWindowRequestID) { _, _ in
+            openWindowFromDock()
+        }
+        .onChange(of: dockCommandRouter.newFileRequestID) { _, _ in
+            openNewFileFromDock()
+        }
+    }
+
+    private func openWindowFromDock() {
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "workspace")
+    }
+
+    private func openNewFileFromDock() {
+        NSApp.activate(ignoringOtherApps: true)
+
+        if let workspace = activeWorkspaceRegistry.workspace {
+            workspace.createUntitledTab()
+            NSApp.windows.first(where: { $0.isVisible })?.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        openWindow(id: "workspace")
     }
 }
 
@@ -267,7 +291,27 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let recentItems = AppPreferences.shared.visibleRecentItems
 
-        guard !recentItems.isEmpty else {
+        let newWindowItem = NSMenuItem(
+            title: "New Window",
+            action: #selector(openDockNewWindow(_:)),
+            keyEquivalent: ""
+        )
+        newWindowItem.target = self
+        newWindowItem.image = NSImage(systemSymbolName: "macwindow.badge.plus", accessibilityDescription: nil)
+        menu.addItem(newWindowItem)
+
+        let newFileItem = NSMenuItem(
+            title: "New File",
+            action: #selector(openDockNewFile(_:)),
+            keyEquivalent: ""
+        )
+        newFileItem.target = self
+        newFileItem.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: nil)
+        menu.addItem(newFileItem)
+
+        menu.addItem(.separator())
+
+        if recentItems.isEmpty {
             let emptyItem = NSMenuItem(title: "No Recent Items", action: nil, keyEquivalent: "")
             emptyItem.isEnabled = false
             menu.addItem(emptyItem)
@@ -295,6 +339,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(clearItem)
 
         return menu
+    }
+
+    @objc private func openDockNewWindow(_ sender: NSMenuItem) {
+        DockCommandRouter.shared.requestNewWindow()
+    }
+
+    @objc private func openDockNewFile(_ sender: NSMenuItem) {
+        DockCommandRouter.shared.requestNewFile()
     }
 
     @objc private func openDockRecentItem(_ sender: NSMenuItem) {
@@ -345,6 +397,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppUpdateCenter.shared.checkForUpdates(trigger: .automaticLaunch)
+    }
+}
+
+@MainActor
+final class DockCommandRouter: ObservableObject {
+    static let shared = DockCommandRouter()
+
+    @Published private(set) var newWindowRequestID = UUID()
+    @Published private(set) var newFileRequestID = UUID()
+
+    func requestNewWindow() {
+        newWindowRequestID = UUID()
+    }
+
+    func requestNewFile() {
+        newFileRequestID = UUID()
     }
 }
 
