@@ -384,6 +384,10 @@ final class AppPreferences: ObservableObject {
         editorFontSize -= 1
     }
 
+    func resetEditorFontSize() {
+        editorFontSize = Self.defaultFontSize
+    }
+
     var visibleRecentItems: [RecentItem] {
         Array(
             recentItems

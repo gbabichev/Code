@@ -837,22 +837,6 @@ private struct EditorCommands: Commands {
             .disabled(resolvedWorkspace?.selectedTab == nil)
         }
 
-        CommandGroup(after: .textFormatting) {
-            Button {
-                preferences.increaseEditorFontSize()
-            } label: {
-                Label("Increase Font Size", systemImage: "textformat.size.larger")
-            }
-            .keyboardShortcut("=", modifiers: [.command])
-
-            Button {
-                preferences.decreaseEditorFontSize()
-            } label: {
-                Label("Decrease Font Size", systemImage: "textformat.size.smaller")
-            }
-            .keyboardShortcut("-", modifiers: [.command])
-        }
-
         CommandMenu("Find") {
             Button {
                 searchController?.showFind()
@@ -900,6 +884,29 @@ private struct EditorCommands: Commands {
         }
 
         CommandGroup(after: .sidebar) {
+            Button {
+                preferences.increaseEditorFontSize()
+            } label: {
+                Label("Zoom In", systemImage: "plus.magnifyingglass")
+            }
+            .keyboardShortcut("=", modifiers: [.command])
+
+            Button {
+                preferences.decreaseEditorFontSize()
+            } label: {
+                Label("Zoom Out", systemImage: "minus.magnifyingglass")
+            }
+            .keyboardShortcut("-", modifiers: [.command])
+
+            Button {
+                preferences.resetEditorFontSize()
+            } label: {
+                Label("Reset Zoom", systemImage: "textformat.size")
+            }
+            .keyboardShortcut("0", modifiers: [.command])
+
+            Divider()
+
             Toggle(isOn: Binding(
                 get: { preferences.isWordWrapEnabled },
                 set: { preferences.isWordWrapEnabled = $0 }
