@@ -17,6 +17,7 @@ struct ContentView: View {
     @EnvironmentObject private var searchController: EditorSearchController
     @EnvironmentObject private var aboutController: AboutOverlayController
     @EnvironmentObject private var settingsController: SettingsPopoverController
+    @EnvironmentObject private var updateCenter: AppUpdateCenter
     @State private var isTargetingTabDrop = false
     @State private var searchMatchSummary = SearchMatchSummary()
     @State private var pendingSearchSummaryWorkItem: DispatchWorkItem?
@@ -126,6 +127,15 @@ struct ContentView: View {
         .overlay {
             if aboutController.isPresented {
                 AboutOverlayView(isPresented: $aboutController.isPresented)
+            }
+        }
+        .overlay {
+            if let update = updateCenter.availableUpdate {
+                UpdateAvailableOverlayView(
+                    update: update,
+                    onLater: { updateCenter.dismissAvailableUpdate() },
+                    onDownload: { updateCenter.openAvailableUpdateDownloadPage() }
+                )
             }
         }
     }

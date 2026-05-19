@@ -62,6 +62,7 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ### 1.0.1
 - Tweaked syntax highlighting to prevent scroll jumps under certain cases. 
+- Updated Check for Update UX.
 
 ### 1.0.0
 - Initial Release.

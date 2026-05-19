@@ -13,11 +13,22 @@ final class AppUpdateCenter: ObservableObject {
 
     @Published private(set) var isChecking = false
     @Published private(set) var lastStatusMessage: String?
+    @Published private(set) var availableUpdate: AppAvailableUpdate?
 
     private var activeCheckTask: Task<Void, Never>?
     private let checker = GitHubTagUpdateChecker()
 
     private init() {}
+
+    func dismissAvailableUpdate() {
+        availableUpdate = nil
+    }
+
+    func openAvailableUpdateDownloadPage() {
+        guard let releaseURL = availableUpdate?.releaseURL else { return }
+        NSWorkspace.shared.open(releaseURL)
+        availableUpdate = nil
+    }
 
     func checkForUpdates(trigger: UpdateCheckTrigger = .manual) {
         guard activeCheckTask == nil else { return }
@@ -33,6 +44,7 @@ final class AppUpdateCenter: ObservableObject {
 
         isChecking = true
         lastStatusMessage = "Checking for updates..."
+        availableUpdate = nil
 
         activeCheckTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -43,22 +55,26 @@ final class AppUpdateCenter: ObservableObject {
             }
 
             do {
-                let latestVersion = try await checker.latestTagName(
+                let latest = try await checker.latestVersionDetails(
                     owner: configuration.owner,
                     repository: configuration.repository,
                     userAgent: configuration.appName
                 )
 
                 let currentVersion = configuration.currentVersion
+                let latestVersion = latest.tagName
                 let isNewer = VersionStringComparator.isVersion(latestVersion, greaterThan: currentVersion)
 
                 if isNewer {
                     let message = "Version \(latestVersion) is available. You have \(currentVersion)."
                     self.lastStatusMessage = message
-                    self.presentUpdateAvailableAlert(
+                    self.availableUpdate = AppAvailableUpdate(
                         appName: configuration.appName,
+                        latestVersion: latestVersion,
+                        currentVersion: currentVersion,
                         message: message,
-                        releaseURL: configuration.releaseURL(for: latestVersion)
+                        releaseNotes: latest.releaseNotes,
+                        releaseURL: latest.releaseURL ?? configuration.releaseURL(for: latestVersion)
                     )
                     return
                 }
@@ -80,19 +96,6 @@ final class AppUpdateCenter: ObservableObject {
         }
     }
 
-    private func presentUpdateAvailableAlert(appName: String, message: String, releaseURL: URL?) {
-        let alert = NSAlert()
-        alert.messageText = "A New \(appName) Update Is Available"
-        alert.informativeText = message
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: releaseURL == nil ? "OK" : "Open Download Page")
-        alert.addButton(withTitle: "Later")
-
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn, let releaseURL else { return }
-        NSWorkspace.shared.open(releaseURL)
-    }
-
     private func presentInfoAlert(title: String, message: String) {
         let alert = NSAlert()
         alert.messageText = title
@@ -106,6 +109,16 @@ final class AppUpdateCenter: ObservableObject {
 enum UpdateCheckTrigger: Sendable {
     case automaticLaunch
     case manual
+}
+
+struct AppAvailableUpdate: Identifiable, Sendable {
+    let id = UUID()
+    let appName: String
+    let latestVersion: String
+    let currentVersion: String
+    let message: String
+    let releaseNotes: String?
+    let releaseURL: URL?
 }
 
 private struct AppUpdateConfiguration: Sendable {
@@ -179,34 +192,122 @@ private struct AppUpdateConfiguration: Sendable {
     }
 }
 
+private struct GitHubLatestVersionDetails: Sendable {
+    let tagName: String
+    let releaseNotes: String?
+    let releaseURL: URL?
+}
+
 private struct GitHubTagUpdateChecker {
     private struct GitHubTag: Decodable, Sendable {
         let name: String
     }
 
+    private struct GitHubRelease: Decodable, Sendable {
+        let tagName: String
+        let body: String?
+        let htmlURL: String?
+        let draft: Bool
+        let prerelease: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case tagName = "tag_name"
+            case body
+            case htmlURL = "html_url"
+            case draft
+            case prerelease
+        }
+    }
+
     private enum UpdateCheckError: LocalizedError {
         case invalidResponse
-        case noTagsFound
+        case noVersionsFound
 
         var errorDescription: String? {
             switch self {
             case .invalidResponse:
                 return "Received an invalid response from GitHub."
-            case .noTagsFound:
-                return "No release tags were found for this repository."
+            case .noVersionsFound:
+                return "No releases or tags were found for this repository."
             }
         }
     }
 
-    func latestTagName(owner: String, repository: String, userAgent: String) async throws -> String {
-        guard var components = URLComponents(string: "https://api.github.com/repos/\(owner)/\(repository)/tags") else {
+    func latestVersionDetails(owner: String, repository: String, userAgent: String) async throws -> GitHubLatestVersionDetails {
+        do {
+            if let releaseVersion = try await latestFromReleases(owner: owner, repository: repository, userAgent: userAgent) {
+                return releaseVersion
+            }
+        } catch {
+            // Older repos may only use tags, and GitHub release lookup can fail independently.
+            // Keep update checks useful by falling back to tags.
+        }
+
+        if let tagVersion = try await latestFromTags(owner: owner, repository: repository, userAgent: userAgent) {
+            return tagVersion
+        }
+
+        throw UpdateCheckError.noVersionsFound
+    }
+
+    private func latestFromReleases(owner: String, repository: String, userAgent: String) async throws -> GitHubLatestVersionDetails? {
+        let releasesURL = try makeURL(
+            "https://api.github.com/repos/\(owner)/\(repository)/releases",
+            queryItems: [URLQueryItem(name: "per_page", value: "100")]
+        )
+
+        let (data, _) = try await fetch(url: releasesURL, userAgent: userAgent)
+        let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+
+        let candidates = releases.filter { !$0.draft }
+        guard !candidates.isEmpty else { return nil }
+
+        let stableCandidates = candidates.filter { !$0.prerelease }
+        let pool = stableCandidates.isEmpty ? candidates : stableCandidates
+
+        guard let latest = pool.max(by: {
+            VersionStringComparator.isVersion($1.tagName, greaterThan: $0.tagName)
+        }) else {
+            return nil
+        }
+
+        let trimmedNotes = latest.body?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let releaseNotes = trimmedNotes?.isEmpty == false ? trimmedNotes : nil
+        let releaseURL = latest.htmlURL.flatMap { URL(string: $0) }
+        return GitHubLatestVersionDetails(tagName: latest.tagName, releaseNotes: releaseNotes, releaseURL: releaseURL)
+    }
+
+    private func latestFromTags(owner: String, repository: String, userAgent: String) async throws -> GitHubLatestVersionDetails? {
+        let tagsURL = try makeURL(
+            "https://api.github.com/repos/\(owner)/\(repository)/tags",
+            queryItems: [URLQueryItem(name: "per_page", value: "100")]
+        )
+
+        let (data, _) = try await fetch(url: tagsURL, userAgent: userAgent)
+        let tags = try JSONDecoder().decode([GitHubTag].self, from: data)
+        guard !tags.isEmpty else { return nil }
+
+        guard let latestTag = tags.max(by: { lhs, rhs in
+            VersionStringComparator.isVersion(rhs.name, greaterThan: lhs.name)
+        }) else {
+            return nil
+        }
+
+        return GitHubLatestVersionDetails(tagName: latestTag.name, releaseNotes: nil, releaseURL: nil)
+    }
+
+    private func makeURL(_ raw: String, queryItems: [URLQueryItem]) throws -> URL {
+        guard var components = URLComponents(string: raw) else {
             throw URLError(.badURL)
         }
-        components.queryItems = [URLQueryItem(name: "per_page", value: "100")]
+        components.queryItems = queryItems
         guard let url = components.url else {
             throw URLError(.badURL)
         }
+        return url
+    }
 
+    private func fetch(url: URL, userAgent: String) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
         request.timeoutInterval = 12
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -220,16 +321,7 @@ private struct GitHubTagUpdateChecker {
             throw UpdateCheckError.invalidResponse
         }
 
-        let tags = try JSONDecoder().decode([GitHubTag].self, from: data)
-        guard !tags.isEmpty else {
-            throw UpdateCheckError.noTagsFound
-        }
-
-        let latestTag = tags.max(by: { lhs, rhs in
-            VersionStringComparator.isVersion(rhs.name, greaterThan: lhs.name)
-        }) ?? tags[0]
-
-        return latestTag.name
+        return (data, httpResponse)
     }
 }
 
@@ -247,7 +339,7 @@ private enum VersionStringComparator {
             }
         }
 
-        return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedDescending
+        return false
     }
 
     private nonisolated static func numericComponents(from rawVersion: String) -> [Int] {
