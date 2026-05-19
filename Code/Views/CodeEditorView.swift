@@ -364,6 +364,11 @@ struct CodeEditorView: NSViewRepresentable {
             }
         }
 
+        private struct FontAttributeRun {
+            let range: NSRange
+            let font: NSFont?
+        }
+
         var textBinding: Binding<String>
         var scrollPosition: Binding<EditorScrollPosition?>
         var language: EditorLanguage
@@ -391,6 +396,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var pendingTextEdit: (range: NSRange, replacement: NSString)?
         private var isUpdatingDocumentLayout = false
         private var exactLayoutMeasurementWorkItem: DispatchWorkItem?
+        private var liveEditScrollRestoreWorkItem: DispatchWorkItem?
         private var scrollPositionRestoreWorkItems: [DispatchWorkItem] = []
         private var isRestoringScrollPosition = false
         private var isInitialScrollPositionRestorePending = false
@@ -482,6 +488,7 @@ struct CodeEditorView: NSViewRepresentable {
         deinit {
             MainActor.assumeIsolated {
                 exactLayoutMeasurementWorkItem?.cancel()
+                liveEditScrollRestoreWorkItem?.cancel()
                 cancelScrollPositionRestores()
             }
             NotificationCenter.default.removeObserver(self)
@@ -489,6 +496,7 @@ struct CodeEditorView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView else { return }
+            let liveEditScrollOrigin = scrollOriginForLiveEditRestore()
             updateSourceTextAfterEdit(textView: textView)
             if shouldDeferBindingSync(for: (sourceText as NSString).length) {
                 schedulePendingBindingSync()
@@ -496,6 +504,7 @@ struct CodeEditorView: NSViewRepresentable {
                 flushPendingBindingSync()
             }
 
+            let appliedTextEdit = pendingTextEdit
             if let pendingTextEdit {
                 gutterView.applyLineIndexEdit(range: pendingTextEdit.range, replacement: pendingTextEdit.replacement)
                 self.pendingTextEdit = nil
@@ -506,7 +515,7 @@ struct CodeEditorView: NSViewRepresentable {
             let editedRange = pendingEditedRange
             pendingEditedRange = nil
             if isSyntaxHighlightingEnabled {
-                applyHighlighting(in: editedRange)
+                applyHighlighting(in: editedRange, replacementLength: appliedTextEdit?.replacement.length)
             } else {
                 markHighlightingCurrent()
             }
@@ -514,6 +523,8 @@ struct CodeEditorView: NSViewRepresentable {
             (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
             gutterView.needsDisplay = true
             updateDocumentLayout(measureTextView: true)
+            restoreScrollOriginAfterLiveEdit(liveEditScrollOrigin)
+            scheduleScrollOriginRestoreAfterLiveEdit(liveEditScrollOrigin)
         }
 
         func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
@@ -866,6 +877,68 @@ struct CodeEditorView: NSViewRepresentable {
             return true
         }
 
+        private func scrollOriginForLiveEditRestore() -> NSPoint? {
+            guard isSyntaxHighlightingEnabled,
+                  let scrollView,
+                  let documentView = scrollView.documentView else { return nil }
+
+            let clipSize = scrollView.contentView.bounds.size
+            guard clipSize.width > 1, clipSize.height > 1 else { return nil }
+            guard isWordWrapEnabled || documentView.frame.width > clipSize.width + 0.5 else { return nil }
+            return scrollView.contentView.bounds.origin
+        }
+
+        private func scheduleScrollOriginRestoreAfterLiveEdit(_ origin: NSPoint?) {
+            guard let origin else { return }
+            liveEditScrollRestoreWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.restoreScrollOriginAfterLiveEdit(origin)
+            }
+            liveEditScrollRestoreWorkItem = workItem
+            DispatchQueue.main.async(execute: workItem)
+        }
+
+        private func restoreScrollOriginAfterLiveEdit(_ origin: NSPoint?) {
+            guard let origin,
+                  let scrollView,
+                  let documentView = scrollView.documentView else { return }
+
+            let clipSize = scrollView.contentView.bounds.size
+            guard clipSize.width > 1, clipSize.height > 1, documentView.frame.height > 1 else { return }
+
+            let maxX = max(documentView.frame.width - clipSize.width, 0)
+            let maxY = max(documentView.frame.height - clipSize.height, 0)
+            let restoredOrigin = NSPoint(
+                x: min(max(origin.x, 0), maxX),
+                y: min(max(origin.y, 0), maxY)
+            )
+            guard isCaretVisible(at: restoredOrigin, clipSize: clipSize) else { return }
+
+            let currentOrigin = scrollView.contentView.bounds.origin
+            if abs(currentOrigin.x - restoredOrigin.x) > 0.5 || abs(currentOrigin.y - restoredOrigin.y) > 0.5 {
+                isRestoringScrollPosition = true
+                scrollView.contentView.scroll(to: restoredOrigin)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
+                isRestoringScrollPosition = false
+            }
+
+            let restoredPosition = EditorScrollPosition(restoredOrigin)
+            let oldPosition = scrollPosition.wrappedValue
+            if abs((oldPosition?.x ?? -1) - restoredPosition.x) > 0.5 || abs((oldPosition?.y ?? -1) - restoredPosition.y) > 0.5 {
+                scrollPosition.wrappedValue = restoredPosition
+            }
+            gutterView.needsDisplay = true
+        }
+
+        private func isCaretVisible(at origin: NSPoint, clipSize: NSSize) -> Bool {
+            guard let textView,
+                  let caret = caretRectInTextViewCoordinates() else { return false }
+
+            let lineHeight = unsafe textView.layoutManager?.defaultLineHeight(for: textView.font ?? editorFont) ?? editorFont.pointSize
+            let visibleRect = NSRect(origin: origin, size: clipSize).insetBy(dx: -8, dy: -max(lineHeight * 2, 24))
+            return visibleRect.intersects(caret.rect)
+        }
+
         private func prepareVisibleLayout(at origin: NSPoint, clipSize: NSSize) {
             guard let textView,
                   let layoutManager = unsafe textView.layoutManager,
@@ -918,7 +991,7 @@ struct CodeEditorView: NSViewRepresentable {
             requiresHighlightRefresh = false
         }
 
-        func applyHighlighting(in editedRange: NSRange? = nil) {
+        func applyHighlighting(in editedRange: NSRange? = nil, replacementLength: Int? = nil) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
 
             // When an edited range is provided (live typing), only highlight
@@ -926,24 +999,28 @@ struct CodeEditorView: NSViewRepresentable {
             // further to keep keystrokes snappy.
             let highlightRange: NSRange
             let requestedHighlightRange: NSRange?
+            let fontMutationRange: NSRange?
             if let range = editedRange {
                 let expansion = textStorage.length > 50_000 ? 500 : 2000
                 let start = max(range.location - expansion, 0)
-                let end = min(range.location + range.length + expansion, textStorage.length)
+                let editedLength = replacementLength ?? range.length
+                let end = min(range.location + max(range.length, editedLength) + expansion, textStorage.length)
                 highlightRange = NSRange(location: start, length: end - start)
                 requestedHighlightRange = highlightRange
+                fontMutationRange = editedLineRange(for: range, replacementLength: editedLength, textLength: textStorage.length)
             } else {
                 // Full-document pass (initial load, theme/language change)
                 highlightRange = NSRange(location: 0, length: textStorage.length)
                 requestedHighlightRange = nil
+                fontMutationRange = nil
             }
 
-            let shouldForceLayoutForHighlightedRange = editedRange != nil
-                ? true
-                : highlightRange.length <= 100_000
+            let shouldForceLayoutForHighlightedRange = editedRange == nil
+                && highlightRange.length <= 100_000
             applyHighlightingPass(
                 highlightRange: highlightRange,
                 requestedHighlightRange: requestedHighlightRange,
+                fontMutationRange: fontMutationRange,
                 shouldForceLayoutForHighlightedRange: shouldForceLayoutForHighlightedRange
             )
         }
@@ -951,13 +1028,21 @@ struct CodeEditorView: NSViewRepresentable {
         private func applyHighlightingPass(
             highlightRange: NSRange,
             requestedHighlightRange: NSRange?,
+            fontMutationRange: NSRange?,
             shouldForceLayoutForHighlightedRange: Bool
         ) {
             guard let textView, let textStorage = unsafe textView.textStorage else { return }
             let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
 
             isApplyingHighlighting = true
+            defer {
+                isApplyingHighlighting = false
+                requiresHighlightRefresh = false
+            }
             let selectedRanges = textView.selectedRanges
+            let preservedFontRuns = requestedHighlightRange == nil
+                ? []
+                : fontAttributeRuns(in: highlightRange, excluding: fontMutationRange, storage: textStorage)
             textStorage.beginEditing()
 
             if isSyntaxHighlightingEnabled {
@@ -965,10 +1050,11 @@ struct CodeEditorView: NSViewRepresentable {
             } else {
                 textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
             }
+            restoreFontAttributeRuns(preservedFontRuns, in: textStorage)
             textStorage.edited(.editedAttributes, range: highlightRange, changeInLength: 0)
 
             textStorage.endEditing()
-            textView.selectedRanges = selectedRanges
+            restoreSelectedRangesIfNeeded(selectedRanges, in: textView)
 
             if shouldForceLayoutForHighlightedRange,
                let layoutManager = unsafe textView.layoutManager,
@@ -982,14 +1068,79 @@ struct CodeEditorView: NSViewRepresentable {
                 textView.needsDisplay = true
             }
 
-            let shouldMeasureLayoutAfterHighlighting = requestedHighlightRange == nil
             gutterView.needsDisplay = true
-            updateDocumentLayout(measureTextView: shouldMeasureLayoutAfterHighlighting)
-            DispatchQueue.main.async { [weak self] in
-                self?.updateDocumentLayout(measureTextView: shouldMeasureLayoutAfterHighlighting)
+            if requestedHighlightRange == nil {
+                updateDocumentLayout(measureTextView: true)
+                DispatchQueue.main.async { [weak self] in
+                    self?.updateDocumentLayout(measureTextView: true)
+                }
             }
-            isApplyingHighlighting = false
-            requiresHighlightRefresh = false
+        }
+
+        private func restoreSelectedRangesIfNeeded(_ selectedRanges: [NSValue], in textView: NSTextView) {
+            let currentRanges = textView.selectedRanges
+            guard currentRanges.count == selectedRanges.count else {
+                textView.selectedRanges = selectedRanges
+                return
+            }
+
+            let rangesMatch = zip(currentRanges, selectedRanges).allSatisfy { current, preserved in
+                NSEqualRanges(current.rangeValue, preserved.rangeValue)
+            }
+            if !rangesMatch {
+                textView.selectedRanges = selectedRanges
+            }
+        }
+
+        private func editedLineRange(for editedRange: NSRange, replacementLength: Int, textLength: Int) -> NSRange {
+            guard textLength > 0 else { return NSRange(location: 0, length: 0) }
+
+            let location = min(max(editedRange.location, 0), textLength)
+            let length = min(max(replacementLength, 0), textLength - location)
+            let text = sourceText as NSString
+            return text.lineRange(for: NSRange(location: location, length: length))
+        }
+
+        private func fontAttributeRuns(in range: NSRange, excluding excludedRange: NSRange?, storage: NSTextStorage) -> [FontAttributeRun] {
+            guard range.length > 0 else { return [] }
+
+            var runs: [FontAttributeRun] = []
+            for preservationRange in fontPreservationRanges(in: range, excluding: excludedRange) {
+                unsafe storage.enumerateAttribute(.font, in: preservationRange, options: []) { value, effectiveRange, _ in
+                    let runRange = NSIntersectionRange(effectiveRange, preservationRange)
+                    guard runRange.length > 0 else { return }
+                    runs.append(FontAttributeRun(range: runRange, font: value as? NSFont))
+                }
+            }
+            return runs
+        }
+
+        private func fontPreservationRanges(in range: NSRange, excluding excludedRange: NSRange?) -> [NSRange] {
+            guard let excludedRange else { return [range] }
+            let excluded = NSIntersectionRange(range, excludedRange)
+            guard excluded.length > 0 else { return [range] }
+
+            var ranges: [NSRange] = []
+            if excluded.location > range.location {
+                ranges.append(NSRange(location: range.location, length: excluded.location - range.location))
+            }
+
+            let excludedEnd = NSMaxRange(excluded)
+            let rangeEnd = NSMaxRange(range)
+            if excludedEnd < rangeEnd {
+                ranges.append(NSRange(location: excludedEnd, length: rangeEnd - excludedEnd))
+            }
+            return ranges
+        }
+
+        private func restoreFontAttributeRuns(_ runs: [FontAttributeRun], in storage: NSTextStorage) {
+            for run in runs {
+                if let font = run.font {
+                    storage.addAttribute(.font, value: font, range: run.range)
+                } else {
+                    storage.removeAttribute(.font, range: run.range)
+                }
+            }
         }
 
         private func syntaxHighlighter() -> SyntaxHighlighting {
