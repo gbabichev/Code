@@ -60,6 +60,9 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ## 📝 Changelog
 
+### 1.0.2
+- Another tweak to syntax highlighting to prevent scroll jumps. 
+
 ### 1.0.1
 - Tweaked syntax highlighting to prevent scroll jumps under certain cases. 
 - Updated Check for Update UX.

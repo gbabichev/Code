@@ -522,7 +522,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
             gutterView.needsDisplay = true
-            updateDocumentLayout(measureTextView: true)
+            updateDocumentLayoutAfterLiveEdit()
             restoreScrollOriginAfterLiveEdit(liveEditScrollOrigin)
             scheduleScrollOriginRestoreAfterLiveEdit(liveEditScrollOrigin)
         }
@@ -689,6 +689,28 @@ struct CodeEditorView: NSViewRepresentable {
             documentView.updateLayout(minimumSize: scrollView.contentSize)
         }
 
+        private func updateDocumentLayoutAfterLiveEdit() {
+            guard !isUpdatingDocumentLayout else {
+                return
+            }
+            isUpdatingDocumentLayout = true
+            defer { isUpdatingDocumentLayout = false }
+
+            guard let scrollView,
+                  let documentView,
+                  let textView = textView as? LineClickableTextView else { return }
+            if isWordWrapEnabled,
+               let textContainer = unsafe textView.textContainer {
+                let width = max(scrollView.contentSize.width, 0)
+                if abs(textView.frame.width - width) > 0.5 {
+                    textContainer.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+                }
+            }
+            applyFastTextViewSize(minimumSize: scrollView.contentSize)
+            documentView.updateLayout(minimumSize: scrollView.contentSize)
+            scheduleExactLayoutMeasurement(after: 0.18)
+        }
+
         private func handleContainerLayout() {
             updateDocumentLayout()
             restorePendingInitialScrollPositionIfNeeded()
@@ -796,8 +818,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             guard let scrollView,
                   let documentView,
-                  let textView = textView as? LineClickableTextView,
-                  shouldUseFastLayout(for: textView) else { return }
+                  textView != nil else { return }
             if isWordWrapEnabled, scrollView.contentSize.width <= 1 {
                 scheduleExactLayoutMeasurement(after: 0.05)
                 return
@@ -1001,13 +1022,10 @@ struct CodeEditorView: NSViewRepresentable {
             let requestedHighlightRange: NSRange?
             let fontMutationRange: NSRange?
             if let range = editedRange {
-                let expansion = textStorage.length > 50_000 ? 500 : 2000
-                let start = max(range.location - expansion, 0)
                 let editedLength = replacementLength ?? range.length
-                let end = min(range.location + max(range.length, editedLength) + expansion, textStorage.length)
-                highlightRange = NSRange(location: start, length: end - start)
+                highlightRange = editedLineRange(for: range, replacementLength: editedLength, textLength: textStorage.length)
                 requestedHighlightRange = highlightRange
-                fontMutationRange = editedLineRange(for: range, replacementLength: editedLength, textLength: textStorage.length)
+                fontMutationRange = highlightRange
             } else {
                 // Full-document pass (initial load, theme/language change)
                 highlightRange = NSRange(location: 0, length: textStorage.length)
@@ -1051,7 +1069,6 @@ struct CodeEditorView: NSViewRepresentable {
                 textStorage.setAttributes(theme.baseAttributes, range: highlightRange)
             }
             restoreFontAttributeRuns(preservedFontRuns, in: textStorage)
-            textStorage.edited(.editedAttributes, range: highlightRange, changeInLength: 0)
 
             textStorage.endEditing()
             restoreSelectedRangesIfNeeded(selectedRanges, in: textView)
@@ -1065,7 +1082,7 @@ struct CodeEditorView: NSViewRepresentable {
                 textView.setNeedsDisplay(rect)
             } else {
                 unsafe textView.layoutManager?.invalidateDisplay(forCharacterRange: highlightRange)
-                textView.needsDisplay = true
+                textView.setNeedsDisplay(textView.visibleRect)
             }
 
             gutterView.needsDisplay = true
