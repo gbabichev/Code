@@ -508,6 +508,7 @@ struct ContentView: View {
                             isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: primaryTab.id),
                             onExternalModificationRefresh: { workspace.requestRefreshFile(for: primaryTab.id) },
                             editorID: primaryTab.id,
+                            baseURL: primaryTab.fileURL?.deletingLastPathComponent(),
                             title: primaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(primaryTab),
@@ -529,6 +530,7 @@ struct ContentView: View {
                             isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: secondaryTab.id),
                             onExternalModificationRefresh: { workspace.requestRefreshFile(for: secondaryTab.id) },
                             editorID: secondaryTab.id,
+                            baseURL: secondaryTab.fileURL?.deletingLastPathComponent(),
                             title: secondaryTab.title,
                             showsCloseButton: true,
                             text: selectedTabBinding(secondaryTab),
@@ -551,6 +553,7 @@ struct ContentView: View {
                         isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: primaryTab.id),
                         onExternalModificationRefresh: { workspace.requestRefreshFile(for: primaryTab.id) },
                         editorID: primaryTab.id,
+                        baseURL: primaryTab.fileURL?.deletingLastPathComponent(),
                         text: selectedTabBinding(primaryTab),
                         scrollPosition: scrollPositionBinding(primaryTab),
                         isWordWrapEnabled: preferences.isWordWrapEnabled,
@@ -943,6 +946,7 @@ private struct EditorAreaView: View {
     let isExternalModificationBannerDismissed: Binding<Bool>
     let onExternalModificationRefresh: () -> Void
     let editorID: EditorTab.ID
+    let baseURL: URL?
     let text: Binding<String>
     let scrollPosition: Binding<EditorScrollPosition?>
     let isWordWrapEnabled: Bool
@@ -954,9 +958,16 @@ private struct EditorAreaView: View {
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
     let onFocus: () -> Void
+    @State private var markdownPreviewText = ""
+    @State private var markdownPreviewEditorID: EditorTab.ID?
+    @State private var pendingMarkdownPreviewUpdate: DispatchWorkItem?
 
     private var shouldShowExternalModificationBanner: Bool {
         showsExternalModificationBanner && !isExternalModificationBannerDismissed.wrappedValue
+    }
+
+    private var currentMarkdownPreviewText: String {
+        markdownPreviewEditorID == editorID ? markdownPreviewText : text.wrappedValue
     }
 
     var body: some View {
@@ -972,21 +983,88 @@ private struct EditorAreaView: View {
                 }
             }
 
-            CodeEditorView(
-                text: text,
-                scrollPosition: scrollPosition,
-                isWordWrapEnabled: isWordWrapEnabled,
-                isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
-                skin: skin,
-                language: language,
-                indentWidth: indentWidth,
-                autocompleteMode: autocompleteMode,
-                editorFont: editorFont,
-                editorSemiboldFont: editorSemiboldFont,
-                onDidFocus: onFocus
-            )
-            .id(editorID)
+            editorContent
         }
+        .onAppear {
+            resetMarkdownPreviewText()
+        }
+        .onChange(of: editorID) { _, _ in
+            resetMarkdownPreviewText()
+        }
+        .onChange(of: language) { _, newLanguage in
+            if newLanguage == .markdown {
+                resetMarkdownPreviewText()
+            } else {
+                cancelPendingMarkdownPreviewUpdate()
+            }
+        }
+        .onDisappear {
+            cancelPendingMarkdownPreviewUpdate()
+        }
+    }
+
+    @ViewBuilder
+    private var editorContent: some View {
+        if language == .markdown {
+            HSplitView {
+                codeEditor
+                    .frame(minWidth: 260)
+
+                MarkdownPreviewView(
+                    markdown: currentMarkdownPreviewText,
+                    baseURL: baseURL,
+                    skin: skin,
+                    editorFont: editorFont
+                )
+                .frame(minWidth: 260)
+            }
+        } else {
+            codeEditor
+        }
+    }
+
+    private var codeEditor: some View {
+        CodeEditorView(
+            text: text,
+            scrollPosition: scrollPosition,
+            isWordWrapEnabled: isWordWrapEnabled,
+            isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
+            skin: skin,
+            language: language,
+            indentWidth: indentWidth,
+            autocompleteMode: autocompleteMode,
+            editorFont: editorFont,
+            editorSemiboldFont: editorSemiboldFont,
+            onDidFocus: onFocus,
+            onTextChange: scheduleMarkdownPreviewUpdate
+        )
+        .id(editorID)
+    }
+
+    private func resetMarkdownPreviewText() {
+        cancelPendingMarkdownPreviewUpdate()
+        markdownPreviewEditorID = editorID
+        markdownPreviewText = text.wrappedValue
+    }
+
+    private func scheduleMarkdownPreviewUpdate(_ updatedText: String) {
+        guard language == .markdown else { return }
+
+        pendingMarkdownPreviewUpdate?.cancel()
+        let sourceEditorID = editorID
+        let workItem = DispatchWorkItem {
+            guard sourceEditorID == editorID else { return }
+            markdownPreviewEditorID = sourceEditorID
+            markdownPreviewText = updatedText
+            pendingMarkdownPreviewUpdate = nil
+        }
+        pendingMarkdownPreviewUpdate = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: workItem)
+    }
+
+    private func cancelPendingMarkdownPreviewUpdate() {
+        pendingMarkdownPreviewUpdate?.cancel()
+        pendingMarkdownPreviewUpdate = nil
     }
 
     @ViewBuilder
@@ -1036,6 +1114,7 @@ private struct EditorSplitPaneView: View {
     let isExternalModificationBannerDismissed: Binding<Bool>
     let onExternalModificationRefresh: () -> Void
     let editorID: EditorTab.ID
+    let baseURL: URL?
     let title: String
     let showsCloseButton: Bool
     let text: Binding<String>
@@ -1095,6 +1174,7 @@ private struct EditorSplitPaneView: View {
                 isExternalModificationBannerDismissed: isExternalModificationBannerDismissed,
                 onExternalModificationRefresh: onExternalModificationRefresh,
                 editorID: editorID,
+                baseURL: baseURL,
                 text: text,
                 scrollPosition: scrollPosition,
                 isWordWrapEnabled: isWordWrapEnabled,

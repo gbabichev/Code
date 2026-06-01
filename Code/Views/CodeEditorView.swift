@@ -213,6 +213,35 @@ struct CodeEditorView: NSViewRepresentable {
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
     let onDidFocus: () -> Void
+    let onTextChange: (String) -> Void
+
+    init(
+        text: Binding<String>,
+        scrollPosition: Binding<EditorScrollPosition?>,
+        isWordWrapEnabled: Bool,
+        isSyntaxHighlightingEnabled: Bool,
+        skin: SkinDefinition,
+        language: EditorLanguage,
+        indentWidth: Int,
+        autocompleteMode: EditorAutocompleteMode,
+        editorFont: NSFont,
+        editorSemiboldFont: NSFont,
+        onDidFocus: @escaping () -> Void,
+        onTextChange: @escaping (String) -> Void = { _ in }
+    ) {
+        self._text = text
+        self._scrollPosition = scrollPosition
+        self.isWordWrapEnabled = isWordWrapEnabled
+        self.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
+        self.skin = skin
+        self.language = language
+        self.indentWidth = indentWidth
+        self.autocompleteMode = autocompleteMode
+        self.editorFont = editorFont
+        self.editorSemiboldFont = editorSemiboldFont
+        self.onDidFocus = onDidFocus
+        self.onTextChange = onTextChange
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
@@ -226,7 +255,8 @@ struct CodeEditorView: NSViewRepresentable {
             editorFont: editorFont,
             editorSemiboldFont: editorSemiboldFont,
             isWordWrapEnabled: isWordWrapEnabled,
-            onDidFocus: onDidFocus
+            onDidFocus: onDidFocus,
+            onTextChange: onTextChange
         )
     }
 
@@ -317,6 +347,7 @@ struct CodeEditorView: NSViewRepresentable {
         context.coordinator.editorFont = editorFont
         context.coordinator.editorSemiboldFont = editorSemiboldFont
         context.coordinator.onDidFocus = onDidFocus
+        context.coordinator.onTextChange = onTextChange
 
         if didLanguageChange || didSkinChange || didFontChange {
             let theme = skin.makeTheme(for: language, editorFont: editorFont, semiboldFont: editorSemiboldFont)
@@ -380,6 +411,7 @@ struct CodeEditorView: NSViewRepresentable {
         var editorSemiboldFont: NSFont
         var isWordWrapEnabled: Bool
         var onDidFocus: () -> Void
+        var onTextChange: (String) -> Void
         weak var textView: NSTextView?
         weak var documentView: PaddedEditorDocumentView?
         weak var scrollView: NSScrollView?
@@ -404,7 +436,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
         private let completionController = CompletionController()
 
-        init(textBinding: Binding<String>, scrollPosition: Binding<EditorScrollPosition?>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void) {
+        init(textBinding: Binding<String>, scrollPosition: Binding<EditorScrollPosition?>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void, onTextChange: @escaping (String) -> Void) {
             self.textBinding = textBinding
             self.scrollPosition = scrollPosition
             self.language = language
@@ -416,6 +448,7 @@ struct CodeEditorView: NSViewRepresentable {
             self.editorSemiboldFont = editorSemiboldFont
             self.isWordWrapEnabled = isWordWrapEnabled
             self.onDidFocus = onDidFocus
+            self.onTextChange = onTextChange
             self.sourceText = textBinding.wrappedValue
             self.lastSyncedBindingText = textBinding.wrappedValue
         }
@@ -657,6 +690,7 @@ struct CodeEditorView: NSViewRepresentable {
             gutterView.rebuildLineIndex(for: text as NSString)
             updateDocumentLayout(measureTextView: true)
             requiresHighlightRefresh = true
+            onTextChange(text)
             return true
         }
 
@@ -996,6 +1030,7 @@ struct CodeEditorView: NSViewRepresentable {
             lastSyncedBindingText = sourceText
             hasUnsyncedBindingText = false
             textBinding.wrappedValue = sourceText
+            onTextChange(sourceText)
         }
 
         private func hasPendingBindingSync() -> Bool {
