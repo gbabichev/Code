@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var searchSummaryGeneration = 0
     @State private var toastMessage: String?
     @State private var dismissedExternalModificationBannerVersionsByTabID: [EditorTab.ID: Int] = [:]
+    @State private var hiddenMarkdownPreviewTabIDs: Set<EditorTab.ID> = []
     @FocusState private var focusedSearchField: SearchField?
 
     enum SearchField: Hashable {
@@ -361,6 +362,20 @@ struct ContentView: View {
                     .frame(height: 12)
             }
 
+            if tab.language == .markdown {
+                Button {
+                    toggleMarkdownPreview(for: tab.id)
+                } label: {
+                    Image(systemName: isMarkdownPreviewVisible(for: tab) ? "eye.slash" : "eye")
+                }
+                .buttonStyle(.borderless)
+                .help(isMarkdownPreviewVisible(for: tab) ? "Hide Markdown Preview" : "Show Markdown Preview")
+                .accessibilityLabel(isMarkdownPreviewVisible(for: tab) ? "Hide Markdown Preview" : "Show Markdown Preview")
+
+                Divider()
+                    .frame(height: 12)
+            }
+
             Text("\(lineCount(for: tab)) lines")
 
             Divider()
@@ -521,7 +536,9 @@ struct ContentView: View {
                             autocompleteMode: preferences.autocompleteMode,
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
+                            isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: primaryTab),
                             onFocus: { workspace.focusPane(.primary) },
+                            onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) },
                             onClose: { workspace.removeTabFromSplitView(primaryTab.id) }
                         )
 
@@ -543,7 +560,9 @@ struct ContentView: View {
                             autocompleteMode: preferences.autocompleteMode,
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
+                            isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: secondaryTab),
                             onFocus: { workspace.focusPane(.secondary) },
+                            onToggleMarkdownPreview: { toggleMarkdownPreview(for: secondaryTab.id) },
                             onClose: { workspace.removeTabFromSplitView(secondaryTab.id) }
                         )
                     }
@@ -564,11 +583,32 @@ struct ContentView: View {
                         autocompleteMode: preferences.autocompleteMode,
                         editorFont: preferences.editorFont,
                         editorSemiboldFont: preferences.editorSemiboldFont,
-                        onFocus: { workspace.focusPane(.primary) }
+                        isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: primaryTab),
+                        onFocus: { workspace.focusPane(.primary) },
+                        onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) }
                     )
                 }
             }
         }
+    }
+
+    private func isMarkdownPreviewVisible(for tab: EditorTab) -> Bool {
+        tab.language == .markdown && !hiddenMarkdownPreviewTabIDs.contains(tab.id)
+    }
+
+    private func toggleMarkdownPreview(for tabID: EditorTab.ID) {
+        let shouldShow = hiddenMarkdownPreviewTabIDs.contains(tabID)
+        setMarkdownPreviewVisible(shouldShow, for: tabID)
+    }
+
+    private func setMarkdownPreviewVisible(_ isVisible: Bool, for tabID: EditorTab.ID) {
+        var updatedHiddenTabIDs = hiddenMarkdownPreviewTabIDs
+        if isVisible {
+            updatedHiddenTabIDs.remove(tabID)
+        } else {
+            updatedHiddenTabIDs.insert(tabID)
+        }
+        hiddenMarkdownPreviewTabIDs = updatedHiddenTabIDs
     }
 
     private func requestCloseTab(_ id: EditorTab.ID) {
@@ -957,7 +997,9 @@ private struct EditorAreaView: View {
     let autocompleteMode: EditorAutocompleteMode
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
+    let isMarkdownPreviewVisible: Bool
     let onFocus: () -> Void
+    let onToggleMarkdownPreview: () -> Void
     @State private var markdownPreviewText = ""
     @State private var markdownPreviewEditorID: EditorTab.ID?
     @State private var pendingMarkdownPreviewUpdate: DispatchWorkItem?
@@ -998,6 +1040,13 @@ private struct EditorAreaView: View {
                 cancelPendingMarkdownPreviewUpdate()
             }
         }
+        .onChange(of: isMarkdownPreviewVisible) { _, isVisible in
+            if isVisible, language == .markdown {
+                resetMarkdownPreviewText()
+            } else {
+                cancelPendingMarkdownPreviewUpdate()
+            }
+        }
         .onDisappear {
             cancelPendingMarkdownPreviewUpdate()
         }
@@ -1010,16 +1059,81 @@ private struct EditorAreaView: View {
                 codeEditor
                     .frame(minWidth: 260)
 
-                MarkdownPreviewView(
-                    markdown: currentMarkdownPreviewText,
-                    baseURL: baseURL,
-                    skin: skin,
-                    editorFont: editorFont
-                )
-                .frame(minWidth: 260)
+                if isMarkdownPreviewVisible {
+                    markdownPreviewPane
+                        .frame(minWidth: 260)
+                } else {
+                    markdownPreviewCollapsedRail
+                        .frame(minWidth: 38, idealWidth: 38, maxWidth: 38)
+                }
             }
         } else {
             codeEditor
+        }
+    }
+
+    private var markdownPreviewPane: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "eye")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Text("Preview")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.primary.opacity(0.82))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                Button {
+                    onToggleMarkdownPreview()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderless)
+                .help("Hide Markdown Preview")
+                .accessibilityLabel("Hide Markdown Preview")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor))
+
+            Divider()
+
+            MarkdownPreviewView(
+                markdown: currentMarkdownPreviewText,
+                baseURL: baseURL,
+                skin: skin,
+                editorFont: editorFont
+            )
+        }
+    }
+
+    private var markdownPreviewCollapsedRail: some View {
+        VStack(spacing: 0) {
+            Button {
+                onToggleMarkdownPreview()
+            } label: {
+                Image(systemName: "eye")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .help("Show Markdown Preview")
+            .accessibilityLabel("Show Markdown Preview")
+            .padding(.top, 6)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxHeight: .infinity)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .leading) {
+            Divider()
         }
     }
 
@@ -1048,7 +1162,7 @@ private struct EditorAreaView: View {
     }
 
     private func scheduleMarkdownPreviewUpdate(_ updatedText: String) {
-        guard language == .markdown else { return }
+        guard language == .markdown, isMarkdownPreviewVisible else { return }
 
         pendingMarkdownPreviewUpdate?.cancel()
         let sourceEditorID = editorID
@@ -1127,7 +1241,9 @@ private struct EditorSplitPaneView: View {
     let autocompleteMode: EditorAutocompleteMode
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
+    let isMarkdownPreviewVisible: Bool
     let onFocus: () -> Void
+    let onToggleMarkdownPreview: () -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -1143,6 +1259,20 @@ private struct EditorSplitPaneView: View {
                     .lineLimit(1)
 
                 Spacer(minLength: 0)
+
+                if language == .markdown {
+                    Button {
+                        onToggleMarkdownPreview()
+                    } label: {
+                        Image(systemName: isMarkdownPreviewVisible ? "eye.slash" : "eye")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(isMarkdownPreviewVisible ? "Hide Markdown Preview" : "Show Markdown Preview")
+                    .accessibilityLabel(isMarkdownPreviewVisible ? "Hide Markdown Preview" : "Show Markdown Preview")
+                }
 
                 Group {
                     if showsCloseButton {
@@ -1185,7 +1315,9 @@ private struct EditorSplitPaneView: View {
                 autocompleteMode: autocompleteMode,
                 editorFont: editorFont,
                 editorSemiboldFont: editorSemiboldFont,
-                onFocus: onFocus
+                isMarkdownPreviewVisible: isMarkdownPreviewVisible,
+                onFocus: onFocus,
+                onToggleMarkdownPreview: onToggleMarkdownPreview
             )
         }
         .background(Color(nsColor: .textBackgroundColor))

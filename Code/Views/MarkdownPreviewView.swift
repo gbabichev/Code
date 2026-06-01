@@ -33,6 +33,9 @@ struct MarkdownPreviewView: View {
 }
 
 private struct MarkdownPreviewWebView: NSViewRepresentable {
+    private static let legacyNavigationTypeActionKey = "WebActionNavigationType"
+    private static let legacyLinkClickedNavigationType = 0
+
     let html: String
     let baseURL: URL?
 
@@ -40,55 +43,256 @@ private struct MarkdownPreviewWebView: NSViewRepresentable {
         Coordinator()
     }
 
-    func makeNSView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.navigationDelegate = context.coordinator
-        webView.allowsBackForwardNavigationGestures = false
+    func makeNSView(context: Context) -> NSView {
+        guard let webView = legacyWebView() else {
+            return NSView(frame: .zero)
+        }
+        if let preferences = legacyWebPreferences() {
+            webView.setValue(preferences, forKey: "preferences")
+        }
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.setValue(false, forKey: "shouldCloseWithWindow")
+        webView.setValue(context.coordinator, forKey: "frameLoadDelegate")
+        webView.setValue(context.coordinator, forKey: "policyDelegate")
+        context.coordinator.updateObservedScrollView(in: webView)
         return webView
     }
 
-    func updateNSView(_ webView: WKWebView, context: Context) {
+    func updateNSView(_ webView: NSView, context: Context) {
         guard context.coordinator.loadedHTML != html
                 || context.coordinator.loadedBaseURL != baseURL else { return }
 
+        context.coordinator.prepareForReload(in: webView)
         context.coordinator.loadedHTML = html
         context.coordinator.loadedBaseURL = baseURL
-        webView.loadHTMLString(html, baseURL: baseURL)
+        context.coordinator.loadHTML(html, baseURL: baseURL, in: webView)
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    private func legacyWebView() -> NSView? {
+        guard let webViewClass = NSClassFromString("WebView") as? NSView.Type else {
+            return nil
+        }
+        return webViewClass.init(frame: .zero)
+    }
+
+    private func legacyWebPreferences() -> NSObject? {
+        guard let preferencesClass = NSClassFromString("WebPreferences") as? NSObject.Type else {
+            return nil
+        }
+
+        let preferences = preferencesClass.init()
+        preferences.setValue(false, forKey: "javaScriptEnabled")
+        preferences.setValue(false, forKey: "javaScriptCanOpenWindowsAutomatically")
+        preferences.setValue(false, forKey: "plugInsEnabled")
+        return preferences
+    }
+
+    final class Coordinator: NSObject {
         var loadedHTML = ""
         var loadedBaseURL: URL?
+        private var observedClipView: NSClipView?
+        private var clipViewBoundsObserver: NSObjectProtocol?
+        private var lastKnownScrollState: PreviewScrollState?
+        private var pendingScrollState: PreviewScrollState?
+        private var scrollRestoreGeneration = 0
+        private var isReloadingPreview = false
 
+        deinit {
+            MainActor.assumeIsolated {
+                if let clipViewBoundsObserver {
+                    NotificationCenter.default.removeObserver(clipViewBoundsObserver)
+                }
+            }
+        }
+
+        func loadHTML(_ html: String, baseURL: URL?, in webView: NSView) {
+            guard let mainFrame = mainFrame(in: webView) else { return }
+            unsafe _ = mainFrame.perform(
+                NSSelectorFromString("loadHTMLString:baseURL:"),
+                with: html,
+                with: baseURL as NSURL?
+            )
+        }
+
+        @objc(webView:decidePolicyForNavigationAction:request:frame:decisionListener:)
         func webView(
-            _ webView: WKWebView,
-            decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+            _ webView: AnyObject,
+            decidePolicyForNavigationAction actionInformation: NSDictionary,
+            request: NSURLRequest,
+            frame: AnyObject,
+            decisionListener listener: AnyObject
         ) {
-            guard let url = navigationAction.request.url else {
-                decisionHandler(.allow)
+            guard let url = request.url else {
+                performPolicyAction("use", on: listener)
                 return
             }
 
             if url.scheme?.lowercased() == "javascript" {
-                decisionHandler(.cancel)
+                performPolicyAction("ignore", on: listener)
                 return
             }
 
-            if navigationAction.navigationType == .linkActivated {
+            let navigationType = actionInformation[MarkdownPreviewWebView.legacyNavigationTypeActionKey] as? NSNumber
+            if navigationType?.intValue == MarkdownPreviewWebView.legacyLinkClickedNavigationType {
                 if MarkdownHTMLSanitizer.isSafeLinkURL(url.absoluteString) {
                     NSWorkspace.shared.open(url)
                 }
-                decisionHandler(.cancel)
+                performPolicyAction("ignore", on: listener)
                 return
             }
 
-            decisionHandler(.allow)
+            performPolicyAction("use", on: listener)
         }
+
+        @objc(webView:didFinishLoadForFrame:)
+        func webView(_ sender: AnyObject, didFinishLoadFor frame: AnyObject) {
+            guard let webView = sender as? NSView,
+                  let mainFrame = mainFrame(in: webView),
+                  mainFrame === frame else { return }
+            updateObservedScrollView(in: webView)
+            restorePendingScrollState(in: webView)
+        }
+
+        func prepareForReload(in webView: NSView) {
+            updateObservedScrollView(in: webView)
+            if let currentScrollState = captureScrollState(in: webView) {
+                lastKnownScrollState = currentScrollState
+            }
+            pendingScrollState = lastKnownScrollState
+            isReloadingPreview = true
+        }
+
+        func updateObservedScrollView(in webView: NSView) {
+            guard let scrollView = scrollView(in: webView) else { return }
+            let clipView = scrollView.contentView
+            guard observedClipView !== clipView else { return }
+
+            if let clipViewBoundsObserver {
+                NotificationCenter.default.removeObserver(clipViewBoundsObserver)
+            }
+
+            observedClipView = clipView
+            clipView.postsBoundsChangedNotifications = true
+            clipViewBoundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: clipView,
+                queue: .main
+            ) { [weak self, weak webView] _ in
+                DispatchQueue.main.async {
+                    guard let self,
+                          let webView,
+                          !self.isReloadingPreview,
+                          let scrollState = self.captureScrollState(in: webView) else { return }
+                    self.lastKnownScrollState = scrollState
+                }
+            }
+        }
+
+        private func captureScrollState(in webView: NSView) -> PreviewScrollState? {
+            guard let scrollView = scrollView(in: webView) else { return nil }
+            let visibleRect = scrollView.contentView.bounds
+            let documentSize = scrollView.documentView?.bounds.size ?? .zero
+            let maxOffset = NSPoint(
+                x: max(documentSize.width - visibleRect.width, 0),
+                y: max(documentSize.height - visibleRect.height, 0)
+            )
+
+            return PreviewScrollState(
+                offset: NSPoint(
+                    x: min(max(visibleRect.origin.x, 0), maxOffset.x),
+                    y: min(max(visibleRect.origin.y, 0), maxOffset.y)
+                ),
+                maxOffset: maxOffset
+            )
+        }
+
+        private func restorePendingScrollState(in webView: NSView) {
+            guard let state = pendingScrollState else {
+                isReloadingPreview = false
+                return
+            }
+
+            scrollRestoreGeneration += 1
+            let generation = scrollRestoreGeneration
+            restoreScrollState(state, in: webView)
+
+            for delay in [0.03, 0.1, 0.25] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak webView] in
+                    guard let self,
+                          let webView,
+                          self.scrollRestoreGeneration == generation else { return }
+                    self.restoreScrollState(state, in: webView)
+                    if delay == 0.25 {
+                        self.isReloadingPreview = false
+                        self.lastKnownScrollState = self.captureScrollState(in: webView)
+                    }
+                }
+            }
+        }
+
+        private func restoreScrollState(_ state: PreviewScrollState, in webView: NSView) {
+            guard let scrollView = scrollView(in: webView),
+                  let documentView = scrollView.documentView else { return }
+
+            let visibleRect = scrollView.contentView.bounds
+            let documentSize = documentView.bounds.size
+            let maxOffset = NSPoint(
+                x: max(documentSize.width - visibleRect.width, 0),
+                y: max(documentSize.height - visibleRect.height, 0)
+            )
+            let offset = NSPoint(
+                x: restoredOffset(from: state.offset.x, oldMax: state.maxOffset.x, newMax: maxOffset.x),
+                y: restoredOffset(from: state.offset.y, oldMax: state.maxOffset.y, newMax: maxOffset.y)
+            )
+
+            scrollView.contentView.scroll(to: offset)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+        }
+
+        private func restoredOffset(from offset: CGFloat, oldMax: CGFloat, newMax: CGFloat) -> CGFloat {
+            guard newMax > 0 else { return 0 }
+            guard oldMax > 0 else { return min(max(offset, 0), newMax) }
+
+            let relativeOffset = newMax * min(max(offset / oldMax, 0), 1)
+            let preferredOffset = abs(newMax - oldMax) < 80 ? offset : relativeOffset
+            return min(max(preferredOffset, 0), newMax)
+        }
+
+        private func scrollView(in webView: NSView) -> NSScrollView? {
+            if let frameView = mainFrame(in: webView)?.value(forKey: "frameView") as? NSObject,
+               let documentView = frameView.value(forKey: "documentView") as? NSView,
+               let scrollView = documentView.enclosingScrollView {
+                return scrollView
+            }
+
+            return firstScrollView(in: webView)
+        }
+
+        private func mainFrame(in webView: NSView) -> AnyObject? {
+            guard webView.responds(to: NSSelectorFromString("mainFrame")) else { return nil }
+            return webView.value(forKey: "mainFrame") as AnyObject?
+        }
+
+        private func performPolicyAction(_ action: String, on listener: AnyObject) {
+            unsafe _ = listener.perform(NSSelectorFromString(action))
+        }
+
+        private func firstScrollView(in view: NSView) -> NSScrollView? {
+            if let scrollView = view as? NSScrollView {
+                return scrollView
+            }
+            for subview in view.subviews {
+                if let scrollView = firstScrollView(in: subview) {
+                    return scrollView
+                }
+            }
+            return nil
+        }
+    }
+
+    private struct PreviewScrollState {
+        let offset: NSPoint
+        let maxOffset: NSPoint
     }
 }
 
