@@ -135,11 +135,13 @@ final class EditorWorkspace: ObservableObject {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.prompt = "Open File"
 
-        if panel.runModal() == .OK, let url = panel.url {
-            openFile(url)
+        if panel.runModal() == .OK {
+            for url in panel.urls {
+                openFile(url)
+            }
         }
     }
 
