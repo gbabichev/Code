@@ -387,7 +387,10 @@ private enum MarkdownHTMLRenderer {
         }
         ul, ol { padding-left: 1.55em; }
         li { margin: 0.22em 0; }
-        li > input[type="checkbox"] {
+        li.task-list-item {
+            list-style: none;
+        }
+        li.task-list-item > input[type="checkbox"] {
             margin: 0 0.45em 0 -1.35em;
             pointer-events: none;
         }
@@ -486,6 +489,8 @@ private enum MarkdownHTMLRenderer {
             return renderList(items: items, ordered: true, baseURL: baseURL)
         case let .blockquote(text):
             return "<blockquote>\(MarkdownInlineRenderer.render(text, baseURL: baseURL))</blockquote>"
+        case let .table(table):
+            return renderTable(table, baseURL: baseURL)
         case let .code(language, text):
             let classAttribute = language
                 .flatMap { sanitizedClassName("language-\($0)") }
@@ -518,9 +523,34 @@ private enum MarkdownHTMLRenderer {
                     ? "<input type=\"checkbox\" checked disabled>"
                     : "<input type=\"checkbox\" disabled>"
             } ?? ""
-            return "<li>\(checkbox)\(MarkdownInlineRenderer.render(item.text, baseURL: baseURL))</li>"
+            let classAttribute = item.checklistState == nil ? "" : " class=\"task-list-item\""
+            return "<li\(classAttribute)>\(checkbox)\(MarkdownInlineRenderer.render(item.text, baseURL: baseURL))</li>"
         }.joined()
         return "<\(tag)>\(itemHTML)</\(tag)>"
+    }
+
+    private static func renderTable(_ table: MarkdownPreviewTable, baseURL: URL?) -> String {
+        let headerHTML = table.header.enumerated().map { index, cell in
+            "<th\(alignmentAttribute(table.alignments[index]))>\(MarkdownInlineRenderer.render(cell, baseURL: baseURL))</th>"
+        }.joined()
+        let rowsHTML = table.rows.map { row in
+            let cellsHTML = row.enumerated().map { index, cell in
+                "<td\(alignmentAttribute(table.alignments[index]))>\(MarkdownInlineRenderer.render(cell, baseURL: baseURL))</td>"
+            }.joined()
+            return "<tr>\(cellsHTML)</tr>"
+        }.joined()
+
+        return """
+        <table>
+            <thead><tr>\(headerHTML)</tr></thead>
+            <tbody>\(rowsHTML)</tbody>
+        </table>
+        """
+    }
+
+    private static func alignmentAttribute(_ alignment: MarkdownTableAlignment?) -> String {
+        guard let alignment else { return "" }
+        return " align=\"\(alignment.rawValue)\""
     }
 
     private static func unavailableHTML(title: String, message: String) -> String {
@@ -1041,6 +1071,7 @@ private enum MarkdownPreviewBlock {
     case unorderedList([MarkdownPreviewListItem])
     case orderedList([MarkdownPreviewListItem])
     case blockquote(String)
+    case table(MarkdownPreviewTable)
     case code(language: String?, text: String)
     case image(MarkdownPreviewImage)
     case rule
@@ -1059,6 +1090,18 @@ private enum MarkdownChecklistState {
 private struct MarkdownPreviewImage {
     let alt: String
     let target: String
+}
+
+private struct MarkdownPreviewTable {
+    let header: [String]
+    let alignments: [MarkdownTableAlignment?]
+    let rows: [[String]]
+}
+
+private enum MarkdownTableAlignment: String {
+    case left
+    case center
+    case right
 }
 
 private enum MarkdownPreviewParser {
@@ -1095,6 +1138,12 @@ private enum MarkdownPreviewParser {
             if isRule(trimmed) {
                 blocks.append(.rule)
                 index += 1
+                continue
+            }
+
+            if let table = parseTable(lines: lines, startingAt: index) {
+                blocks.append(table.block)
+                index = table.nextIndex
                 continue
             }
 
@@ -1224,6 +1273,144 @@ private enum MarkdownPreviewParser {
         return (quoteLines.joined(separator: "\n"), cursor)
     }
 
+    private static func parseTable(lines: [String], startingAt index: Int) -> (block: MarkdownPreviewBlock, nextIndex: Int)? {
+        guard index + 1 < lines.count,
+              let headerCells = tableCells(from: lines[index]),
+              let separator = tableSeparator(from: lines[index + 1]) else { return nil }
+
+        let columnCount = max(headerCells.count, separator.count)
+        guard columnCount > 0 else { return nil }
+
+        var rows: [[String]] = []
+        var cursor = index + 2
+
+        while cursor < lines.count {
+            let trimmed = lines[cursor].trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty,
+                  let cells = tableCells(from: lines[cursor]) else { break }
+
+            rows.append(normalizedTableCells(cells, columnCount: columnCount))
+            cursor += 1
+        }
+
+        let table = MarkdownPreviewTable(
+            header: normalizedTableCells(headerCells, columnCount: columnCount),
+            alignments: normalizedAlignments(separator, columnCount: columnCount),
+            rows: rows
+        )
+        return (.table(table), cursor)
+    }
+
+    private static func tableSeparator(from line: String) -> [MarkdownTableAlignment?]? {
+        guard let cells = tableCells(from: line) else { return nil }
+
+        var alignments: [MarkdownTableAlignment?] = []
+        for cell in cells {
+            let compact = String(cell.filter { !$0.isWhitespace })
+            guard compact.count >= 3 else { return nil }
+
+            let startsWithColon = compact.hasPrefix(":")
+            let endsWithColon = compact.hasSuffix(":")
+            let dashStart = startsWithColon ? compact.index(after: compact.startIndex) : compact.startIndex
+            let dashEnd = endsWithColon ? compact.index(before: compact.endIndex) : compact.endIndex
+            guard dashStart < dashEnd,
+                  compact[dashStart..<dashEnd].allSatisfy({ $0 == "-" }) else { return nil }
+
+            if startsWithColon && endsWithColon {
+                alignments.append(.center)
+            } else if endsWithColon {
+                alignments.append(.right)
+            } else if startsWithColon {
+                alignments.append(.left)
+            } else {
+                alignments.append(nil)
+            }
+        }
+
+        return alignments.isEmpty ? nil : alignments
+    }
+
+    private static func tableCells(from line: String) -> [String]? {
+        guard lineContainsUnescapedPipe(line) else { return nil }
+
+        let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+        var cells: [String] = []
+        var current = ""
+        var cursor = line.startIndex
+
+        while cursor < line.endIndex {
+            let character = line[cursor]
+
+            if character == "\\" {
+                let nextIndex = line.index(after: cursor)
+                if nextIndex < line.endIndex, line[nextIndex] == "|" {
+                    current.append("|")
+                    cursor = line.index(after: nextIndex)
+                    continue
+                }
+            }
+
+            if character == "|" {
+                cells.append(current.trimmingCharacters(in: .whitespaces))
+                current = ""
+            } else {
+                current.append(character)
+            }
+
+            cursor = line.index(after: cursor)
+        }
+
+        cells.append(current.trimmingCharacters(in: .whitespaces))
+
+        if trimmedLine.hasPrefix("|"), cells.first == "" {
+            cells.removeFirst()
+        }
+        if trimmedLine.hasSuffix("|"), cells.last == "" {
+            cells.removeLast()
+        }
+
+        return cells.isEmpty ? nil : cells
+    }
+
+    private static func lineContainsUnescapedPipe(_ line: String) -> Bool {
+        var cursor = line.startIndex
+
+        while cursor < line.endIndex {
+            if line[cursor] == "\\" {
+                cursor = line.index(after: cursor)
+                if cursor < line.endIndex {
+                    cursor = line.index(after: cursor)
+                }
+                continue
+            }
+
+            if line[cursor] == "|" {
+                return true
+            }
+
+            cursor = line.index(after: cursor)
+        }
+
+        return false
+    }
+
+    private static func normalizedTableCells(_ cells: [String], columnCount: Int) -> [String] {
+        if cells.count >= columnCount {
+            return Array(cells.prefix(columnCount))
+        }
+        return cells + Array(repeating: "", count: columnCount - cells.count)
+    }
+
+    private static func normalizedAlignments(
+        _ alignments: [MarkdownTableAlignment?],
+        columnCount: Int
+    ) -> [MarkdownTableAlignment?] {
+        if alignments.count >= columnCount {
+            return Array(alignments.prefix(columnCount))
+        }
+        return alignments + Array(repeating: nil, count: columnCount - alignments.count)
+    }
+
     private static func parseList(
         lines: [String],
         startingAt index: Int,
@@ -1265,7 +1452,9 @@ private enum MarkdownPreviewParser {
         while cursor < lines.count {
             let line = lines[cursor]
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty, !blockStart(line) else { break }
+            guard !trimmed.isEmpty,
+                  !blockStart(line),
+                  parseTable(lines: lines, startingAt: cursor) == nil else { break }
             paragraphLines.append(trimmed)
             cursor += 1
         }
