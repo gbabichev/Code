@@ -22,7 +22,7 @@ struct CodeApp: App {
     @StateObject private var recentItemRouter = RecentItemRouter.shared
     @StateObject private var dockCommandRouter = DockCommandRouter.shared
     @StateObject private var aboutController = AboutOverlayController()
-    @StateObject private var settingsController = SettingsPopoverController()
+    @StateObject private var settingsController = SettingsOverlayController()
     @StateObject private var updateCenter = AppUpdateCenter.shared
 
     var body: some Scene {
@@ -102,7 +102,7 @@ private struct WorkspaceSceneView: View {
     @ObservedObject var externalFileRouter: ExternalFileRouter
     @ObservedObject var recentItemRouter: RecentItemRouter
     @ObservedObject var aboutController: AboutOverlayController
-    @ObservedObject var settingsController: SettingsPopoverController
+    @ObservedObject var settingsController: SettingsOverlayController
     @ObservedObject var updateCenter: AppUpdateCenter
     let openNewWindow: () -> Void
     @Environment(\.scenePhase) private var scenePhase
@@ -118,7 +118,7 @@ private struct WorkspaceSceneView: View {
         externalFileRouter: ExternalFileRouter,
         recentItemRouter: RecentItemRouter,
         aboutController: AboutOverlayController,
-        settingsController: SettingsPopoverController,
+        settingsController: SettingsOverlayController,
         updateCenter: AppUpdateCenter,
         openNewWindow: @escaping () -> Void
     ) {
@@ -533,7 +533,7 @@ final class AboutOverlayController: ObservableObject {
 }
 
 @MainActor
-final class SettingsPopoverController: ObservableObject {
+final class SettingsOverlayController: ObservableObject {
     @Published var isPresented = false
 
     func present() {
@@ -608,7 +608,7 @@ private struct EditorCommands: Commands {
     @State private var isCommandLineToolInstalled = CommandLineToolInstaller.canRemoveInstalledTool
     @ObservedObject var preferences: AppPreferences
     @ObservedObject var aboutController: AboutOverlayController
-    @ObservedObject var settingsController: SettingsPopoverController
+    @ObservedObject var settingsController: SettingsOverlayController
     @ObservedObject var updateCenter: AppUpdateCenter
     @ObservedObject var activeWorkspaceRegistry: ActiveWorkspaceRegistry
     @ObservedObject var workspacePersistenceRegistry: WorkspacePersistenceRegistry
@@ -821,30 +821,6 @@ private struct EditorCommands: Commands {
             .disabled(resolvedWorkspace?.selectedTab == nil)
 
             Button {
-                preferences.showsInvisibleCharacters.toggle()
-            } label: {
-                Label(
-                    preferences.showsInvisibleCharacters ? "Hide Invisibles" : "Show Invisibles",
-                    systemImage: "paragraphsign"
-                )
-            }
-            .disabled(resolvedWorkspace?.selectedTab == nil)
-
-            Button {
-                preferences.trimsTrailingWhitespaceOnSave.toggle()
-            } label: {
-                Label(
-                    preferences.trimsTrailingWhitespaceOnSave
-                        ? "Disable Trim Trailing Whitespace on Save"
-                        : "Trim Trailing Whitespace on Save",
-                    systemImage: "scissors"
-                )
-            }
-            .disabled(resolvedWorkspace?.selectedTab == nil)
-
-            Divider()
-
-            Button {
                 ActiveEditorTextViewRegistry.shared.indentSelection()
             } label: {
                 Label("Indent", systemImage: "increase.indent")
@@ -947,6 +923,13 @@ private struct EditorCommands: Commands {
                 Label("Word Wrap", systemImage: "text.justify.left")
             }
             .keyboardShortcut("z", modifiers: [.option, .command])
+
+            Toggle(isOn: Binding(
+                get: { preferences.showsInvisibleCharacters },
+                set: { preferences.showsInvisibleCharacters = $0 }
+            )) {
+                Label("Show Invisibles", systemImage: "paragraphsign")
+            }
         }
 
         CommandGroup(replacing: .appTermination) {

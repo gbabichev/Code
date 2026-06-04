@@ -16,7 +16,7 @@ struct ContentView: View {
     @EnvironmentObject private var detachedTabTransfer: DetachedTabTransferCoordinator
     @EnvironmentObject private var searchController: EditorSearchController
     @EnvironmentObject private var aboutController: AboutOverlayController
-    @EnvironmentObject private var settingsController: SettingsPopoverController
+    @EnvironmentObject private var settingsController: SettingsOverlayController
     @EnvironmentObject private var updateCenter: AppUpdateCenter
     @State private var isTargetingTabDrop = false
     @State private var searchMatchSummary = SearchMatchSummary()
@@ -63,11 +63,6 @@ struct ContentView: View {
                     settingsController.isPresented.toggle()
                 } label: {
                     Image(systemName: "gearshape")
-                }
-                .popover(isPresented: $settingsController.isPresented, arrowEdge: .bottom) {
-                    SettingsPopoverView()
-                        .environmentObject(preferences)
-                        .environmentObject(workspace)
                 }
             }
             //Spacer()
@@ -124,6 +119,13 @@ struct ContentView: View {
             }
         } message: {
             Text(activeErrorMessage)
+        }
+        .overlay {
+            if settingsController.isPresented {
+                SettingsOverlayView(isPresented: $settingsController.isPresented)
+                    .environmentObject(preferences)
+                    .environmentObject(workspace)
+            }
         }
         .overlay {
             if aboutController.isPresented {
@@ -1446,36 +1448,91 @@ private struct EditorSearchBar: View {
     }
 }
 
-private struct SettingsPopoverView: View {
+private struct SettingsOverlayView: View {
+    @Binding var isPresented: Bool
     @EnvironmentObject private var preferences: AppPreferences
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 30, height: 30)
-                        .background(
-                            LinearGradient(
-                                colors: [Color.accentColor.opacity(0.95), Color.accentColor.opacity(0.7)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        )
+        GeometryReader { proxy in
+            let panelWidth = min(max(proxy.size.width - 48, 420), 640)
+            let panelHeight = min(max(proxy.size.height - 48, 360), 760)
 
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Editor Settings")
-                            .font(.title3.weight(.semibold))
-                        Text("Global preferences for every window")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            ZStack {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        isPresented = false
+                    }
+
+                VStack(spacing: 0) {
+                    settingsHeader
+
+                    Divider()
+
+                    ScrollView {
+                        settingsContent
+                            .padding(18)
                     }
                 }
+                .frame(width: panelWidth)
+                .frame(maxHeight: panelHeight)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12))
+                }
+                .shadow(color: .black.opacity(0.22), radius: 24, x: 0, y: 14)
+            }
+        }
+        .transition(.opacity)
+        .background(SettingsEscapeKeyHandler {
+            isPresented = false
+        })
+    }
+
+    private var settingsHeader: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(
+                    LinearGradient(
+                        colors: [Color.accentColor.opacity(0.95), Color.accentColor.opacity(0.7)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Editor Settings")
+                    .font(.title3.weight(.semibold))
+                Text("Global preferences for every window")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
+            Spacer(minLength: 0)
+
+            Button {
+                isPresented = false
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.borderless)
+            .help("Close Settings")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    private var settingsContent: some View {
+        VStack(alignment: .leading, spacing: 18) {
             settingsSection(
                 title: "Appearance",
                 caption: "Window-wide theme and color presentation"
@@ -1637,20 +1694,7 @@ private struct SettingsPopoverView: View {
                     }
                 }
             }
-
         }
-        .padding(18)
-        .frame(width: 400)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color.primary.opacity(0.035),
-                    Color.clear
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
     }
 
     private var appThemeBinding: Binding<AppTheme> {
@@ -1715,6 +1759,50 @@ private struct SettingsPopoverView: View {
 
             Stepper("", value: value, in: range, step: 1)
                 .labelsHidden()
+        }
+    }
+}
+
+private struct SettingsEscapeKeyHandler: NSViewRepresentable {
+    let onEscape: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        context.coordinator.installMonitor()
+        return NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onEscape = onEscape
+        context.coordinator.installMonitor()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onEscape: onEscape)
+    }
+
+    final class Coordinator {
+        var onEscape: () -> Void
+        private var monitor: Any?
+
+        init(onEscape: @escaping () -> Void) {
+            self.onEscape = onEscape
+        }
+
+        deinit {
+            MainActor.assumeIsolated {
+                if let monitor {
+                    NSEvent.removeMonitor(monitor)
+                }
+            }
+        }
+
+        func installMonitor() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard event.keyCode == 53 else { return event }
+                self?.onEscape()
+                return nil
+            }
         }
     }
 }
