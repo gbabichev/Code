@@ -206,6 +206,7 @@ struct CodeEditorView: NSViewRepresentable {
     @Binding var scrollPosition: EditorScrollPosition?
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
+    let showsInvisibleCharacters: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
     let indentation: EditorIndentationSettings
@@ -220,6 +221,7 @@ struct CodeEditorView: NSViewRepresentable {
         scrollPosition: Binding<EditorScrollPosition?>,
         isWordWrapEnabled: Bool,
         isSyntaxHighlightingEnabled: Bool,
+        showsInvisibleCharacters: Bool,
         skin: SkinDefinition,
         language: EditorLanguage,
         indentation: EditorIndentationSettings,
@@ -233,6 +235,7 @@ struct CodeEditorView: NSViewRepresentable {
         self._scrollPosition = scrollPosition
         self.isWordWrapEnabled = isWordWrapEnabled
         self.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
+        self.showsInvisibleCharacters = showsInvisibleCharacters
         self.skin = skin
         self.language = language
         self.indentation = indentation
@@ -252,6 +255,7 @@ struct CodeEditorView: NSViewRepresentable {
             indentation: indentation,
             autocompleteMode: autocompleteMode,
             isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
+            showsInvisibleCharacters: showsInvisibleCharacters,
             editorFont: editorFont,
             editorSemiboldFont: editorSemiboldFont,
             isWordWrapEnabled: isWordWrapEnabled,
@@ -309,6 +313,7 @@ struct CodeEditorView: NSViewRepresentable {
             containerView: container
         )
         context.coordinator.applyTheme(theme)
+        context.coordinator.applyInvisibleCharacterVisibility()
         context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
         context.coordinator.configureLayout(isWordWrapEnabled: effectiveWordWrapEnabled)
         context.coordinator.restoreInitialScrollPosition()
@@ -337,11 +342,13 @@ struct CodeEditorView: NSViewRepresentable {
         let didIndentationChange = context.coordinator.indentation != indentation
         let didAutocompleteModeChange = context.coordinator.autocompleteMode != autocompleteMode
         let didSyntaxHighlightingChange = context.coordinator.isSyntaxHighlightingEnabled != isSyntaxHighlightingEnabled
+        let didInvisibleCharacterVisibilityChange = context.coordinator.showsInvisibleCharacters != showsInvisibleCharacters
         context.coordinator.language = language
         context.coordinator.skin = skin
         context.coordinator.indentation = indentation
         context.coordinator.autocompleteMode = autocompleteMode
         context.coordinator.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
+        context.coordinator.showsInvisibleCharacters = showsInvisibleCharacters
         context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
         context.coordinator.textBinding = $text
         context.coordinator.scrollPosition = $scrollPosition
@@ -363,6 +370,9 @@ struct CodeEditorView: NSViewRepresentable {
         }
         if didAutocompleteModeChange {
             context.coordinator.handleAutocompleteModeChange()
+        }
+        if didInvisibleCharacterVisibilityChange {
+            context.coordinator.applyInvisibleCharacterVisibility()
         }
 
         guard let textView = context.coordinator.textView else { return }
@@ -411,6 +421,7 @@ struct CodeEditorView: NSViewRepresentable {
         var indentation: EditorIndentationSettings
         var autocompleteMode: EditorAutocompleteMode
         var isSyntaxHighlightingEnabled: Bool
+        var showsInvisibleCharacters: Bool
         var editorFont: NSFont
         var editorSemiboldFont: NSFont
         var isWordWrapEnabled: Bool
@@ -440,7 +451,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
         private let completionController = CompletionController()
 
-        init(textBinding: Binding<String>, scrollPosition: Binding<EditorScrollPosition?>, language: EditorLanguage, skin: SkinDefinition, indentation: EditorIndentationSettings, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void, onTextChange: @escaping (String) -> Void) {
+        init(textBinding: Binding<String>, scrollPosition: Binding<EditorScrollPosition?>, language: EditorLanguage, skin: SkinDefinition, indentation: EditorIndentationSettings, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, showsInvisibleCharacters: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void, onTextChange: @escaping (String) -> Void) {
             self.textBinding = textBinding
             self.scrollPosition = scrollPosition
             self.language = language
@@ -448,6 +459,7 @@ struct CodeEditorView: NSViewRepresentable {
             self.indentation = indentation
             self.autocompleteMode = autocompleteMode
             self.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
+            self.showsInvisibleCharacters = showsInvisibleCharacters
             self.editorFont = editorFont
             self.editorSemiboldFont = editorSemiboldFont
             self.isWordWrapEnabled = isWordWrapEnabled
@@ -669,6 +681,12 @@ struct CodeEditorView: NSViewRepresentable {
         func applyIndentationSettings() {
             guard let textView = textView as? LineClickableTextView else { return }
             textView.indentation = indentation
+        }
+
+        func applyInvisibleCharacterVisibility() {
+            guard let layoutManager = unsafe textView?.layoutManager else { return }
+            layoutManager.showsInvisibleCharacters = showsInvisibleCharacters
+            textView?.needsDisplay = true
         }
 
         func syncWithBindingText(_ text: String) -> Bool {

@@ -151,6 +151,18 @@ final class AppPreferences: ObservableObject {
         }
     }
 
+    @Published var showsInvisibleCharacters: Bool {
+        didSet {
+            userDefaults.set(showsInvisibleCharacters, forKey: Keys.showsInvisibleCharacters)
+        }
+    }
+
+    @Published var trimsTrailingWhitespaceOnSave: Bool {
+        didSet {
+            userDefaults.set(trimsTrailingWhitespaceOnSave, forKey: Keys.trimsTrailingWhitespaceOnSave)
+        }
+    }
+
     @Published var recentItemLimit: Int {
         didSet {
             let clampedLimit = min(max(recentItemLimit, Self.minRecentItemLimit), Self.maxRecentItemLimit)
@@ -229,6 +241,18 @@ final class AppPreferences: ObservableObject {
             isSyntaxHighlightingEnabled = Self.defaultSyntaxHighlightingEnabled
         }
 
+        if userDefaults.object(forKey: Keys.showsInvisibleCharacters) != nil {
+            showsInvisibleCharacters = userDefaults.bool(forKey: Keys.showsInvisibleCharacters)
+        } else {
+            showsInvisibleCharacters = false
+        }
+
+        if userDefaults.object(forKey: Keys.trimsTrailingWhitespaceOnSave) != nil {
+            trimsTrailingWhitespaceOnSave = userDefaults.bool(forKey: Keys.trimsTrailingWhitespaceOnSave)
+        } else {
+            trimsTrailingWhitespaceOnSave = false
+        }
+
         if userDefaults.object(forKey: Keys.recentItemLimit) != nil {
             recentItemLimit = userDefaults.integer(forKey: Keys.recentItemLimit)
         } else {
@@ -255,6 +279,8 @@ final class AppPreferences: ObservableObject {
         userDefaults.set(indentWidth, forKey: Keys.indentWidth)
         userDefaults.set(autocompleteMode.rawValue, forKey: Keys.autocompleteMode)
         userDefaults.set(isSyntaxHighlightingEnabled, forKey: Keys.isSyntaxHighlightingEnabled)
+        userDefaults.set(showsInvisibleCharacters, forKey: Keys.showsInvisibleCharacters)
+        userDefaults.set(trimsTrailingWhitespaceOnSave, forKey: Keys.trimsTrailingWhitespaceOnSave)
         userDefaults.set(recentItemLimit, forKey: Keys.recentItemLimit)
         persistRecentItems()
         applyAppAppearance()
@@ -479,6 +505,8 @@ private enum Keys {
     static let indentWidth = "preferences.indentWidth"
     static let autocompleteMode = "preferences.autocompleteMode"
     static let isSyntaxHighlightingEnabled = "preferences.isSyntaxHighlightingEnabled"
+    static let showsInvisibleCharacters = "preferences.showsInvisibleCharacters"
+    static let trimsTrailingWhitespaceOnSave = "preferences.trimsTrailingWhitespaceOnSave"
     static let recentItemLimit = "preferences.recentItemLimit"
     static let recentItems = "preferences.recentItems"
 }

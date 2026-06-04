@@ -557,6 +557,7 @@ struct ContentView: View {
                             scrollPosition: scrollPositionBinding(primaryTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
                             isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
+                            showsInvisibleCharacters: preferences.showsInvisibleCharacters,
                             skin: preferences.selectedSkin,
                             language: primaryTab.language,
                             indentation: primaryTab.indentation,
@@ -581,6 +582,7 @@ struct ContentView: View {
                             scrollPosition: scrollPositionBinding(secondaryTab),
                             isWordWrapEnabled: preferences.isWordWrapEnabled,
                             isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
+                            showsInvisibleCharacters: preferences.showsInvisibleCharacters,
                             skin: preferences.selectedSkin,
                             language: secondaryTab.language,
                             indentation: secondaryTab.indentation,
@@ -604,6 +606,7 @@ struct ContentView: View {
                         scrollPosition: scrollPositionBinding(primaryTab),
                         isWordWrapEnabled: preferences.isWordWrapEnabled,
                         isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
+                        showsInvisibleCharacters: preferences.showsInvisibleCharacters,
                         skin: preferences.selectedSkin,
                         language: primaryTab.language,
                         indentation: primaryTab.indentation,
@@ -1018,6 +1021,7 @@ private struct EditorAreaView: View {
     let scrollPosition: Binding<EditorScrollPosition?>
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
+    let showsInvisibleCharacters: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
     let indentation: EditorIndentationSettings
@@ -1170,6 +1174,7 @@ private struct EditorAreaView: View {
             scrollPosition: scrollPosition,
             isWordWrapEnabled: isWordWrapEnabled,
             isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
+            showsInvisibleCharacters: showsInvisibleCharacters,
             skin: skin,
             language: language,
             indentation: indentation,
@@ -1262,6 +1267,7 @@ private struct EditorSplitPaneView: View {
     let scrollPosition: Binding<EditorScrollPosition?>
     let isWordWrapEnabled: Bool
     let isSyntaxHighlightingEnabled: Bool
+    let showsInvisibleCharacters: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
     let indentation: EditorIndentationSettings
@@ -1336,6 +1342,7 @@ private struct EditorSplitPaneView: View {
                 scrollPosition: scrollPosition,
                 isWordWrapEnabled: isWordWrapEnabled,
                 isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
+                showsInvisibleCharacters: showsInvisibleCharacters,
                 skin: skin,
                 language: language,
                 indentation: indentation,
@@ -1550,6 +1557,26 @@ private struct SettingsPopoverView: View {
                         subtitle: "Wrap long sentences to a new line."
                     ) {
                         Toggle(isOn: $preferences.isWordWrapEnabled) {
+                        }
+                        .toggleStyle(.switch)
+                    }
+
+                    SettingsRow(
+                        "Show Invisibles",
+                        systemImage: "paragraphsign",
+                        subtitle: "Display spaces, tabs, and other hidden characters."
+                    ) {
+                        Toggle(isOn: $preferences.showsInvisibleCharacters) {
+                        }
+                        .toggleStyle(.switch)
+                    }
+
+                    SettingsRow(
+                        "Trim Trailing Whitespace",
+                        systemImage: "scissors",
+                        subtitle: "Remove spaces and tabs at line ends when saving."
+                    ) {
+                        Toggle(isOn: $preferences.trimsTrailingWhitespaceOnSave) {
                         }
                         .toggleStyle(.switch)
                     }

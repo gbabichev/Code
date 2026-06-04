@@ -821,6 +821,30 @@ private struct EditorCommands: Commands {
             .disabled(resolvedWorkspace?.selectedTab == nil)
 
             Button {
+                preferences.showsInvisibleCharacters.toggle()
+            } label: {
+                Label(
+                    preferences.showsInvisibleCharacters ? "Hide Invisibles" : "Show Invisibles",
+                    systemImage: "paragraphsign"
+                )
+            }
+            .disabled(resolvedWorkspace?.selectedTab == nil)
+
+            Button {
+                preferences.trimsTrailingWhitespaceOnSave.toggle()
+            } label: {
+                Label(
+                    preferences.trimsTrailingWhitespaceOnSave
+                        ? "Disable Trim Trailing Whitespace on Save"
+                        : "Trim Trailing Whitespace on Save",
+                    systemImage: "scissors"
+                )
+            }
+            .disabled(resolvedWorkspace?.selectedTab == nil)
+
+            Divider()
+
+            Button {
                 ActiveEditorTextViewRegistry.shared.indentSelection()
             } label: {
                 Label("Indent", systemImage: "increase.indent")

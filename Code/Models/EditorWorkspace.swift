@@ -694,6 +694,7 @@ final class EditorWorkspace: ObservableObject {
         }
 
         do {
+            applySaveTransformations(to: tab)
             let output = contentWithPreferredLineEndings(for: tab)
             guard let data = output.data(using: tab.textEncoding.stringEncoding) else {
                 errorMessage = "Failed to encode \(destinationURL.lastPathComponent) as \(tab.textEncoding.title)."
@@ -1206,6 +1207,27 @@ final class EditorWorkspace: ObservableObject {
         normalizeLineEndings(in: tab.content).replacingOccurrences(of: "\n", with: tab.lineEnding.sequence)
     }
 
+    private func applySaveTransformations(to tab: EditorTab) {
+        var updatedContent = tab.content
+
+        if preferences.trimsTrailingWhitespaceOnSave {
+            updatedContent = trimTrailingWhitespace(in: updatedContent)
+        }
+
+        guard updatedContent != tab.content else { return }
+        tab.setContent(updatedContent, notify: true)
+        pendingDirtyStateRecheckTabIDs.remove(tab.id)
+    }
+
+    private func trimTrailingWhitespace(in content: String) -> String {
+        content
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line in
+                String(line.dropTrailingSpacesAndTabs())
+            }
+            .joined(separator: "\n")
+    }
+
     private func defaultIndentationSettings() -> EditorIndentationSettings {
         .defaultSpaces(width: preferences.indentWidth)
     }
@@ -1347,5 +1369,17 @@ private struct FileDiskState: Equatable {
     static func == (lhs: FileDiskState, rhs: FileDiskState) -> Bool {
         lhs.modificationDate == rhs.modificationDate
             && lhs.fileSize == rhs.fileSize
+    }
+}
+
+private extension Substring {
+    func dropTrailingSpacesAndTabs() -> Substring {
+        var end = endIndex
+        while end > startIndex {
+            let previous = index(before: end)
+            guard self[previous] == " " || self[previous] == "\t" else { break }
+            end = previous
+        }
+        return self[..<end]
     }
 }
