@@ -2125,6 +2125,9 @@ final class LineClickableTextView: NSTextView {
     }
 
     override func deleteBackward(_ sender: Any?) {
+        if deleteSmartIndentationBackward() {
+            return
+        }
         super.deleteBackward(sender)
     }
 
@@ -2251,6 +2254,71 @@ final class LineClickableTextView: NSTextView {
         }
 
         return context.leadingWhitespace
+    }
+
+    private func deleteSmartIndentationBackward() -> Bool {
+        let selectedRange = selectedRange()
+        guard selectedRange.length == 0,
+              selectedRange.location != NSNotFound,
+              selectedRange.location > 0 else { return false }
+
+        let nsText = string as NSString
+        let caretLocation = min(selectedRange.location, nsText.length)
+        let lineRange = nsText.lineRange(for: NSRange(location: caretLocation, length: 0))
+        guard lineRange.location != NSNotFound,
+              caretLocation > lineRange.location else { return false }
+
+        let beforeCaretRange = NSRange(
+            location: lineRange.location,
+            length: caretLocation - lineRange.location
+        )
+        let beforeCaret = nsText.substring(with: beforeCaretRange)
+        guard !beforeCaret.isEmpty,
+              beforeCaret.allSatisfy({ $0 == " " || $0 == "\t" }) else { return false }
+
+        let deletionLength = smartIndentationDeletionLength(in: beforeCaret)
+        guard deletionLength > 0 else { return false }
+
+        let deletionRange = NSRange(location: caretLocation - deletionLength, length: deletionLength)
+        guard shouldChangeText(in: deletionRange, replacementString: "") else { return true }
+
+        unsafe textStorage?.beginEditing()
+        unsafe textStorage?.replaceCharacters(in: deletionRange, with: "")
+        unsafe textStorage?.endEditing()
+        didChangeText()
+        setSelectedRange(NSRange(location: deletionRange.location, length: 0))
+        return true
+    }
+
+    private func smartIndentationDeletionLength(in leadingWhitespace: String) -> Int {
+        if leadingWhitespace.hasSuffix("\t") {
+            return 1
+        }
+
+        let trailingSpaceCount = leadingWhitespace.reversed().prefix { $0 == " " }.count
+        guard trailingSpaceCount > 0 else { return 0 }
+
+        let currentColumn = indentationColumnCount(in: leadingWhitespace)
+        let width = max(indentation.width, 1)
+        let targetColumn = ((max(currentColumn, 1) - 1) / width) * width
+        let preferredRemovalCount = max(currentColumn - targetColumn, 1)
+        return min(trailingSpaceCount, preferredRemovalCount)
+    }
+
+    private func indentationColumnCount(in leadingWhitespace: String) -> Int {
+        let width = max(indentation.width, 1)
+        var column = 0
+
+        for character in leadingWhitespace {
+            if character == "\t" {
+                let remainder = column % width
+                column += remainder == 0 ? width : width - remainder
+            } else {
+                column += 1
+            }
+        }
+
+        return column
     }
 
     private func currentLineContextForInsertion() -> (leadingWhitespace: String, codeBeforeCaret: String) {
