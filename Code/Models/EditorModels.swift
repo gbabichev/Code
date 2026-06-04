@@ -362,6 +362,70 @@ struct FileNode: Identifiable, Hashable {
     }
 }
 
+enum EditorIndentationStyle: String, Codable {
+    case spaces
+    case tabs
+}
+
+struct EditorIndentationSettings: Codable, Equatable {
+    static let minimumWidth = 1
+    static let maximumWidth = 8
+
+    var style: EditorIndentationStyle
+    var width: Int
+    var isInferred: Bool
+    var hasMixedIndentation: Bool
+    var hasUnevenIndentation: Bool
+
+    init(
+        style: EditorIndentationStyle,
+        width: Int,
+        isInferred: Bool,
+        hasMixedIndentation: Bool = false,
+        hasUnevenIndentation: Bool = false
+    ) {
+        self.style = style
+        self.width = Self.clampedWidth(width)
+        self.isInferred = isInferred
+        self.hasMixedIndentation = hasMixedIndentation
+        self.hasUnevenIndentation = hasUnevenIndentation
+    }
+
+    static func defaultSpaces(width: Int) -> EditorIndentationSettings {
+        EditorIndentationSettings(
+            style: .spaces,
+            width: width,
+            isInferred: false
+        )
+    }
+
+    var insertionText: String {
+        switch style {
+        case .spaces:
+            return String(repeating: " ", count: width)
+        case .tabs:
+            return "\t"
+        }
+    }
+
+    var statusTitle: String {
+        switch style {
+        case .spaces:
+            return "\(width) spaces"
+        case .tabs:
+            return "Tabs: \(width)"
+        }
+    }
+
+    var hasIndentationIssues: Bool {
+        hasMixedIndentation || hasUnevenIndentation
+    }
+
+    private static func clampedWidth(_ width: Int) -> Int {
+        min(max(width, minimumWidth), maximumWidth)
+    }
+}
+
 struct EditorTabSnapshot: Codable {
     let id: String?
     let filePath: String?
@@ -372,6 +436,7 @@ struct EditorTabSnapshot: Codable {
     let lastSavedEncoding: EditorTextEncoding?
     let lastSavedLineEnding: EditorLineEnding?
     let scrollPosition: EditorScrollPosition?
+    let indentation: EditorIndentationSettings?
     let content: String
     let isDirty: Bool
 
@@ -385,6 +450,7 @@ struct EditorTabSnapshot: Codable {
         lastSavedEncoding: EditorTextEncoding? = nil,
         lastSavedLineEnding: EditorLineEnding? = nil,
         scrollPosition: EditorScrollPosition? = nil,
+        indentation: EditorIndentationSettings? = nil,
         content: String,
         isDirty: Bool
     ) {
@@ -397,6 +463,7 @@ struct EditorTabSnapshot: Codable {
         self.lastSavedEncoding = lastSavedEncoding
         self.lastSavedLineEnding = lastSavedLineEnding
         self.scrollPosition = scrollPosition
+        self.indentation = indentation
         self.content = content
         self.isDirty = isDirty
     }
@@ -524,6 +591,7 @@ final class EditorTab: ObservableObject, Identifiable {
     @Published var languageOverride: EditorLanguage?
     @Published var textEncoding: EditorTextEncoding
     @Published var lineEnding: EditorLineEnding
+    @Published var indentation: EditorIndentationSettings
     var scrollPosition: EditorScrollPosition?
 
     // `content` is NOT @Published — we manually trigger objectWillChange
@@ -550,6 +618,7 @@ final class EditorTab: ObservableObject, Identifiable {
         lastSavedContent: String,
         lastSavedEncoding: EditorTextEncoding? = nil,
         lastSavedLineEnding: EditorLineEnding? = nil,
+        indentation: EditorIndentationSettings = .defaultSpaces(width: 4),
         scrollPosition: EditorScrollPosition? = nil,
         isDirty: Bool
     ) {
@@ -558,6 +627,7 @@ final class EditorTab: ObservableObject, Identifiable {
         self.languageOverride = languageOverride
         self.textEncoding = textEncoding
         self.lineEnding = lineEnding
+        self.indentation = indentation
         self.customTitle = customTitle
         self.content = content
         self.lastSavedContent = lastSavedContent

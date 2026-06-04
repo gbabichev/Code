@@ -381,6 +381,18 @@ struct ContentView: View {
             Divider()
                 .frame(height: 12)
 
+            HStack(spacing: 4) {
+                if tab.indentation.hasIndentationIssues {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                }
+                Text(tab.indentation.statusTitle)
+            }
+            .foregroundStyle(tab.indentation.hasIndentationIssues ? .orange : .secondary)
+            .help(indentationStatusHelp(for: tab))
+
+            Divider()
+                .frame(height: 12)
+
             Menu(tab.textEncoding.title) {
                 ForEach(EditorTextEncoding.allCases) { encoding in
                     Button {
@@ -478,6 +490,21 @@ struct ContentView: View {
         return tab.language.title
     }
 
+    private func indentationStatusHelp(for tab: EditorTab) -> String {
+        var details = [
+            tab.indentation.isInferred
+                ? "Detected from this file."
+                : "Using the default indentation setting."
+        ]
+        if tab.indentation.hasMixedIndentation {
+            details.append("Mixed tabs and spaces detected.")
+        }
+        if tab.indentation.hasUnevenIndentation {
+            details.append("Uneven space indentation detected.")
+        }
+        return details.joined(separator: " ")
+    }
+
     private func selectedTabBinding(_ tab: EditorTab) -> Binding<String> {
         Binding(
             get: { tab.content },
@@ -532,7 +559,7 @@ struct ContentView: View {
                             isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
                             skin: preferences.selectedSkin,
                             language: primaryTab.language,
-                            indentWidth: preferences.indentWidth,
+                            indentation: primaryTab.indentation,
                             autocompleteMode: preferences.autocompleteMode,
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
@@ -556,7 +583,7 @@ struct ContentView: View {
                             isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
                             skin: preferences.selectedSkin,
                             language: secondaryTab.language,
-                            indentWidth: preferences.indentWidth,
+                            indentation: secondaryTab.indentation,
                             autocompleteMode: preferences.autocompleteMode,
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
@@ -579,7 +606,7 @@ struct ContentView: View {
                         isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
                         skin: preferences.selectedSkin,
                         language: primaryTab.language,
-                        indentWidth: preferences.indentWidth,
+                        indentation: primaryTab.indentation,
                         autocompleteMode: preferences.autocompleteMode,
                         editorFont: preferences.editorFont,
                         editorSemiboldFont: preferences.editorSemiboldFont,
@@ -993,7 +1020,7 @@ private struct EditorAreaView: View {
     let isSyntaxHighlightingEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
-    let indentWidth: Int
+    let indentation: EditorIndentationSettings
     let autocompleteMode: EditorAutocompleteMode
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
@@ -1145,7 +1172,7 @@ private struct EditorAreaView: View {
             isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
             skin: skin,
             language: language,
-            indentWidth: indentWidth,
+            indentation: indentation,
             autocompleteMode: autocompleteMode,
             editorFont: editorFont,
             editorSemiboldFont: editorSemiboldFont,
@@ -1237,7 +1264,7 @@ private struct EditorSplitPaneView: View {
     let isSyntaxHighlightingEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
-    let indentWidth: Int
+    let indentation: EditorIndentationSettings
     let autocompleteMode: EditorAutocompleteMode
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
@@ -1311,7 +1338,7 @@ private struct EditorSplitPaneView: View {
                 isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
                 skin: skin,
                 language: language,
-                indentWidth: indentWidth,
+                indentation: indentation,
                 autocompleteMode: autocompleteMode,
                 editorFont: editorFont,
                 editorSemiboldFont: editorSemiboldFont,

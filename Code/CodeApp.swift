@@ -835,6 +835,15 @@ private struct EditorCommands: Commands {
             }
             .keyboardShortcut("[", modifiers: [.command])
             .disabled(resolvedWorkspace?.selectedTab == nil)
+
+            Divider()
+
+            Button {
+                resolvedWorkspace?.fixSelectedTabIndentation()
+            } label: {
+                Label("Fix Indentation", systemImage: "text.alignleft")
+            }
+            .disabled(!(resolvedWorkspace?.canFixSelectedTabIndentation ?? false))
         }
 
         CommandMenu("Find") {

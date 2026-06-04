@@ -1,0 +1,153 @@
+//
+//  IndentationAnalyzer.swift
+//  Code
+//
+
+import Foundation
+
+enum IndentationAnalyzer {
+    static func inferSettings(in text: String, fallbackWidth: Int) -> EditorIndentationSettings {
+        let fallbackWidth = clampedWidth(fallbackWidth)
+        var spaceOnlyIndentCounts: [Int] = []
+        var spaceOnlyLineCount = 0
+        var tabOnlyLineCount = 0
+        var mixedLineCount = 0
+
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let prefix = leadingIndentation(in: Substring(line))
+            guard !prefix.isEmpty,
+                  line[prefix.endIndex...].contains(where: { !$0.isWhitespace }) else { continue }
+
+            let hasSpaces = prefix.contains(" ")
+            let hasTabs = prefix.contains("\t")
+
+            if hasSpaces && hasTabs {
+                mixedLineCount += 1
+            } else if hasTabs {
+                tabOnlyLineCount += 1
+            } else if hasSpaces {
+                spaceOnlyLineCount += 1
+                spaceOnlyIndentCounts.append(prefix.count)
+            }
+        }
+
+        let inferredStyle: EditorIndentationStyle
+        if spaceOnlyLineCount == 0 && tabOnlyLineCount == 0 && mixedLineCount == 0 {
+            inferredStyle = .spaces
+        } else if tabOnlyLineCount > spaceOnlyLineCount {
+            inferredStyle = .tabs
+        } else {
+            inferredStyle = .spaces
+        }
+
+        let width = inferredSpaceWidth(from: spaceOnlyIndentCounts, fallbackWidth: fallbackWidth)
+        let hasMixedIndentation = mixedLineCount > 0 || (spaceOnlyLineCount > 0 && tabOnlyLineCount > 0)
+        let hasUnevenIndentation = inferredStyle == .spaces
+            && spaceOnlyIndentCounts.contains { $0 % width != 0 }
+        let hasEvidence = spaceOnlyLineCount > 0 || tabOnlyLineCount > 0 || mixedLineCount > 0
+
+        return EditorIndentationSettings(
+            style: inferredStyle,
+            width: width,
+            isInferred: hasEvidence,
+            hasMixedIndentation: hasMixedIndentation,
+            hasUnevenIndentation: hasUnevenIndentation
+        )
+    }
+
+    static func normalizedContent(_ text: String, using settings: EditorIndentationSettings) -> String {
+        text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { normalizedLine(String($0), using: settings) }
+            .joined(separator: "\n")
+    }
+
+    private static func normalizedLine(_ line: String, using settings: EditorIndentationSettings) -> String {
+        let prefix = leadingIndentation(in: line[...])
+        guard !prefix.isEmpty else { return line }
+
+        let columns = indentationColumnCount(in: prefix, tabWidth: settings.width)
+        let replacement = indentationPrefix(forColumnCount: columns, using: settings)
+        return replacement + line[prefix.endIndex...]
+    }
+
+    private static func leadingIndentation(in line: Substring) -> Substring {
+        let end = line.firstIndex { character in
+            character != " " && character != "\t"
+        } ?? line.endIndex
+        return line[..<end]
+    }
+
+    private static func indentationColumnCount(in prefix: Substring, tabWidth: Int) -> Int {
+        let tabWidth = clampedWidth(tabWidth)
+        var columns = 0
+
+        for character in prefix {
+            if character == "\t" {
+                let remainder = columns % tabWidth
+                columns += remainder == 0 ? tabWidth : tabWidth - remainder
+            } else {
+                columns += 1
+            }
+        }
+
+        return columns
+    }
+
+    private static func indentationPrefix(
+        forColumnCount columns: Int,
+        using settings: EditorIndentationSettings
+    ) -> String {
+        switch settings.style {
+        case .spaces:
+            return String(repeating: " ", count: max(columns, 0))
+        case .tabs:
+            let tabCount = max(columns, 0) / settings.width
+            let spaceCount = max(columns, 0) % settings.width
+            return String(repeating: "\t", count: tabCount)
+                + String(repeating: " ", count: spaceCount)
+        }
+    }
+
+    private static func inferredSpaceWidth(from counts: [Int], fallbackWidth: Int) -> Int {
+        guard !counts.isEmpty else { return fallbackWidth }
+
+        let candidates = Array(EditorIndentationSettings.minimumWidth...EditorIndentationSettings.maximumWidth)
+        let scored = candidates.map { candidate in
+            let divisibleCount = counts.filter { $0 % candidate == 0 }.count
+            let exactCount = counts.filter { $0 == candidate }.count
+            let remainderPenalty = counts.reduce(0) { $0 + ($1 % candidate) }
+            let fallbackBonus = candidate == fallbackWidth ? 1 : 0
+            return (
+                candidate: candidate,
+                divisibleCount: divisibleCount,
+                exactCount: exactCount,
+                remainderPenalty: remainderPenalty,
+                fallbackBonus: fallbackBonus
+            )
+        }
+
+        return scored.max { lhs, rhs in
+            if lhs.divisibleCount != rhs.divisibleCount {
+                return lhs.divisibleCount < rhs.divisibleCount
+            }
+            if lhs.exactCount != rhs.exactCount {
+                return lhs.exactCount < rhs.exactCount
+            }
+            if lhs.remainderPenalty != rhs.remainderPenalty {
+                return lhs.remainderPenalty > rhs.remainderPenalty
+            }
+            if lhs.fallbackBonus != rhs.fallbackBonus {
+                return lhs.fallbackBonus < rhs.fallbackBonus
+            }
+            return lhs.candidate < rhs.candidate
+        }?.candidate ?? fallbackWidth
+    }
+
+    private static func clampedWidth(_ width: Int) -> Int {
+        min(
+            max(width, EditorIndentationSettings.minimumWidth),
+            EditorIndentationSettings.maximumWidth
+        )
+    }
+}

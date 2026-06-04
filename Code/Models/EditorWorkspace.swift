@@ -80,6 +80,10 @@ final class EditorWorkspace: ObservableObject {
         openTabs.contains(where: \.isDirty)
     }
 
+    var canFixSelectedTabIndentation: Bool {
+        selectedTab != nil
+    }
+
     func externalModificationVersion(for id: EditorTab.ID) -> Int? {
         externalModificationVersionByTabID[id]
     }
@@ -102,6 +106,7 @@ final class EditorWorkspace: ObservableObject {
             customTitle: title,
             content: "",
             lastSavedContent: "",
+            indentation: defaultIndentationSettings(),
             isDirty: false
         )
         attachObserver(to: tab)
@@ -220,6 +225,7 @@ final class EditorWorkspace: ObservableObject {
                 lineEnding: fileContents.lineEnding,
                 content: fileContents.content,
                 lastSavedContent: fileContents.content,
+                indentation: inferredIndentationSettings(for: fileContents.content),
                 isDirty: false
             )
             attachObserver(to: tab)
@@ -303,6 +309,7 @@ final class EditorWorkspace: ObservableObject {
             lastSavedContent: restoredState.lastSavedContent,
             lastSavedEncoding: restoredState.lastSavedEncoding,
             lastSavedLineEnding: restoredState.lastSavedLineEnding,
+            indentation: restoredState.indentation,
             scrollPosition: restoredState.scrollPosition,
             isDirty: restoredState.isDirty
         )
@@ -628,6 +635,28 @@ final class EditorWorkspace: ObservableObject {
         persistSession(delay: shouldUseDeferredDirtyCheck ? Self.largeDirtySessionPersistenceDelay : nil)
     }
 
+    func fixSelectedTabIndentation() {
+        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
+        guard let tab = selectedTab else { return }
+
+        let inferredSettings = inferredIndentationSettings(for: tab.content)
+        let normalizedContent = IndentationAnalyzer.normalizedContent(
+            tab.content,
+            using: inferredSettings
+        )
+        let normalizedSettings = IndentationAnalyzer.inferSettings(
+            in: normalizedContent,
+            fallbackWidth: inferredSettings.width
+        )
+
+        tab.indentation = normalizedSettings
+        if normalizedContent != tab.content {
+            tab.setContent(normalizedContent, notify: true)
+            pendingDirtyStateRecheckTabIDs.remove(tab.id)
+        }
+        persistSession()
+    }
+
     func saveSelectedTab() async {
         ActiveEditorTextViewRegistry.shared.flushPendingModelSync()
         guard let tab = selectedTab else { return }
@@ -858,6 +887,7 @@ final class EditorWorkspace: ObservableObject {
                     lastSavedEncoding: $0.lastSavedEncoding,
                     lastSavedLineEnding: $0.lastSavedLineEnding,
                     scrollPosition: $0.scrollPosition,
+                    indentation: $0.indentation,
                     content: ($0.fileURL != nil && !$0.isDirty) ? "" : $0.content,
                     isDirty: $0.isDirty
                 )
@@ -921,6 +951,7 @@ final class EditorWorkspace: ObservableObject {
                     lastSavedContent: diskContents.content,
                     lastSavedEncoding: item.isDirty ? diskContents.encoding : currentEncoding,
                     lastSavedLineEnding: item.isDirty ? diskContents.lineEnding : currentLineEnding,
+                    indentation: item.indentation ?? inferredIndentationSettings(for: restoredContent),
                     scrollPosition: item.scrollPosition,
                     isDirty: item.isDirty
                 )
@@ -940,6 +971,7 @@ final class EditorWorkspace: ObservableObject {
                 lastSavedContent: item.content,
                 lastSavedEncoding: item.lastSavedEncoding ?? item.encoding ?? .utf8,
                 lastSavedLineEnding: item.lastSavedLineEnding ?? item.lineEnding ?? .lf,
+                indentation: item.indentation ?? inferredIndentationSettings(for: item.content),
                 scrollPosition: item.scrollPosition,
                 isDirty: item.isDirty
             )
@@ -987,6 +1019,7 @@ final class EditorWorkspace: ObservableObject {
             let fileContents = try readTextFile(at: fileURL)
             tab.textEncoding = fileContents.encoding
             tab.lineEnding = fileContents.lineEnding
+            tab.indentation = inferredIndentationSettings(for: fileContents.content)
             tab.lastSavedEncoding = fileContents.encoding
             tab.lastSavedLineEnding = fileContents.lineEnding
             tab.lastSavedContent = fileContents.content
@@ -1022,6 +1055,7 @@ final class EditorWorkspace: ObservableObject {
             lastSavedContent: fileContents.content,
             lastSavedEncoding: fileContents.encoding,
             lastSavedLineEnding: fileContents.lineEnding,
+            indentation: inferredIndentationSettings(for: fileContents.content),
             scrollPosition: closedState.scrollPosition,
             isDirty: false,
             lastKnownDiskState: try? diskState(for: fileURL),
@@ -1044,6 +1078,7 @@ final class EditorWorkspace: ObservableObject {
                 lastSavedContent: shouldPreserveContent ? tab.lastSavedContent : "",
                 lastSavedEncoding: tab.lastSavedEncoding,
                 lastSavedLineEnding: tab.lastSavedLineEnding,
+                indentation: tab.indentation,
                 scrollPosition: tab.scrollPosition,
                 isDirty: tab.isDirty,
                 lastKnownDiskState: knownDiskStatesByTabID[id],
@@ -1062,6 +1097,7 @@ final class EditorWorkspace: ObservableObject {
             lastSavedContent: shouldPreserveSavedContent ? tab.lastSavedContent : "",
             lastSavedEncoding: tab.lastSavedEncoding,
             lastSavedLineEnding: tab.lastSavedLineEnding,
+            indentation: tab.indentation,
             scrollPosition: tab.scrollPosition,
             isDirty: false,
             lastKnownDiskState: knownDiskStatesByTabID[id],
@@ -1168,6 +1204,14 @@ final class EditorWorkspace: ObservableObject {
 
     private func contentWithPreferredLineEndings(for tab: EditorTab) -> String {
         normalizeLineEndings(in: tab.content).replacingOccurrences(of: "\n", with: tab.lineEnding.sequence)
+    }
+
+    private func defaultIndentationSettings() -> EditorIndentationSettings {
+        .defaultSpaces(width: preferences.indentWidth)
+    }
+
+    private func inferredIndentationSettings(for content: String) -> EditorIndentationSettings {
+        IndentationAnalyzer.inferSettings(in: content, fallbackWidth: preferences.indentWidth)
     }
 
     private func recordKnownDiskState(for id: EditorTab.ID, fileURL: URL?) {
@@ -1289,6 +1333,7 @@ private struct ClosedTabState {
     let lastSavedContent: String
     let lastSavedEncoding: EditorTextEncoding
     let lastSavedLineEnding: EditorLineEnding
+    let indentation: EditorIndentationSettings
     let scrollPosition: EditorScrollPosition?
     let isDirty: Bool
     let lastKnownDiskState: FileDiskState?

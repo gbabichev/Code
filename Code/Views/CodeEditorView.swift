@@ -208,7 +208,7 @@ struct CodeEditorView: NSViewRepresentable {
     let isSyntaxHighlightingEnabled: Bool
     let skin: SkinDefinition
     let language: EditorLanguage
-    let indentWidth: Int
+    let indentation: EditorIndentationSettings
     let autocompleteMode: EditorAutocompleteMode
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
@@ -222,7 +222,7 @@ struct CodeEditorView: NSViewRepresentable {
         isSyntaxHighlightingEnabled: Bool,
         skin: SkinDefinition,
         language: EditorLanguage,
-        indentWidth: Int,
+        indentation: EditorIndentationSettings,
         autocompleteMode: EditorAutocompleteMode,
         editorFont: NSFont,
         editorSemiboldFont: NSFont,
@@ -235,7 +235,7 @@ struct CodeEditorView: NSViewRepresentable {
         self.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
         self.skin = skin
         self.language = language
-        self.indentWidth = indentWidth
+        self.indentation = indentation
         self.autocompleteMode = autocompleteMode
         self.editorFont = editorFont
         self.editorSemiboldFont = editorSemiboldFont
@@ -249,7 +249,7 @@ struct CodeEditorView: NSViewRepresentable {
             scrollPosition: $scrollPosition,
             language: language,
             skin: skin,
-            indentWidth: indentWidth,
+            indentation: indentation,
             autocompleteMode: autocompleteMode,
             isSyntaxHighlightingEnabled: isSyntaxHighlightingEnabled,
             editorFont: editorFont,
@@ -334,11 +334,12 @@ struct CodeEditorView: NSViewRepresentable {
             || context.coordinator.editorSemiboldFont.fontName != editorSemiboldFont.fontName
             || context.coordinator.editorSemiboldFont.pointSize != editorSemiboldFont.pointSize
         let didWordWrapChange = context.coordinator.isWordWrapEnabled != effectiveWordWrapEnabled
+        let didIndentationChange = context.coordinator.indentation != indentation
         let didAutocompleteModeChange = context.coordinator.autocompleteMode != autocompleteMode
         let didSyntaxHighlightingChange = context.coordinator.isSyntaxHighlightingEnabled != isSyntaxHighlightingEnabled
         context.coordinator.language = language
         context.coordinator.skin = skin
-        context.coordinator.indentWidth = indentWidth
+        context.coordinator.indentation = indentation
         context.coordinator.autocompleteMode = autocompleteMode
         context.coordinator.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
         context.coordinator.isWordWrapEnabled = effectiveWordWrapEnabled
@@ -356,6 +357,9 @@ struct CodeEditorView: NSViewRepresentable {
 
         if didWordWrapChange || didFontChange {
             context.coordinator.configureLayout(isWordWrapEnabled: effectiveWordWrapEnabled)
+        }
+        if didIndentationChange || didFontChange {
+            context.coordinator.applyIndentationSettings()
         }
         if didAutocompleteModeChange {
             context.coordinator.handleAutocompleteModeChange()
@@ -404,7 +408,7 @@ struct CodeEditorView: NSViewRepresentable {
         var scrollPosition: Binding<EditorScrollPosition?>
         var language: EditorLanguage
         var skin: SkinDefinition
-        var indentWidth: Int
+        var indentation: EditorIndentationSettings
         var autocompleteMode: EditorAutocompleteMode
         var isSyntaxHighlightingEnabled: Bool
         var editorFont: NSFont
@@ -436,12 +440,12 @@ struct CodeEditorView: NSViewRepresentable {
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
         private let completionController = CompletionController()
 
-        init(textBinding: Binding<String>, scrollPosition: Binding<EditorScrollPosition?>, language: EditorLanguage, skin: SkinDefinition, indentWidth: Int, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void, onTextChange: @escaping (String) -> Void) {
+        init(textBinding: Binding<String>, scrollPosition: Binding<EditorScrollPosition?>, language: EditorLanguage, skin: SkinDefinition, indentation: EditorIndentationSettings, autocompleteMode: EditorAutocompleteMode, isSyntaxHighlightingEnabled: Bool, editorFont: NSFont, editorSemiboldFont: NSFont, isWordWrapEnabled: Bool, onDidFocus: @escaping () -> Void, onTextChange: @escaping (String) -> Void) {
             self.textBinding = textBinding
             self.scrollPosition = scrollPosition
             self.language = language
             self.skin = skin
-            self.indentWidth = indentWidth
+            self.indentation = indentation
             self.autocompleteMode = autocompleteMode
             self.isSyntaxHighlightingEnabled = isSyntaxHighlightingEnabled
             self.editorFont = editorFont
@@ -473,7 +477,7 @@ struct CodeEditorView: NSViewRepresentable {
             if let lineClickableTextView = textView as? LineClickableTextView {
                 ActiveEditorTextViewRegistry.shared.track(lineClickableTextView)
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
-                lineClickableTextView.indentWidth = indentWidth
+                applyIndentationSettings()
                 lineClickableTextView.autocompleteModeProvider = { [weak self] in
                     self?.autocompleteMode ?? .on
                 }
@@ -653,13 +657,18 @@ struct CodeEditorView: NSViewRepresentable {
             ]
             if let lineClickableTextView = textView as? LineClickableTextView {
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
-                lineClickableTextView.indentWidth = indentWidth
+                applyIndentationSettings()
             }
             scrollView?.backgroundColor = theme.editorBackgroundColor
             documentView?.backgroundColor = theme.editorBackgroundColor
             gutterView.theme = theme
             gutterView.needsDisplay = true
             completionController.theme = CompletionPopupTheme(theme: theme)
+        }
+
+        func applyIndentationSettings() {
+            guard let textView = textView as? LineClickableTextView else { return }
+            textView.indentation = indentation
         }
 
         func syncWithBindingText(_ text: String) -> Bool {
@@ -1818,7 +1827,7 @@ final class LineClickableTextView: NSTextView {
     private static let completionDelay: TimeInterval = 0.5
 
     var lineCommentPrefix: String?
-    var indentWidth = 4
+    var indentation = EditorIndentationSettings.defaultSpaces(width: 4)
     private var isApplyingAcceptedCompletion = false
     private var completionTimer: Timer?
     var requestCompletionUpdate: (() -> Void)?
@@ -1920,18 +1929,10 @@ final class LineClickableTextView: NSTextView {
         let lineCount = originalHasTrailingNewline ? max(lines.count - 1, 0) : lines.count
         guard lineCount > 0 else { return }
 
-        let indentUnit = String(repeating: " ", count: max(indentWidth, 1))
+        let indentUnit = indentation.insertionText
         let updatedActiveLines = lines.prefix(lineCount).map { line in
             if outdent {
-                if line.hasPrefix(indentUnit) {
-                    return String(line.dropFirst(indentUnit.count))
-                }
-                if line.hasPrefix("\t") {
-                    return String(line.dropFirst())
-                }
-                let leadingSpaces = line.prefix { $0 == " " }
-                let removalCount = min(leadingSpaces.count, indentUnit.count)
-                return String(line.dropFirst(removalCount))
+                return outdentedLine(line)
             }
 
             return indentUnit + line
@@ -1949,6 +1950,29 @@ final class LineClickableTextView: NSTextView {
         unsafe textStorage?.endEditing()
         didChangeText()
         setSelectedRange(NSRange(location: lineRange.location, length: (replacement as NSString).length))
+    }
+
+    private func outdentedLine(_ line: String) -> String {
+        switch indentation.style {
+        case .spaces:
+            let indentUnit = indentation.insertionText
+            if line.hasPrefix(indentUnit) {
+                return String(line.dropFirst(indentUnit.count))
+            }
+            if line.hasPrefix("\t") {
+                return String(line.dropFirst())
+            }
+            let leadingSpaces = line.prefix { $0 == " " }
+            let removalCount = min(leadingSpaces.count, indentation.width)
+            return String(line.dropFirst(removalCount))
+        case .tabs:
+            if line.hasPrefix("\t") {
+                return String(line.dropFirst())
+            }
+            let leadingSpaces = line.prefix { $0 == " " }
+            let removalCount = min(leadingSpaces.count, indentation.width)
+            return String(line.dropFirst(removalCount))
+        }
     }
 
     private func lineHasCommentPrefix(_ line: String, prefix: String) -> Bool {
@@ -2046,7 +2070,7 @@ final class LineClickableTextView: NSTextView {
             indentSelection()
             return
         }
-        super.insertTab(sender)
+        super.insertText(indentation.insertionText, replacementRange: selectedRange())
     }
 
     override func moveUp(_ sender: Any?) {
