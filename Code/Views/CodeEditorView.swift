@@ -488,6 +488,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             if let lineClickableTextView = textView as? LineClickableTextView {
                 ActiveEditorTextViewRegistry.shared.track(lineClickableTextView)
+                lineClickableTextView.language = language
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
                 applyIndentationSettings()
                 lineClickableTextView.autocompleteModeProvider = { [weak self] in
@@ -668,6 +669,7 @@ struct CodeEditorView: NSViewRepresentable {
                 .foregroundColor: theme.baseColor
             ]
             if let lineClickableTextView = textView as? LineClickableTextView {
+                lineClickableTextView.language = language
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
                 applyIndentationSettings()
             }
@@ -1845,6 +1847,7 @@ final class LineClickableTextView: NSTextView {
     private static let completionDelay: TimeInterval = 0.5
 
     var lineCommentPrefix: String?
+    var language: EditorLanguage = .plainText
     var indentation = EditorIndentationSettings.defaultSpaces(width: 4)
     private var isApplyingAcceptedCompletion = false
     private var completionTimer: Timer?
@@ -2074,7 +2077,7 @@ final class LineClickableTextView: NSTextView {
         if isCompletionVisible?() == true, acceptSelectedCompletion?() == true {
             return
         }
-        let indentation = currentLineLeadingWhitespaceForInsertion()
+        let indentation = newLineIndentationForInsertion()
         super.insertNewline(sender)
         guard !indentation.isEmpty else { return }
         super.insertText(indentation, replacementRange: selectedRange())
@@ -2237,17 +2240,114 @@ final class LineClickableTextView: NSTextView {
         }
     }
 
-    private func currentLineLeadingWhitespaceForInsertion() -> String {
+    private func newLineIndentationForInsertion() -> String {
+        let context = currentLineContextForInsertion()
+        guard !context.leadingWhitespace.isEmpty || shouldIncreaseIndent(after: context.codeBeforeCaret) else {
+            return ""
+        }
+
+        if shouldIncreaseIndent(after: context.codeBeforeCaret) {
+            return context.leadingWhitespace + indentation.insertionText
+        }
+
+        return context.leadingWhitespace
+    }
+
+    private func currentLineContextForInsertion() -> (leadingWhitespace: String, codeBeforeCaret: String) {
         let nsText = string as NSString
         let selection = selectedRange()
-        guard selection.location != NSNotFound else { return "" }
+        guard selection.location != NSNotFound else { return ("", "") }
 
         let location = min(selection.location, nsText.length)
         let lineRange = nsText.lineRange(for: NSRange(location: location, length: 0))
-        guard lineRange.location != NSNotFound, lineRange.length > 0 else { return "" }
+        guard lineRange.location != NSNotFound, lineRange.length > 0 else { return ("", "") }
 
         let line = nsText.substring(with: lineRange)
-        return String(line.prefix { $0 == " " || $0 == "\t" })
+        let leadingWhitespace = String(line.prefix { $0 == " " || $0 == "\t" })
+        let lineStart = lineRange.location
+        let beforeCaretLength = max(location - lineStart, 0)
+        let beforeCaret = nsText.substring(with: NSRange(location: lineStart, length: beforeCaretLength))
+
+        return (
+            leadingWhitespace: leadingWhitespace,
+            codeBeforeCaret: codeBeforeComment(in: beforeCaret).trimmingCharacters(in: .whitespaces)
+        )
+    }
+
+    private func shouldIncreaseIndent(after code: String) -> Bool {
+        guard !code.isEmpty else { return false }
+
+        switch language {
+        case .python:
+            return shouldIncreasePythonIndent(after: code)
+        case .shell:
+            return shouldIncreaseShellIndent(after: code)
+        case .powerShell:
+            return shouldIncreasePowerShellIndent(after: code)
+        case .json:
+            return shouldIncreaseJSONIndent(after: code)
+        case .xml:
+            return shouldIncreaseXMLIndent(after: code)
+        case .plainText, .logfile, .markdown, .dotenv:
+            return false
+        }
+    }
+
+    private func shouldIncreasePythonIndent(after code: String) -> Bool {
+        code.hasSuffix(":")
+    }
+
+    private func shouldIncreaseShellIndent(after code: String) -> Bool {
+        let lowercased = code.lowercased()
+        if code.hasSuffix("{") || code.hasSuffix("\\") {
+            return true
+        }
+
+        return lowercased.hasSuffix(" then")
+            || lowercased == "then"
+            || lowercased.hasSuffix("; then")
+            || lowercased.hasSuffix(" do")
+            || lowercased == "do"
+            || lowercased.hasSuffix("; do")
+            || (lowercased.hasPrefix("case ") && lowercased.hasSuffix(" in"))
+    }
+
+    private func shouldIncreasePowerShellIndent(after code: String) -> Bool {
+        code.hasSuffix("{")
+            || code.hasSuffix("(")
+            || code.hasSuffix("[")
+    }
+
+    private func shouldIncreaseJSONIndent(after code: String) -> Bool {
+        code.hasSuffix("{") || code.hasSuffix("[")
+    }
+
+    private func shouldIncreaseXMLIndent(after code: String) -> Bool {
+        guard code.hasSuffix(">"),
+              let tagStart = code.lastIndex(of: "<") else { return false }
+
+        let tag = String(code[tagStart...])
+        guard !tag.hasSuffix("/>"),
+              !tag.hasSuffix("-->"),
+              !tag.hasPrefix("</"),
+              !tag.hasPrefix("<!"),
+              !tag.hasPrefix("<?") else { return false }
+
+        guard let openingTagRange = tag.range(
+            of: #"<[A-Za-z_][A-Za-z0-9_.:-]*(?:\s+[^<>]*)?>"#,
+            options: .regularExpression
+        ) else { return false }
+        return openingTagRange.lowerBound == tag.startIndex
+            && openingTagRange.upperBound == tag.endIndex
+    }
+
+    private func codeBeforeComment(in line: String) -> String {
+        switch language {
+        case .python, .shell, .powerShell, .dotenv:
+            return String(line.prefixBeforeCommentMarker("#"))
+        case .plainText, .logfile, .markdown, .xml, .json:
+            return line
+        }
     }
 
     func currentPartialWordRange() -> NSRange? {
@@ -2307,6 +2407,51 @@ final class LineClickableTextView: NSTextView {
         }
     }
 
+}
+
+private extension String {
+    func prefixBeforeCommentMarker(_ marker: Character) -> Substring {
+        var cursor = startIndex
+        var isInSingleQuotedString = false
+        var isInDoubleQuotedString = false
+        var isEscapingNextCharacter = false
+
+        while cursor < endIndex {
+            let character = self[cursor]
+
+            if isEscapingNextCharacter {
+                isEscapingNextCharacter = false
+                cursor = index(after: cursor)
+                continue
+            }
+
+            if character == "\\" || character == "`" {
+                isEscapingNextCharacter = isInDoubleQuotedString || !isInSingleQuotedString
+                cursor = index(after: cursor)
+                continue
+            }
+
+            if character == "'", !isInDoubleQuotedString {
+                isInSingleQuotedString.toggle()
+                cursor = index(after: cursor)
+                continue
+            }
+
+            if character == "\"", !isInSingleQuotedString {
+                isInDoubleQuotedString.toggle()
+                cursor = index(after: cursor)
+                continue
+            }
+
+            if character == marker, !isInSingleQuotedString, !isInDoubleQuotedString {
+                return self[..<cursor]
+            }
+
+            cursor = index(after: cursor)
+        }
+
+        return self[...]
+    }
 }
 
 final class PaddedEditorDocumentView: NSView {
