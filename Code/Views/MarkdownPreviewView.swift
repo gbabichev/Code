@@ -386,6 +386,11 @@ private enum MarkdownHTMLRenderer {
             text-underline-offset: 0.16em;
         }
         ul, ol { padding-left: 1.55em; }
+        li > ul, li > ol {
+            margin-top: 0.22em;
+            margin-bottom: 0.28em;
+        }
+        ul ul, ul ol, ol ul, ol ol { padding-left: 1.45em; }
         li { margin: 0.22em 0; }
         li.task-list-item {
             list-style: none;
@@ -524,7 +529,10 @@ private enum MarkdownHTMLRenderer {
                     : "<input type=\"checkbox\" disabled>"
             } ?? ""
             let classAttribute = item.checklistState == nil ? "" : " class=\"task-list-item\""
-            return "<li\(classAttribute)>\(checkbox)\(MarkdownInlineRenderer.render(item.text, baseURL: baseURL))</li>"
+            let childHTML = item.children.map { childList in
+                renderList(items: childList.items, ordered: childList.ordered, baseURL: baseURL)
+            }.joined()
+            return "<li\(classAttribute)>\(checkbox)\(MarkdownInlineRenderer.render(item.text, baseURL: baseURL))\(childHTML)</li>"
         }.joined()
         return "<\(tag)>\(itemHTML)</\(tag)>"
     }
@@ -1080,6 +1088,12 @@ private enum MarkdownPreviewBlock {
 private struct MarkdownPreviewListItem {
     let text: String
     let checklistState: MarkdownChecklistState?
+    let children: [MarkdownPreviewListBlock]
+}
+
+private struct MarkdownPreviewListBlock {
+    let ordered: Bool
+    let items: [MarkdownPreviewListItem]
 }
 
 private enum MarkdownChecklistState {
@@ -1160,15 +1174,25 @@ private enum MarkdownPreviewParser {
                 continue
             }
 
-            if unorderedListItemText(from: line) != nil {
-                let parsed = parseList(lines: lines, startingAt: index, ordered: false)
+            if let marker = unorderedListMarker(from: line) {
+                let parsed = parseList(
+                    lines: lines,
+                    startingAt: index,
+                    ordered: false,
+                    baseIndent: marker.indent
+                )
                 blocks.append(.unorderedList(parsed.items))
                 index = parsed.nextIndex
                 continue
             }
 
-            if orderedListItemText(from: line) != nil {
-                let parsed = parseList(lines: lines, startingAt: index, ordered: true)
+            if let marker = orderedListMarker(from: line) {
+                let parsed = parseList(
+                    lines: lines,
+                    startingAt: index,
+                    ordered: true,
+                    baseIndent: marker.indent
+                )
                 blocks.append(.orderedList(parsed.items))
                 index = parsed.nextIndex
                 continue
@@ -1414,32 +1438,57 @@ private enum MarkdownPreviewParser {
     private static func parseList(
         lines: [String],
         startingAt index: Int,
-        ordered: Bool
+        ordered: Bool,
+        baseIndent: Int
     ) -> (items: [MarkdownPreviewListItem], nextIndex: Int) {
         var items: [MarkdownPreviewListItem] = []
         var cursor = index
 
         while cursor < lines.count {
-            guard let itemText = ordered
-                    ? orderedListItemText(from: lines[cursor])
-                    : unorderedListItemText(from: lines[cursor])
+            guard let marker = listMarker(from: lines[cursor]),
+                  marker.ordered == ordered,
+                  marker.indent == baseIndent
             else { break }
 
-            var combinedText = itemText
+            var combinedText = marker.text
+            var children: [MarkdownPreviewListBlock] = []
             cursor += 1
 
             while cursor < lines.count {
                 let nextLine = lines[cursor]
                 let trimmed = nextLine.trimmingCharacters(in: .whitespaces)
-                if trimmed.isEmpty || blockStart(nextLine) {
+                if trimmed.isEmpty {
                     break
                 }
-                guard nextLine.hasPrefix("  ") || nextLine.hasPrefix("\t") else { break }
+
+                if let nextMarker = listMarker(from: nextLine) {
+                    if nextMarker.indent > baseIndent {
+                        let parsed = parseList(
+                            lines: lines,
+                            startingAt: cursor,
+                            ordered: nextMarker.ordered,
+                            baseIndent: nextMarker.indent
+                        )
+                        children.append(
+                            MarkdownPreviewListBlock(
+                                ordered: nextMarker.ordered,
+                                items: parsed.items
+                            )
+                        )
+                        cursor = parsed.nextIndex
+                        continue
+                    }
+                    break
+                }
+
+                guard indentationColumn(in: nextLine) > baseIndent,
+                      !blockStart(nextLine) else { break }
+
                 combinedText += " " + trimmed
                 cursor += 1
             }
 
-            items.append(listItem(from: combinedText))
+            items.append(listItem(from: combinedText, children: children))
         }
 
         return (items, cursor)
@@ -1475,16 +1524,28 @@ private enum MarkdownPreviewParser {
     }
 
     private static func unorderedListItemText(from line: String) -> String? {
+        unorderedListMarker(from: line)?.text
+    }
+
+    private static func unorderedListMarker(from line: String) -> MarkdownListMarker? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.count >= 2, let marker = trimmed.first else { return nil }
         guard marker == "-" || marker == "*" || marker == "+" else { return nil }
 
         let afterMarker = trimmed.index(after: trimmed.startIndex)
         guard afterMarker < trimmed.endIndex, trimmed[afterMarker].isWhitespace else { return nil }
-        return String(trimmed[afterMarker...]).trimmingCharacters(in: .whitespaces)
+        return MarkdownListMarker(
+            indent: indentationColumn(in: line),
+            ordered: false,
+            text: String(trimmed[afterMarker...]).trimmingCharacters(in: .whitespaces)
+        )
     }
 
     private static func orderedListItemText(from line: String) -> String? {
+        orderedListMarker(from: line)?.text
+    }
+
+    private static func orderedListMarker(from line: String) -> MarkdownListMarker? {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         var cursor = trimmed.startIndex
         var digitCount = 0
@@ -1499,26 +1560,66 @@ private enum MarkdownPreviewParser {
         cursor = trimmed.index(after: cursor)
         guard cursor < trimmed.endIndex, trimmed[cursor].isWhitespace else { return nil }
 
-        return String(trimmed[cursor...]).trimmingCharacters(in: .whitespaces)
+        return MarkdownListMarker(
+            indent: indentationColumn(in: line),
+            ordered: true,
+            text: String(trimmed[cursor...]).trimmingCharacters(in: .whitespaces)
+        )
     }
 
-    private static func listItem(from text: String) -> MarkdownPreviewListItem {
+    private static func listMarker(from line: String) -> MarkdownListMarker? {
+        unorderedListMarker(from: line) ?? orderedListMarker(from: line)
+    }
+
+    private static func listItem(
+        from text: String,
+        children: [MarkdownPreviewListBlock]
+    ) -> MarkdownPreviewListItem {
         if text.hasPrefix("[ ] ") {
             return MarkdownPreviewListItem(
                 text: String(text.dropFirst(4)),
-                checklistState: .unchecked
+                checklistState: .unchecked,
+                children: children
             )
         }
 
         if text.hasPrefix("[x] ") || text.hasPrefix("[X] ") {
             return MarkdownPreviewListItem(
                 text: String(text.dropFirst(4)),
-                checklistState: .checked
+                checklistState: .checked,
+                children: children
             )
         }
 
-        return MarkdownPreviewListItem(text: text, checklistState: nil)
+        return MarkdownPreviewListItem(
+            text: text,
+            checklistState: nil,
+            children: children
+        )
     }
+
+    private static func indentationColumn(in line: String) -> Int {
+        var column = 0
+
+        for character in line {
+            if character == " " {
+                column += 1
+            } else if character == "\t" {
+                let remainder = column % 4
+                column += remainder == 0 ? 4 : 4 - remainder
+            } else {
+                break
+            }
+        }
+
+        return column
+    }
+}
+
+private struct MarkdownListMarker {
+    let indent: Int
+    let ordered: Bool
+    let text: String
 }
 
 private func escapeHTML(_ value: String) -> String {
