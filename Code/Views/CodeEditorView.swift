@@ -447,6 +447,7 @@ struct CodeEditorView: NSViewRepresentable {
         private var scrollPositionRestoreWorkItems: [DispatchWorkItem] = []
         private var isRestoringScrollPosition = false
         private var isInitialScrollPositionRestorePending = false
+        private var highlightedBracketRanges: [NSRange] = []
         private var cachedSyntaxHighlighter: SyntaxHighlighting?
         private var cachedSyntaxHighlighterKey: SyntaxHighlighterCacheKey?
         private let completionController = CompletionController()
@@ -571,6 +572,7 @@ struct CodeEditorView: NSViewRepresentable {
             }
 
             (textView as? LineClickableTextView)?.performAutomaticCompletionIfNeeded()
+            updateBracketMatchingHighlight()
             gutterView.needsDisplay = true
             updateDocumentLayoutAfterLiveEdit()
             restoreScrollOriginAfterLiveEdit(liveEditScrollOrigin)
@@ -613,6 +615,7 @@ struct CodeEditorView: NSViewRepresentable {
             if wasShowingCompletions {
                 refreshCompletionItems()
             }
+            updateBracketMatchingHighlight()
             textView?.needsDisplay = true
             gutterView.needsDisplay = true
         }
@@ -673,6 +676,7 @@ struct CodeEditorView: NSViewRepresentable {
                 lineClickableTextView.lineCommentPrefix = language.lineCommentPrefix
                 applyIndentationSettings()
             }
+            updateBracketMatchingHighlight()
             scrollView?.backgroundColor = theme.editorBackgroundColor
             documentView?.backgroundColor = theme.editorBackgroundColor
             gutterView.theme = theme
@@ -689,6 +693,44 @@ struct CodeEditorView: NSViewRepresentable {
             guard let layoutManager = unsafe textView?.layoutManager else { return }
             layoutManager.showsInvisibleCharacters = showsInvisibleCharacters
             textView?.needsDisplay = true
+        }
+
+        private func updateBracketMatchingHighlight() {
+            clearBracketMatchingHighlight()
+
+            guard let textView = textView as? LineClickableTextView,
+                  let layoutManager = unsafe textView.layoutManager,
+                  let match = textView.bracketMatchNearSelection() else { return }
+
+            let attributes = bracketMatchingAttributes()
+            for range in [match.source, match.match] {
+                layoutManager.addTemporaryAttributes(attributes, forCharacterRange: range)
+                highlightedBracketRanges.append(range)
+            }
+        }
+
+        private func clearBracketMatchingHighlight() {
+            guard let textView,
+                  let layoutManager = unsafe textView.layoutManager,
+                  !highlightedBracketRanges.isEmpty else {
+                highlightedBracketRanges.removeAll()
+                return
+            }
+
+            for range in highlightedBracketRanges {
+                layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
+                layoutManager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: range)
+            }
+            highlightedBracketRanges.removeAll()
+        }
+
+        private func bracketMatchingAttributes() -> [NSAttributedString.Key: Any] {
+            let accentColor = NSColor.controlAccentColor
+            return [
+                .backgroundColor: accentColor.withAlphaComponent(0.28),
+                .foregroundColor: accentColor.blended(withFraction: 0.35, of: textView?.textColor ?? .textColor)
+                    ?? accentColor
+            ]
         }
 
         func syncWithBindingText(_ text: String) -> Bool {
@@ -1845,6 +1887,13 @@ struct CodeEditorView: NSViewRepresentable {
 final class LineClickableTextView: NSTextView {
     private static let minimumCompletionPrefixLength = 2
     private static let completionDelay: TimeInterval = 0.5
+    private static let maximumBracketMatchScanLength = 80_000
+    // ASCII bracket pairs: (), [], {}.
+    private static let bracketPairs: [unichar: unichar] = [
+        40: 41,
+        91: 93,
+        123: 125
+    ]
 
     var lineCommentPrefix: String?
     var language: EditorLanguage = .plainText
@@ -2135,6 +2184,38 @@ final class LineClickableTextView: NSTextView {
         super.deleteForward(sender)
     }
 
+    func bracketMatchNearSelection() -> (source: NSRange, match: NSRange)? {
+        let selectedRange = selectedRange()
+        guard selectedRange.length == 0,
+              selectedRange.location != NSNotFound else { return nil }
+
+        let nsText = string as NSString
+        let textLength = nsText.length
+        guard textLength > 0 else { return nil }
+
+        let caretLocation = min(selectedRange.location, textLength)
+        let candidateLocations = [
+            caretLocation > 0 ? caretLocation - 1 : nil,
+            caretLocation < textLength ? caretLocation : nil
+        ].compactMap(\.self)
+
+        for location in candidateLocations {
+            guard let bracket = bracketCharacter(at: location, in: nsText),
+                  let matchLocation = matchingBracketLocation(
+                    for: bracket,
+                    at: location,
+                    in: nsText
+                  ) else { continue }
+
+            return (
+                source: NSRange(location: location, length: 1),
+                match: NSRange(location: matchLocation, length: 1)
+            )
+        }
+
+        return nil
+    }
+
     func notePendingCompletionTrigger(replacementString: String?, affectedRange: NSRange) {
         guard autocompleteModeProvider?() != .off else {
             cancelPendingCompletionTrigger()
@@ -2288,6 +2369,72 @@ final class LineClickableTextView: NSTextView {
         didChangeText()
         setSelectedRange(NSRange(location: deletionRange.location, length: 0))
         return true
+    }
+
+    private func bracketCharacter(at location: Int, in text: NSString) -> unichar? {
+        guard location >= 0, location < text.length else { return nil }
+        let codeUnit = text.character(at: location)
+        return Self.bracketPairs.keys.contains(codeUnit) || Self.bracketPairs.values.contains(codeUnit)
+            ? codeUnit
+            : nil
+    }
+
+    private func matchingBracketLocation(
+        for bracket: unichar,
+        at location: Int,
+        in text: NSString
+    ) -> Int? {
+        if let closingBracket = Self.bracketPairs[bracket] {
+            return scanForMatchingBracket(
+                openingBracket: bracket,
+                closingBracket: closingBracket,
+                startLocation: location + 1,
+                limitLocation: min(text.length, location + Self.maximumBracketMatchScanLength),
+                direction: 1,
+                in: text
+            )
+        }
+
+        guard let openingBracket = Self.bracketPairs.first(where: { $0.value == bracket })?.key else {
+            return nil
+        }
+        return scanForMatchingBracket(
+            openingBracket: openingBracket,
+            closingBracket: bracket,
+            startLocation: location - 1,
+            limitLocation: max(-1, location - Self.maximumBracketMatchScanLength),
+            direction: -1,
+            in: text
+        )
+    }
+
+    private func scanForMatchingBracket(
+        openingBracket: unichar,
+        closingBracket: unichar,
+        startLocation: Int,
+        limitLocation: Int,
+        direction: Int,
+        in text: NSString
+    ) -> Int? {
+        var depth = 1
+        var location = startLocation
+
+        while direction > 0 ? location < limitLocation : location > limitLocation {
+            let codeUnit = text.character(at: location)
+            if codeUnit == openingBracket {
+                depth += direction > 0 ? 1 : -1
+            } else if codeUnit == closingBracket {
+                depth += direction > 0 ? -1 : 1
+            }
+
+            if depth == 0 {
+                return location
+            }
+
+            location += direction
+        }
+
+        return nil
     }
 
     private func smartIndentationDeletionLength(in leadingWhitespace: String) -> Int {
