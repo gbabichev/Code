@@ -388,7 +388,13 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
             }
 
             if ch == 34 || ch == 39 {
-                let tokenEnd = quotedStringEnd(in: text, startingAt: index, quote: ch, lineEnd: end)
+                let tokenEnd = shellQuotedStringEnd(
+                    in: text,
+                    startingAt: index,
+                    quote: ch,
+                    lineEnd: end,
+                    allowsEscapedQuote: ch == 34 || isShellDollarQuotedString(in: text, quoteIndex: index, lineStart: lineRange.location)
+                )
                 applyAttributes(theme.stringAttributes, range: NSRange(location: index, length: tokenEnd - index), visibleIn: visibleRange, to: storage)
                 index = tokenEnd
                 expectsCommand = false
@@ -396,6 +402,23 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
             }
 
             if ch == 36 {
+                if index + 1 < end {
+                    let next = text.character(at: index + 1)
+                    if next == 34 || next == 39 {
+                        let tokenEnd = shellQuotedStringEnd(
+                            in: text,
+                            startingAt: index + 1,
+                            quote: next,
+                            lineEnd: end,
+                            allowsEscapedQuote: true
+                        )
+                        applyAttributes(theme.stringAttributes, range: NSRange(location: index, length: tokenEnd - index), visibleIn: visibleRange, to: storage)
+                        index = tokenEnd
+                        expectsCommand = false
+                        continue
+                    }
+                }
+
                 let tokenEnd = shellVariableEnd(in: text, startingAt: index, lineEnd: end)
                 if tokenEnd > index + 1 {
                     applyAttributes(theme.variableAttributes, range: NSRange(location: index, length: tokenEnd - index), visibleIn: visibleRange, to: storage)
@@ -453,11 +476,50 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
         return cursor
     }
 
+    private func shellQuotedStringEnd(
+        in text: NSString,
+        startingAt index: Int,
+        quote: unichar,
+        lineEnd: Int,
+        allowsEscapedQuote: Bool
+    ) -> Int {
+        var cursor = index + 1
+        var escaped = false
+        while cursor < lineEnd {
+            let ch = text.character(at: cursor)
+            if (quote == 34 || allowsEscapedQuote), ch == 92, !escaped {
+                escaped = true
+                cursor += 1
+                continue
+            }
+            if ch == quote, !escaped {
+                return cursor + 1
+            }
+            escaped = false
+            cursor += 1
+        }
+        return cursor
+    }
+
+    private func isShellDollarQuotedString(in text: NSString, quoteIndex: Int, lineStart: Int) -> Bool {
+        quoteIndex > lineStart && text.character(at: quoteIndex - 1) == 36
+    }
+
     private func shellWordEnd(in text: NSString, startingAt index: Int, lineEnd: Int) -> Int {
         var cursor = index
         while cursor < lineEnd {
             let ch = text.character(at: cursor)
-            if isWhitespace(ch) || ch == 10 || ch == 13 || ch == 59 || ch == 124 || ch == 38 || ch == 40 || ch == 41 {
+            if isWhitespace(ch)
+                || ch == 10
+                || ch == 13
+                || ch == 34
+                || ch == 36
+                || ch == 39
+                || ch == 59
+                || ch == 124
+                || ch == 38
+                || ch == 40
+                || ch == 41 {
                 break
             }
             cursor += 1
