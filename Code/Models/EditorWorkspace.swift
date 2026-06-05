@@ -687,6 +687,7 @@ final class EditorWorkspace: ObservableObject {
         ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
         guard let tab = selectedTab else { return }
 
+        let previousIndentation = tab.indentation
         let inferredSettings = inferredIndentationSettings(for: tab.content)
         let normalizedContent = IndentationAnalyzer.normalizedContent(
             tab.content,
@@ -697,10 +698,42 @@ final class EditorWorkspace: ObservableObject {
             fallbackWidth: inferredSettings.width
         )
 
-        tab.indentation = normalizedSettings
         if normalizedContent != tab.content {
+            if let undoManager = ActiveEditorTextViewRegistry.shared.undoManager(for: tab.id) {
+                let shouldCloseUndoGroup = undoManager.groupingLevel == 0
+                if shouldCloseUndoGroup {
+                    undoManager.beginUndoGrouping()
+                }
+                let didReplaceThroughEditor = ActiveEditorTextViewRegistry.shared.replaceTextWithUndo(
+                    for: tab.id,
+                    replacement: normalizedContent,
+                    actionName: "Fix Indentation"
+                )
+                if didReplaceThroughEditor {
+                    tab.indentation = normalizedSettings
+                    registerIndentationUndo(
+                        for: tab,
+                        previousIndentation: previousIndentation,
+                        undoManager: undoManager
+                    )
+                    undoManager.setActionName("Fix Indentation")
+                    pendingDirtyStateRecheckTabIDs.remove(tab.id)
+                    if shouldCloseUndoGroup {
+                        undoManager.endUndoGrouping()
+                    }
+                    persistSession()
+                    return
+                }
+                if shouldCloseUndoGroup {
+                    undoManager.endUndoGrouping()
+                }
+            }
+
+            tab.indentation = normalizedSettings
             tab.setContent(normalizedContent, notify: true)
             pendingDirtyStateRecheckTabIDs.remove(tab.id)
+        } else {
+            tab.indentation = normalizedSettings
         }
         persistSession()
     }
@@ -882,6 +915,27 @@ final class EditorWorkspace: ObservableObject {
         if selectedTab.lineEnding == lineEnding { return }
         selectedTab.lineEnding = lineEnding
         selectedTab.refreshDirtyState()
+        persistSession()
+    }
+
+    func updateSelectedTabIndentationAuto() {
+        guard let selectedTab else { return }
+        var inferredSettings = inferredIndentationSettings(for: selectedTab.content)
+        inferredSettings.isInferred = true
+        guard selectedTab.indentation != inferredSettings else { return }
+        selectedTab.indentation = inferredSettings
+        persistSession()
+    }
+
+    func updateSelectedTabIndentation(style: EditorIndentationStyle, width: Int) {
+        guard let selectedTab else { return }
+        let explicitSettings = IndentationAnalyzer.explicitSettings(
+            style: style,
+            width: width,
+            in: selectedTab.content
+        )
+        guard selectedTab.indentation != explicitSettings else { return }
+        selectedTab.indentation = explicitSettings
         persistSession()
     }
 
@@ -1296,6 +1350,38 @@ final class EditorWorkspace: ObservableObject {
                 return lhs.rawValue < rhs.rawValue
             }
             return lhs.sortPriority < rhs.sortPriority
+        }
+    }
+
+    private func registerIndentationUndo(
+        for tab: EditorTab,
+        previousIndentation: EditorIndentationSettings,
+        undoManager: UndoManager
+    ) {
+        Self.registerIndentationUndoStep(
+            for: tab,
+            undoManager: undoManager,
+            targetIndentation: previousIndentation,
+            inverseIndentation: tab.indentation
+        )
+    }
+
+    private static func registerIndentationUndoStep(
+        for tab: EditorTab,
+        undoManager: UndoManager,
+        targetIndentation: EditorIndentationSettings,
+        inverseIndentation: EditorIndentationSettings
+    ) {
+        undoManager.registerUndo(withTarget: tab) { target in
+            MainActor.assumeIsolated {
+                target.indentation = targetIndentation
+                registerIndentationUndoStep(
+                    for: target,
+                    undoManager: undoManager,
+                    targetIndentation: inverseIndentation,
+                    inverseIndentation: targetIndentation
+                )
+            }
         }
     }
 

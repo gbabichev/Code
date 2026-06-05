@@ -47,6 +47,24 @@ final class ActiveEditorTextViewRegistry {
             textView.flushPendingModelSync?()
         }
     }
+
+    func undoManager(for editorID: String) -> UndoManager? {
+        lineClickableTextView(for: editorID)?.undoManager
+    }
+
+    func replaceTextWithUndo(for editorID: String, replacement: String, actionName: String) -> Bool {
+        guard let textView = lineClickableTextView(for: editorID) else { return false }
+        return textView.replaceAllTextPreservingUndo(with: replacement, actionName: actionName)
+    }
+
+    private func lineClickableTextView(for editorID: String) -> LineClickableTextView? {
+        if let activeTextView = textView as? LineClickableTextView,
+           activeTextView.editorID == editorID {
+            return activeTextView
+        }
+
+        return textViews.allObjects.first { $0.editorID == editorID }
+    }
 }
 
 private struct GutterLineIndex {
@@ -202,6 +220,7 @@ private struct GutterLineIndex {
 }
 
 struct CodeEditorView: NSViewRepresentable {
+    let editorID: String
     @Binding var text: String
     @Binding var scrollPosition: EditorScrollPosition?
     let isWordWrapEnabled: Bool
@@ -217,6 +236,7 @@ struct CodeEditorView: NSViewRepresentable {
     let onTextChange: (String) -> Void
 
     init(
+        editorID: String,
         text: Binding<String>,
         scrollPosition: Binding<EditorScrollPosition?>,
         isWordWrapEnabled: Bool,
@@ -231,6 +251,7 @@ struct CodeEditorView: NSViewRepresentable {
         onDidFocus: @escaping () -> Void,
         onTextChange: @escaping (String) -> Void = { _ in }
     ) {
+        self.editorID = editorID
         self._text = text
         self._scrollPosition = scrollPosition
         self.isWordWrapEnabled = isWordWrapEnabled
@@ -286,6 +307,7 @@ struct CodeEditorView: NSViewRepresentable {
             .foregroundColor: theme.baseColor
         ]
         textView.delegate = context.coordinator
+        textView.editorID = editorID
         textView.textContainerInset = NSSize(width: 14, height: 16)
         textView.allowsUndo = true
         textView.translatesAutoresizingMaskIntoConstraints = false
@@ -376,6 +398,9 @@ struct CodeEditorView: NSViewRepresentable {
         }
 
         guard let textView = context.coordinator.textView else { return }
+        if let lineClickableTextView = textView as? LineClickableTextView {
+            lineClickableTextView.editorID = editorID
+        }
         if unsafe textView.window?.firstResponder as? NSTextView === textView {
             ActiveEditorTextViewRegistry.shared.register(textView)
         }
@@ -1896,6 +1921,7 @@ final class LineClickableTextView: NSTextView {
     ]
 
     var lineCommentPrefix: String?
+    var editorID: String?
     var language: EditorLanguage = .plainText
     var indentation = EditorIndentationSettings.defaultSpaces(width: 4)
     private var isApplyingAcceptedCompletion = false
@@ -1987,6 +2013,29 @@ final class LineClickableTextView: NSTextView {
 
     func outdentSelection() {
         adjustIndentation(outdent: true)
+    }
+
+    func replaceAllTextPreservingUndo(with replacement: String, actionName: String) -> Bool {
+        guard string != replacement else { return false }
+
+        let currentLength = (string as NSString).length
+        let replacementLength = (replacement as NSString).length
+        let replacementRange = NSRange(location: 0, length: currentLength)
+        let previousSelection = selectedRange()
+        guard shouldChangeText(in: replacementRange, replacementString: replacement) else { return false }
+
+        unsafe textStorage?.beginEditing()
+        unsafe textStorage?.replaceCharacters(in: replacementRange, with: replacement)
+        unsafe textStorage?.endEditing()
+        didChangeText()
+        undoManager?.setActionName(actionName)
+
+        let restoredSelection = NSRange(
+            location: min(previousSelection.location, replacementLength),
+            length: min(previousSelection.length, max(replacementLength - min(previousSelection.location, replacementLength), 0))
+        )
+        setSelectedRange(restoredSelection)
+        return true
     }
 
     private func adjustIndentation(outdent: Bool) {

@@ -8,50 +8,44 @@ import Foundation
 enum IndentationAnalyzer {
     static func inferSettings(in text: String, fallbackWidth: Int) -> EditorIndentationSettings {
         let fallbackWidth = clampedWidth(fallbackWidth)
-        var spaceOnlyIndentCounts: [Int] = []
-        var spaceOnlyLineCount = 0
-        var tabOnlyLineCount = 0
-        var mixedLineCount = 0
-
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let prefix = leadingIndentation(in: Substring(line))
-            guard !prefix.isEmpty,
-                  line[prefix.endIndex...].contains(where: { !$0.isWhitespace }) else { continue }
-
-            let hasSpaces = prefix.contains(" ")
-            let hasTabs = prefix.contains("\t")
-
-            if hasSpaces && hasTabs {
-                mixedLineCount += 1
-            } else if hasTabs {
-                tabOnlyLineCount += 1
-            } else if hasSpaces {
-                spaceOnlyLineCount += 1
-                spaceOnlyIndentCounts.append(prefix.count)
-            }
-        }
+        let analysis = indentationAnalysis(in: text)
 
         let inferredStyle: EditorIndentationStyle
-        if spaceOnlyLineCount == 0 && tabOnlyLineCount == 0 && mixedLineCount == 0 {
+        if analysis.spaceOnlyLineCount == 0
+            && analysis.tabOnlyLineCount == 0
+            && analysis.mixedLineCount == 0 {
             inferredStyle = .spaces
-        } else if tabOnlyLineCount > spaceOnlyLineCount {
+        } else if analysis.tabOnlyLineCount > analysis.spaceOnlyLineCount {
             inferredStyle = .tabs
         } else {
             inferredStyle = .spaces
         }
 
-        let width = inferredSpaceWidth(from: spaceOnlyIndentCounts, fallbackWidth: fallbackWidth)
-        let hasMixedIndentation = mixedLineCount > 0 || (spaceOnlyLineCount > 0 && tabOnlyLineCount > 0)
-        let hasUnevenIndentation = inferredStyle == .spaces
-            && spaceOnlyIndentCounts.contains { $0 % width != 0 }
-        let hasEvidence = spaceOnlyLineCount > 0 || tabOnlyLineCount > 0 || mixedLineCount > 0
+        let width = inferredSpaceWidth(from: analysis.spaceOnlyIndentCounts, fallbackWidth: fallbackWidth)
 
         return EditorIndentationSettings(
             style: inferredStyle,
             width: width,
-            isInferred: hasEvidence,
-            hasMixedIndentation: hasMixedIndentation,
-            hasUnevenIndentation: hasUnevenIndentation
+            isInferred: analysis.hasEvidence,
+            hasMixedIndentation: analysis.hasMixedIndentation,
+            hasUnevenIndentation: analysis.hasUnevenIndentation(style: inferredStyle, width: width)
+        )
+    }
+
+    static func explicitSettings(
+        style: EditorIndentationStyle,
+        width: Int,
+        in text: String
+    ) -> EditorIndentationSettings {
+        let width = clampedWidth(width)
+        let analysis = indentationAnalysis(in: text)
+
+        return EditorIndentationSettings(
+            style: style,
+            width: width,
+            isInferred: false,
+            hasMixedIndentation: analysis.hasMixedIndentation,
+            hasUnevenIndentation: analysis.hasUnevenIndentation(style: style, width: width)
         )
     }
 
@@ -76,6 +70,30 @@ enum IndentationAnalyzer {
             character != " " && character != "\t"
         } ?? line.endIndex
         return line[..<end]
+    }
+
+    private static func indentationAnalysis(in text: String) -> IndentationAnalysis {
+        var analysis = IndentationAnalysis()
+
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let prefix = leadingIndentation(in: Substring(line))
+            guard !prefix.isEmpty,
+                  line[prefix.endIndex...].contains(where: { !$0.isWhitespace }) else { continue }
+
+            let hasSpaces = prefix.contains(" ")
+            let hasTabs = prefix.contains("\t")
+
+            if hasSpaces && hasTabs {
+                analysis.mixedLineCount += 1
+            } else if hasTabs {
+                analysis.tabOnlyLineCount += 1
+            } else if hasSpaces {
+                analysis.spaceOnlyLineCount += 1
+                analysis.spaceOnlyIndentCounts.append(prefix.count)
+            }
+        }
+
+        return analysis
     }
 
     private static func indentationColumnCount(in prefix: Substring, tabWidth: Int) -> Int {
@@ -149,5 +167,24 @@ enum IndentationAnalyzer {
             max(width, EditorIndentationSettings.minimumWidth),
             EditorIndentationSettings.maximumWidth
         )
+    }
+
+    private struct IndentationAnalysis {
+        var spaceOnlyIndentCounts: [Int] = []
+        var spaceOnlyLineCount = 0
+        var tabOnlyLineCount = 0
+        var mixedLineCount = 0
+
+        var hasEvidence: Bool {
+            spaceOnlyLineCount > 0 || tabOnlyLineCount > 0 || mixedLineCount > 0
+        }
+
+        var hasMixedIndentation: Bool {
+            mixedLineCount > 0 || (spaceOnlyLineCount > 0 && tabOnlyLineCount > 0)
+        }
+
+        func hasUnevenIndentation(style: EditorIndentationStyle, width: Int) -> Bool {
+            style == .spaces && spaceOnlyIndentCounts.contains { $0 % width != 0 }
+        }
     }
 }

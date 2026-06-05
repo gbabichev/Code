@@ -25,6 +25,7 @@ struct ContentView: View {
     @State private var toastMessage: String?
     @State private var dismissedExternalModificationBannerVersionsByTabID: [EditorTab.ID: Int] = [:]
     @State private var hiddenMarkdownPreviewTabIDs: Set<EditorTab.ID> = []
+    @State private var isShowingIndentationFixConfirmation = false
     @FocusState private var focusedSearchField: SearchField?
 
     enum SearchField: Hashable {
@@ -111,6 +112,14 @@ struct ContentView: View {
             }
         } message: { pending in
             Text("Refreshing \(pending.fileName) will discard unsaved changes and reload the file from disk.")
+        }
+        .alert("Fix Mixed Indentation?", isPresented: $isShowingIndentationFixConfirmation) {
+            Button("Fix Indentation") {
+                workspace.fixSelectedTabIndentation()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Code will try to normalize the indentation in the current file. You can undo the change with Cmd-Z.")
         }
         .alert("Editor Error", isPresented: errorBinding) {
             Button("OK") {
@@ -389,19 +398,55 @@ struct ContentView: View {
             if !statusIndicators.isEmpty {
                 FileStatusIndicatorStrip(
                     indicators: statusIndicators,
-                    style: .badge
+                    style: .badge,
+                    clickableIndicators: [.mixedIndentation],
+                    onIndicatorClick: handleStatusIndicatorClick
                 )
 
                 Divider()
                     .frame(height: 12)
             }
 
-            HStack(spacing: 4) {
-                if tab.indentation.hasIndentationIssues {
-                    Image(systemName: "exclamationmark.triangle.fill")
+            Menu {
+                Button {
+                    workspace.updateSelectedTabIndentationAuto()
+                } label: {
+                    if tab.indentation.isInferred {
+                        Label("Auto", systemImage: "checkmark")
+                    } else {
+                        Text("Auto")
+                    }
                 }
-                Text(tab.indentation.statusTitle)
+
+                Divider()
+
+                indentationMenuButton(
+                    title: "Spaces: 2",
+                    tab: tab,
+                    style: .spaces,
+                    width: 2
+                )
+                indentationMenuButton(
+                    title: "Spaces: 4",
+                    tab: tab,
+                    style: .spaces,
+                    width: 4
+                )
+                indentationMenuButton(
+                    title: "Tabs",
+                    tab: tab,
+                    style: .tabs,
+                    width: tab.indentation.width
+                )
+            } label: {
+                HStack(spacing: 4) {
+                    if tab.indentation.hasIndentationIssues {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                    }
+                    Text(indentationStatusTitle(for: tab))
+                }
             }
+            .menuStyle(.borderlessButton)
             .foregroundStyle(tab.indentation.hasIndentationIssues ? .orange : .secondary)
             .help(indentationStatusHelp(for: tab))
 
@@ -505,11 +550,57 @@ struct ContentView: View {
         return tab.language.title
     }
 
+    private func indentationStatusTitle(for tab: EditorTab) -> String {
+        if tab.indentation.isInferred {
+            return "Auto: \(tab.indentation.statusTitle)"
+        }
+
+        return tab.indentation.statusTitle
+    }
+
+    private func indentationMenuButton(
+        title: String,
+        tab: EditorTab,
+        style: EditorIndentationStyle,
+        width: Int
+    ) -> some View {
+        Button {
+            workspace.updateSelectedTabIndentation(style: style, width: width)
+        } label: {
+            if isSelectedIndentationOption(tab: tab, style: style, width: width) {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
+            }
+        }
+    }
+
+    private func isSelectedIndentationOption(
+        tab: EditorTab,
+        style: EditorIndentationStyle,
+        width: Int
+    ) -> Bool {
+        guard !tab.indentation.isInferred,
+              tab.indentation.style == style else { return false }
+
+        switch style {
+        case .spaces:
+            return tab.indentation.width == width
+        case .tabs:
+            return true
+        }
+    }
+
+    private func handleStatusIndicatorClick(_ indicator: EditorFileStatusKind) {
+        guard indicator == .mixedIndentation else { return }
+        isShowingIndentationFixConfirmation = true
+    }
+
     private func indentationStatusHelp(for tab: EditorTab) -> String {
         var details = [
             tab.indentation.isInferred
-                ? "Detected from this file."
-                : "Using the default indentation setting."
+                ? "Using auto indentation for this file."
+                : "Using a per-file indentation override."
         ]
         if tab.indentation.hasMixedIndentation {
             details.append("Mixed tabs and spaces detected.")
@@ -1187,6 +1278,7 @@ private struct EditorAreaView: View {
 
     private var codeEditor: some View {
         CodeEditorView(
+            editorID: editorID,
             text: text,
             scrollPosition: scrollPosition,
             isWordWrapEnabled: isWordWrapEnabled,

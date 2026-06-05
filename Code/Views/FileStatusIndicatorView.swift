@@ -14,6 +14,8 @@ struct FileStatusIndicatorStrip: View {
     let indicators: [EditorFileStatusKind]
     var style: FileStatusIndicatorStyle = .icon
     var maxVisible: Int?
+    var clickableIndicators: Set<EditorFileStatusKind> = []
+    var onIndicatorClick: ((EditorFileStatusKind) -> Void)?
 
     private var sortedIndicators: [EditorFileStatusKind] {
         indicators.sorted { lhs, rhs in
@@ -54,6 +56,21 @@ struct FileStatusIndicatorStrip: View {
 
     @ViewBuilder
     private func indicatorView(for indicator: EditorFileStatusKind) -> some View {
+        if clickableIndicators.contains(indicator), let onIndicatorClick {
+            Button {
+                onIndicatorClick(indicator)
+            } label: {
+                indicatorContent(for: indicator)
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+        } else {
+            indicatorContent(for: indicator)
+        }
+    }
+
+    @ViewBuilder
+    private func indicatorContent(for indicator: EditorFileStatusKind) -> some View {
         switch style {
         case .icon:
             Image(systemName: indicator.systemImage)
