@@ -18,6 +18,7 @@ struct TabBarView: View {
     let onMoveToNewWindow: (EditorTab.ID) -> Void
     let onOpenInSplitView: (EditorTab.ID) -> Void
     let onCloseOtherTabs: (EditorTab.ID) -> Void
+    let statusIndicators: (EditorTab) -> [EditorFileStatusKind]
     @State private var draggedTabID: EditorTab.ID?
 
     var body: some View {
@@ -34,7 +35,8 @@ struct TabBarView: View {
                             onMove: onMove,
                             onMoveToNewWindow: onMoveToNewWindow,
                             onOpenInSplitView: onOpenInSplitView,
-                            onCloseOtherTabs: onCloseOtherTabs
+                            onCloseOtherTabs: onCloseOtherTabs,
+                            statusIndicators: statusIndicators(tab)
                         )
                     }
 
@@ -91,6 +93,7 @@ private struct TabItemView: View {
     let onMoveToNewWindow: (EditorTab.ID) -> Void
     let onOpenInSplitView: (EditorTab.ID) -> Void
     let onCloseOtherTabs: (EditorTab.ID) -> Void
+    let statusIndicators: [EditorFileStatusKind]
 
     private var selectedBackground: Color {
         Color.accentColor.opacity(0.16)
@@ -109,6 +112,11 @@ private struct TabItemView: View {
             Text(tab.title)
                 .lineLimit(1)
                 .fontWeight(isSelected ? .semibold : .regular)
+            FileStatusIndicatorStrip(
+                indicators: statusIndicators,
+                style: .icon,
+                maxVisible: 3
+            )
             if tab.isDirty {
                 Circle()
                     .fill(isSelected ? Color.accentColor : Color.orange)

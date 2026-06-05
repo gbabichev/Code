@@ -11,9 +11,17 @@ import UniformTypeIdentifiers
 @MainActor
 final class EditorWorkspace: ObservableObject {
     private static let largeFileTypingThreshold = 100_000
+    private static let largeFileStatusThreshold = 1_000_000
     private static let defaultSessionPersistenceDelay: TimeInterval = 0.25
     private static let largeDirtySessionPersistenceDelay: TimeInterval = 5.0
     private static let maxRecentlyClosedTabs = 20
+    private static let textLikeFileExtensions: Set<String> = [
+        "bash", "c", "cc", "conf", "config", "cpp", "css", "csv", "env",
+        "h", "hpp", "html", "ini", "js", "json", "ksh", "log", "m", "md",
+        "markdown", "mm", "plist", "properties", "ps1", "psd1", "psm1", "py",
+        "pyi", "pyw", "rb", "sh", "swift", "toml", "txt", "xml", "yaml", "yml",
+        "zsh"
+    ]
 
     enum EditorPane: String {
         case primary
@@ -86,6 +94,46 @@ final class EditorWorkspace: ObservableObject {
 
     func externalModificationVersion(for id: EditorTab.ID) -> Int? {
         externalModificationVersionByTabID[id]
+    }
+
+    func statusIndicators(for tab: EditorTab) -> [EditorFileStatusKind] {
+        var statusKinds = Set<EditorFileStatusKind>()
+
+        if externalModificationVersionByTabID[tab.id] != nil {
+            statusKinds.insert(.externalModification)
+        }
+
+        if let fileURL = tab.fileURL {
+            statusKinds.formUnion(staticStatusKinds(for: fileURL))
+            if isReadOnlyFile(fileURL) {
+                statusKinds.insert(.readOnly)
+            }
+        }
+
+        if tab.content.utf16.count > Self.largeFileStatusThreshold {
+            statusKinds.insert(.largeFile)
+        }
+
+        if tab.indentation.hasMixedIndentation {
+            statusKinds.insert(.mixedIndentation)
+        }
+
+        if tab.indentation.hasUnevenIndentation {
+            statusKinds.insert(.unevenIndentation)
+        }
+
+        return sortedStatusKinds(statusKinds)
+    }
+
+    func statusIndicators(for node: FileNode) -> [EditorFileStatusKind] {
+        guard !node.isDirectory else { return [] }
+
+        var statusKinds = node.statusKinds
+        if let tab = openTabs.first(where: { $0.fileURL == node.url }) {
+            statusKinds.formUnion(statusIndicators(for: tab))
+        }
+
+        return sortedStatusKinds(statusKinds)
     }
 
     func tab(withID id: EditorTab.ID) -> EditorTab? {
@@ -1152,7 +1200,15 @@ final class EditorWorkspace: ObservableObject {
     }
 
     private func loadChildren(of url: URL) -> [FileNode] {
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isHiddenKey, .localizedNameKey]
+        let keys: [URLResourceKey] = [
+            .isDirectoryKey,
+            .isHiddenKey,
+            .localizedNameKey,
+            .isRegularFileKey,
+            .isWritableKey,
+            .fileSizeKey,
+            .contentTypeKey
+        ]
 
         let items = (try? fileManager.contentsOfDirectory(
             at: url,
@@ -1176,10 +1232,12 @@ final class EditorWorkspace: ObservableObject {
                 return lhs.lastPathComponent.localizedCaseInsensitiveCompare(rhs.lastPathComponent) == .orderedAscending
             }
             .map { item in
-                let isDirectory = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                let values = try? item.resourceValues(forKeys: Set(keys))
+                let isDirectory = values?.isDirectory ?? false
                 return FileNode(
                     url: item,
                     isDirectory: isDirectory,
+                    statusKinds: isDirectory ? [] : staticStatusKinds(for: item, resourceValues: values),
                     children: isDirectory ? loadChildren(of: item) : []
                 )
             }
@@ -1230,6 +1288,73 @@ final class EditorWorkspace: ObservableObject {
 
     private func defaultIndentationSettings() -> EditorIndentationSettings {
         .defaultSpaces(width: preferences.indentWidth)
+    }
+
+    private func sortedStatusKinds(_ statusKinds: Set<EditorFileStatusKind>) -> [EditorFileStatusKind] {
+        statusKinds.sorted { lhs, rhs in
+            if lhs.sortPriority == rhs.sortPriority {
+                return lhs.rawValue < rhs.rawValue
+            }
+            return lhs.sortPriority < rhs.sortPriority
+        }
+    }
+
+    private func staticStatusKinds(
+        for url: URL,
+        resourceValues existingValues: URLResourceValues? = nil
+    ) -> Set<EditorFileStatusKind> {
+        var statusKinds = Set<EditorFileStatusKind>()
+        let keys: Set<URLResourceKey> = [
+            .isRegularFileKey,
+            .isWritableKey,
+            .fileSizeKey,
+            .contentTypeKey
+        ]
+        let values = existingValues ?? (try? url.resourceValues(forKeys: keys))
+
+        if values?.isWritable == false {
+            statusKinds.insert(.readOnly)
+        }
+
+        if (values?.fileSize ?? 0) > Self.largeFileStatusThreshold {
+            statusKinds.insert(.largeFile)
+        }
+
+        if isLikelyBinaryFile(url, resourceValues: values) {
+            statusKinds.insert(.binary)
+        }
+
+        return statusKinds
+    }
+
+    private func isReadOnlyFile(_ url: URL) -> Bool {
+        fileManager.fileExists(atPath: url.path(percentEncoded: false))
+            && !fileManager.isWritableFile(atPath: url.path(percentEncoded: false))
+    }
+
+    private func isLikelyBinaryFile(_ url: URL, resourceValues: URLResourceValues?) -> Bool {
+        guard resourceValues?.isRegularFile != false else { return false }
+
+        let pathExtension = url.pathExtension.lowercased()
+        if Self.textLikeFileExtensions.contains(pathExtension) {
+            return false
+        }
+
+        if EditorLanguage.infer(from: url) != .plainText {
+            return false
+        }
+
+        guard let contentType = resourceValues?.contentType else { return false }
+        if contentType.conforms(to: .text)
+            || contentType.conforms(to: .utf8PlainText)
+            || contentType.conforms(to: .plainText)
+            || contentType.conforms(to: .json)
+            || contentType.conforms(to: .xml)
+            || contentType.conforms(to: .propertyList) {
+            return false
+        }
+
+        return true
     }
 
     private func inferredIndentationSettings(for content: String) -> EditorIndentationSettings {

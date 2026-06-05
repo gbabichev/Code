@@ -349,6 +349,7 @@ extension NSColor {
 struct FileNode: Identifiable, Hashable {
     let url: URL
     let isDirectory: Bool
+    var statusKinds: Set<EditorFileStatusKind> = []
     var children: [FileNode] = []
 
     var id: String { url.path(percentEncoded: false) }
@@ -359,6 +360,85 @@ struct FileNode: Identifiable, Hashable {
 
     var outlineChildren: [FileNode]? {
         isDirectory ? children : nil
+    }
+}
+
+enum EditorFileStatusKind: String, CaseIterable, Identifiable, Hashable {
+    case externalModification
+    case readOnly
+    case binary
+    case largeFile
+    case mixedIndentation
+    case unevenIndentation
+
+    var id: String { rawValue }
+
+    var sortPriority: Int {
+        switch self {
+        case .externalModification:
+            0
+        case .readOnly:
+            1
+        case .binary:
+            2
+        case .largeFile:
+            3
+        case .mixedIndentation:
+            4
+        case .unevenIndentation:
+            5
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .externalModification:
+            "Modified on Disk"
+        case .readOnly:
+            "Read-only"
+        case .binary:
+            "Binary"
+        case .largeFile:
+            "Large File"
+        case .mixedIndentation:
+            "Mixed Indent"
+        case .unevenIndentation:
+            "Uneven Indent"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .externalModification:
+            "arrow.triangle.2.circlepath"
+        case .readOnly:
+            "lock"
+        case .binary:
+            "exclamationmark.octagon"
+        case .largeFile:
+            "doc.badge.clock"
+        case .mixedIndentation:
+            "text.alignleft"
+        case .unevenIndentation:
+            "exclamationmark.triangle"
+        }
+    }
+
+    var helpText: String {
+        switch self {
+        case .externalModification:
+            "This file changed on disk after it was opened."
+        case .readOnly:
+            "This file is not writable by the current user."
+        case .binary:
+            "This file type is likely binary and may not open as editable text."
+        case .largeFile:
+            "This file is large; expensive live editor work may be limited."
+        case .mixedIndentation:
+            "Tabs and spaces are both used for indentation in this file."
+        case .unevenIndentation:
+            "Some space-indented lines do not match the detected indentation width."
+        }
     }
 }
 

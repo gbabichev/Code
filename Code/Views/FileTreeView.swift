@@ -17,7 +17,8 @@ struct FileTreeView: View {
             OutlineGroup(nodes, children: \.outlineChildren) { node in
                 FileRowView(
                     node: node,
-                    isDirty: isNodeDirty(node)
+                    isDirty: isNodeDirty(node),
+                    statusIndicators: workspace.statusIndicators(for: node)
                 )
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -42,6 +43,7 @@ struct FileTreeView: View {
 private struct FileRowView: View {
     let node: FileNode
     let isDirty: Bool
+    let statusIndicators: [EditorFileStatusKind]
 
     var body: some View {
         HStack(spacing: 8) {
@@ -50,6 +52,11 @@ private struct FileRowView: View {
             Text(node.displayName)
                 .lineLimit(1)
             Spacer(minLength: 6)
+            FileStatusIndicatorStrip(
+                indicators: statusIndicators,
+                style: .icon,
+                maxVisible: 3
+            )
             if isDirty {
                 Circle()
                     .fill(Color.orange)

@@ -241,7 +241,8 @@ struct ContentView: View {
                     onMoveToEnd: workspace.moveTabToEnd,
                     onMoveToNewWindow: moveTabToNewWindow,
                     onOpenInSplitView: workspace.openTabInSplitView,
-                    onCloseOtherTabs: workspace.requestCloseOtherTabs
+                    onCloseOtherTabs: workspace.requestCloseOtherTabs,
+                    statusIndicators: workspace.statusIndicators(for:)
                 )
                 .onDrop(
                     of: [UTType.fileURL.identifier],
@@ -328,7 +329,9 @@ struct ContentView: View {
     }
 
     private func fileInfoBar(for tab: EditorTab) -> some View {
-        HStack(spacing: 12) {
+        let statusIndicators = workspace.statusIndicators(for: tab)
+
+        return HStack(spacing: 12) {
             Text(tab.fileURL?.path(percentEncoded: false) ?? "Unsaved file")
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -382,6 +385,16 @@ struct ContentView: View {
 
             Divider()
                 .frame(height: 12)
+
+            if !statusIndicators.isEmpty {
+                FileStatusIndicatorStrip(
+                    indicators: statusIndicators,
+                    style: .badge
+                )
+
+                Divider()
+                    .frame(height: 12)
+            }
 
             HStack(spacing: 4) {
                 if tab.indentation.hasIndentationIssues {
@@ -567,6 +580,7 @@ struct ContentView: View {
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
                             isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: primaryTab),
+                            statusIndicators: workspace.statusIndicators(for: primaryTab),
                             onFocus: { workspace.focusPane(.primary) },
                             onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) },
                             onClose: { workspace.removeTabFromSplitView(primaryTab.id) }
@@ -592,6 +606,7 @@ struct ContentView: View {
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
                             isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: secondaryTab),
+                            statusIndicators: workspace.statusIndicators(for: secondaryTab),
                             onFocus: { workspace.focusPane(.secondary) },
                             onToggleMarkdownPreview: { toggleMarkdownPreview(for: secondaryTab.id) },
                             onClose: { workspace.removeTabFromSplitView(secondaryTab.id) }
@@ -1277,6 +1292,7 @@ private struct EditorSplitPaneView: View {
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
     let isMarkdownPreviewVisible: Bool
+    let statusIndicators: [EditorFileStatusKind]
     let onFocus: () -> Void
     let onToggleMarkdownPreview: () -> Void
     let onClose: () -> Void
@@ -1292,6 +1308,12 @@ private struct EditorSplitPaneView: View {
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(.primary.opacity(0.82))
                     .lineLimit(1)
+
+                FileStatusIndicatorStrip(
+                    indicators: statusIndicators,
+                    style: .icon,
+                    maxVisible: 4
+                )
 
                 Spacer(minLength: 0)
 
