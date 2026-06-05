@@ -233,11 +233,17 @@ struct ContentView: View {
     private var editorPane: some View {
         VStack(spacing: 0) {
             if workspace.openTabs.isEmpty {
-                ContentUnavailableView(
-                    "No File Open",
-                    systemImage: "doc.text",
-                    description: Text("Choose a file from the sidebar to open it in a tab.")
-                )
+                ContentUnavailableView {
+                    Label("No File Open", systemImage: "doc.text")
+                } description: {
+                    Text("Choose a file from the sidebar to open it in a tab.")
+                } actions: {
+                    Button {
+                        workspace.chooseFile()
+                    } label: {
+                        Label("Open File...", systemImage: "doc")
+                    }
+                }
             } else {
                 TabBarView(
                     tabs: workspace.openTabs,
