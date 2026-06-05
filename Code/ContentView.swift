@@ -1665,28 +1665,13 @@ private struct SettingsOverlayView: View {
                     }
                     .pickerStyle(.segmented)
 
-                    Divider()
-
-                    HStack {
-                        Picker("Syntax Skin", selection: $preferences.selectedSkinID) {
-                            ForEach(preferences.availableSkins) { skin in
-                                Text(skin.name).tag(skin.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .accessibilityLabel("Syntax Skin")
-
-                        Button("Import…") {
-                            preferences.importSkin()
-                        }
-
-                        Button("Export") {
-                            Task {
-                                await preferences.exportSelectedSkin()
-                            }
-                        }
+                    SettingsRow(
+                        "Syntax Skin",
+                        systemImage: "paintpalette",
+                        subtitle: "Choose, import, or export editor color skins."
+                    ) {
+                        skinControls
                     }
-                    .frame(maxWidth: .infinity)
                 }
             }
 
@@ -1829,6 +1814,37 @@ private struct SettingsOverlayView: View {
                 }
             }
         )
+    }
+
+    private var skinControls: some View {
+        HStack(spacing: 8) {
+            Picker("Syntax Skin", selection: $preferences.selectedSkinID) {
+                ForEach(preferences.availableSkins) { skin in
+                    Text(skin.name).tag(skin.id)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 190)
+            .accessibilityLabel("Syntax Skin")
+
+            Button {
+                preferences.importSkin()
+            } label: {
+                Image(systemName: "square.and.arrow.down")
+                    .frame(width: 18, height: 18)
+            }
+            .help("Import Skin")
+
+            Button {
+                Task {
+                    await preferences.exportSelectedSkin()
+                }
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .frame(width: 18, height: 18)
+            }
+            .help("Export Skin")
+        }
     }
 
     @ViewBuilder
