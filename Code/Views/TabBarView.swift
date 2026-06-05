@@ -6,6 +6,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum TabDragPayload {
+    static let type = UTType.data
+}
+
 struct TabBarView: View {
     let tabs: [EditorTab]
     let selectedTabID: EditorTab.ID?
@@ -43,7 +47,7 @@ struct TabBarView: View {
                     Color.clear
                         .frame(width: 28, height: 34)
                         .contentShape(Rectangle())
-                        .onDrop(of: [UTType.plainText], delegate: TabDropToEndDelegate(
+                        .onDrop(of: [TabDragPayload.type], delegate: TabDropToEndDelegate(
                             draggedTabID: $draggedTabID,
                             onMoveToEnd: onMoveToEnd
                         ))
@@ -82,8 +86,6 @@ struct TabBarView: View {
 }
 
 private struct TabItemView: View {
-    private static let tabDragType = UTType.plainText
-
     @ObservedObject var tab: EditorTab
     let isSelected: Bool
     @Binding var draggedTabID: EditorTab.ID?
@@ -174,10 +176,12 @@ private struct TabItemView: View {
             }
         }
         .onDrag {
-            draggedTabID = tab.id
-            return NSItemProvider(object: NSString(string: tab.id))
+            let tabID = tab.id
+            let tabIDData = Data(tabID.utf8)
+            draggedTabID = tabID
+            return NSItemProvider(item: tabIDData as NSData, typeIdentifier: TabDragPayload.type.identifier)
         }
-        .onDrop(of: [Self.tabDragType], delegate: TabDropDelegate(
+        .onDrop(of: [TabDragPayload.type], delegate: TabDropDelegate(
             tabID: tab.id,
             draggedTabID: $draggedTabID,
             onMove: onMove
@@ -268,7 +272,7 @@ private struct TabDropDelegate: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [UTType.plainText])
+        draggedTabID != nil && info.hasItemsConforming(to: [TabDragPayload.type])
     }
 }
 
@@ -291,6 +295,6 @@ private struct TabDropToEndDelegate: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [UTType.plainText])
+        draggedTabID != nil && info.hasItemsConforming(to: [TabDragPayload.type])
     }
 }
