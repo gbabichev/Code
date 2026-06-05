@@ -777,6 +777,11 @@ struct CodeEditorView: NSViewRepresentable {
             }
             guard sourceText != text else { return false }
 
+            let preservedSelectedRanges = selectedRangesClampedToTextLength(
+                textView.selectedRanges,
+                textLength: (text as NSString).length
+            )
+            let preservedScrollPosition = scrollView.map { EditorScrollPosition($0.contentView.bounds.origin) }
             pendingBindingSyncWorkItem?.cancel()
             pendingBindingSyncWorkItem = nil
             sourceText = text
@@ -785,6 +790,11 @@ struct CodeEditorView: NSViewRepresentable {
             textView.string = text
             gutterView.rebuildLineIndex(for: text as NSString)
             updateDocumentLayout(measureTextView: true)
+            restoreSelectedRangesIfNeeded(preservedSelectedRanges, in: textView)
+            if let preservedScrollPosition {
+                _ = restoreScrollPosition(preservedScrollPosition)
+                scrollPosition.wrappedValue = preservedScrollPosition
+            }
             requiresHighlightRefresh = true
             onTextChange(text)
             return true
@@ -1237,6 +1247,23 @@ struct CodeEditorView: NSViewRepresentable {
             }
             if !rangesMatch {
                 textView.selectedRanges = selectedRanges
+            }
+        }
+
+        private func selectedRangesClampedToTextLength(_ selectedRanges: [NSValue], textLength: Int) -> [NSValue] {
+            guard !selectedRanges.isEmpty else {
+                return [NSValue(range: NSRange(location: 0, length: 0))]
+            }
+
+            return selectedRanges.map { value in
+                let range = value.rangeValue
+                guard range.location != NSNotFound else {
+                    return NSValue(range: NSRange(location: textLength, length: 0))
+                }
+
+                let location = min(max(range.location, 0), textLength)
+                let length = min(max(range.length, 0), max(textLength - location, 0))
+                return NSValue(range: NSRange(location: location, length: length))
             }
         }
 
