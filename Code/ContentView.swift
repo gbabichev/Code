@@ -233,17 +233,31 @@ struct ContentView: View {
     private var editorPane: some View {
         VStack(spacing: 0) {
             if workspace.openTabs.isEmpty {
-                ContentUnavailableView {
-                    Label("No File Open", systemImage: "doc.text")
-                } description: {
-                    Text("Choose a file from the sidebar to open it in a tab.")
-                } actions: {
-                    Button {
-                        workspace.chooseFile()
-                    } label: {
-                        Label("Open File...", systemImage: "doc")
+                ZStack {
+                    ContentUnavailableView {
+                        Label("No File Open", systemImage: "doc.text")
+                    } description: {
+                        Text("Choose a file from the sidebar to open it in a tab.")
+                    } actions: {
+                        Button {
+                            workspace.chooseFile()
+                        } label: {
+                            Label("Open File...", systemImage: "doc")
+                        }
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.accentColor.opacity(isTargetingTabDrop ? 0.9 : 0), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                        .padding(12)
+                }
+                .onDrop(
+                    of: [UTType.fileURL.identifier],
+                    isTargeted: $isTargetingTabDrop,
+                    perform: handleDroppedItems
+                )
             } else {
                 TabBarView(
                     tabs: workspace.openTabs,
