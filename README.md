@@ -63,6 +63,9 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ## 📝 Changelog
 
+### 1.1.1
+- Improved "Open With" in Finder.
+
 ### 1.1.0
 - Added Markdown preview support with rendered Markdown, basic HTML, and images.
 - Open File now supports selecting multiple files and opening each one in a tab.

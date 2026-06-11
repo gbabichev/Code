@@ -55,15 +55,13 @@ struct CodeApp: App {
             )
         }
         .onChange(of: externalFileRouter.pendingRequestID) { _, _ in
-            // Files arrived while no window was visible — open one
-            let hasVisibleWindows = NSApp.windows.contains(where: { $0.isVisible })
-            if !hasVisibleWindows {
+            // Files arrived while no workspace window exists — open one.
+            if !CodeWindowRouter.hasReusableWorkspaceWindow {
                 openWindow(id: "workspace")
             }
         }
         .onChange(of: recentItemRouter.pendingRequestID) { _, _ in
-            let hasVisibleWindows = NSApp.windows.contains(where: { $0.isVisible })
-            if !hasVisibleWindows {
+            if !CodeWindowRouter.hasReusableWorkspaceWindow {
                 openWindow(id: "workspace")
             }
         }
@@ -85,7 +83,7 @@ struct CodeApp: App {
 
         if let workspace = activeWorkspaceRegistry.workspace {
             workspace.createUntitledTab()
-            NSApp.windows.first(where: { $0.isVisible })?.makeKeyAndOrderFront(nil)
+            CodeWindowRouter.bringReusableWorkspaceWindowToFront()
             return
         }
 
@@ -364,7 +362,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         if let workspace = ActiveWorkspaceRegistry.shared.workspace {
-            NSApp.activate(ignoringOtherApps: true)
+            CodeWindowRouter.bringWindowToFront(ActiveWorkspaceRegistry.shared.window)
             openRecentItem(item, in: workspace)
             return
         }
@@ -386,7 +384,43 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        if let workspace = ActiveWorkspaceRegistry.shared.workspace {
+            CodeWindowRouter.bringWindowToFront(ActiveWorkspaceRegistry.shared.window)
+            openExternalURLs(urls, in: workspace)
+            return
+        }
+
         ExternalFileRouter.shared.enqueue(urls: urls)
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        guard !flag, CodeWindowRouter.hasReusableWorkspaceWindow else {
+            return true
+        }
+
+        CodeWindowRouter.bringReusableWorkspaceWindowToFront()
+        return false
+    }
+
+    private func openExternalURLs(_ urls: [URL], in workspace: EditorWorkspace) {
+        let fileURLs = urls.filter { $0.isFileURL }
+        let folders = fileURLs.filter(isDirectory)
+        let files = fileURLs.filter { !isDirectory($0) }
+
+        for folderURL in folders {
+            workspace.setRootFolder(folderURL)
+        }
+
+        for fileURL in files {
+            workspace.openFile(fileURL)
+        }
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? url.hasDirectoryPath
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -446,10 +480,7 @@ final class ExternalFileRouter: ObservableObject {
 
         // Activate the app and bring window to front
         if !files.isEmpty {
-            NSApp.activate(ignoringOtherApps: true)
-            if let window = NSApp.windows.first(where: { $0.isVisible }) {
-                window.makeKeyAndOrderFront(nil)
-            }
+            CodeWindowRouter.bringReusableWorkspaceWindowToFront()
         }
 
         return files
@@ -461,10 +492,7 @@ final class ExternalFileRouter: ObservableObject {
         pendingFolders.removeAll()
 
         if !folders.isEmpty {
-            NSApp.activate(ignoringOtherApps: true)
-            if let window = NSApp.windows.first(where: { $0.isVisible }) {
-                window.makeKeyAndOrderFront(nil)
-            }
+            CodeWindowRouter.bringReusableWorkspaceWindowToFront()
         }
 
         return folders
@@ -496,13 +524,39 @@ final class RecentItemRouter: ObservableObject {
         pendingItems.removeAll()
 
         if !items.isEmpty {
-            NSApp.activate(ignoringOtherApps: true)
-            if let window = NSApp.windows.first(where: { $0.isVisible }) {
-                window.makeKeyAndOrderFront(nil)
-            }
+            CodeWindowRouter.bringReusableWorkspaceWindowToFront()
         }
 
         return items
+    }
+}
+
+@MainActor
+private enum CodeWindowRouter {
+    static var hasReusableWorkspaceWindow: Bool {
+        ActiveWorkspaceRegistry.shared.window != nil || reusableWorkspaceWindow != nil
+    }
+
+    static func bringReusableWorkspaceWindowToFront() {
+        bringWindowToFront(ActiveWorkspaceRegistry.shared.window ?? reusableWorkspaceWindow)
+    }
+
+    static func bringWindowToFront(_ window: NSWindow?) {
+        NSApp.activate(ignoringOtherApps: true)
+
+        guard let window else { return }
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private static var reusableWorkspaceWindow: NSWindow? {
+        NSApp.windows.first { window in
+            window.canBecomeMain
+                && !window.isSheet
+                && (window.isVisible || window.isMiniaturized)
+        }
     }
 }
 
@@ -547,19 +601,25 @@ final class ActiveWorkspaceRegistry: ObservableObject {
 
     @Published private(set) var activeWorkspaceID: ObjectIdentifier?
     private weak var workspaceReference: EditorWorkspace?
+    private weak var windowReference: NSWindow?
     private var workspaceObserver: AnyCancellable?
 
     var workspace: EditorWorkspace? {
         workspaceReference
     }
 
-    func setActive(_ workspace: EditorWorkspace) {
-        if workspaceReference === workspace {
+    var window: NSWindow? {
+        windowReference
+    }
+
+    func setActive(_ workspace: EditorWorkspace, window: NSWindow?) {
+        if workspaceReference === workspace, windowReference === window {
             return
         }
 
         workspaceObserver = nil
         workspaceReference = workspace
+        windowReference = window
         DispatchQueue.main.async { [weak self, weak workspace] in
             guard let self, let workspace, self.workspaceReference === workspace else { return }
             self.activeWorkspaceID = ObjectIdentifier(workspace)
@@ -575,6 +635,7 @@ final class ActiveWorkspaceRegistry: ObservableObject {
         guard workspaceReference === workspace else { return }
         workspaceObserver = nil
         workspaceReference = nil
+        windowReference = nil
         DispatchQueue.main.async { [weak self] in
             self?.activeWorkspaceID = nil
         }
@@ -1114,7 +1175,7 @@ private final class ActiveWorkspaceTrackingNSView: NSView {
     private func promoteWorkspace() {
         guard let workspace else { return }
         workspace.synchronizeCleanTabsWithDisk()
-        registry?.setActive(workspace)
+        registry?.setActive(workspace, window: observedWindow)
     }
 
     private func detachNotifications() {
