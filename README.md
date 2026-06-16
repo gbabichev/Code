@@ -44,12 +44,12 @@ Code is a small macOS-only editor built for the moments when a full IDE feels ex
 
 ## 🖥️ Install & Minimum Requirements
 
-- macOS 14.0 or later  
+- macOS 14.0 or later
 - Apple Silicon & Intel
-- ~10 MB free disk space  
+- ~10 MB free disk space
 
 ### ⚙️ Installation
-Grab it from the Releases. 
+Grab it from the Releases.
 
 ### Terminal command and administrator saves
 
@@ -63,6 +63,11 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ## 📝 Changelog
 
+### 1.1.2
+- Improved editing while previewing Markdown.
+- Added a "Open in new window" for markdown previews.
+- Fixed "Trim whitespace during save" moving the cursor.
+
 ### 1.1.1
 - Improved "Open With" in Finder.
 
@@ -75,10 +80,10 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 - Improved status bar and tab bar reporting for file state, read-only files, external changes, large or binary files, and indentation issues.
 
 ### 1.0.2
-- Another tweak to syntax highlighting to prevent scroll jumps. 
+- Another tweak to syntax highlighting to prevent scroll jumps.
 
 ### 1.0.1
-- Tweaked syntax highlighting to prevent scroll jumps under certain cases. 
+- Tweaked syntax highlighting to prevent scroll jumps under certain cases.
 - Updated Check for Update UX.
 
 ### 1.0.0

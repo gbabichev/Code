@@ -777,9 +777,11 @@ struct CodeEditorView: NSViewRepresentable {
             }
             guard sourceText != text else { return false }
 
-            let preservedSelectedRanges = selectedRangesClampedToTextLength(
+            let oldText = sourceText
+            let preservedSelectedRanges = selectedRangesPreservingExpectedPosition(
                 textView.selectedRanges,
-                textLength: (text as NSString).length
+                oldText: oldText,
+                newText: text
             )
             let preservedScrollPosition = scrollView.map { EditorScrollPosition($0.contentView.bounds.origin) }
             pendingBindingSyncWorkItem?.cancel()
@@ -1265,6 +1267,108 @@ struct CodeEditorView: NSViewRepresentable {
                 let length = min(max(range.length, 0), max(textLength - location, 0))
                 return NSValue(range: NSRange(location: location, length: length))
             }
+        }
+
+        private func selectedRangesPreservingExpectedPosition(
+            _ selectedRanges: [NSValue],
+            oldText: String,
+            newText: String
+        ) -> [NSValue] {
+            guard contentByTrimmingTrailingSpacesAndTabs(oldText) == newText else {
+                return selectedRangesClampedToTextLength(
+                    selectedRanges,
+                    textLength: (newText as NSString).length
+                )
+            }
+
+            let oldNSString = oldText as NSString
+            let newNSString = newText as NSString
+            guard !selectedRanges.isEmpty else {
+                return [NSValue(range: NSRange(location: 0, length: 0))]
+            }
+
+            return selectedRanges.map { value in
+                let range = value.rangeValue
+                guard range.location != NSNotFound else {
+                    return NSValue(range: NSRange(location: newNSString.length, length: 0))
+                }
+
+                let oldStart = min(max(range.location, 0), oldNSString.length)
+                let oldEnd = min(max(NSMaxRange(range), oldStart), oldNSString.length)
+                let newStart = locationForMatchingLinePosition(
+                    linePosition(for: oldStart, in: oldNSString),
+                    in: newNSString
+                )
+                let newEnd = locationForMatchingLinePosition(
+                    linePosition(for: oldEnd, in: oldNSString),
+                    in: newNSString
+                )
+                let location = min(newStart, newEnd)
+                let length = max(newEnd - location, 0)
+                return NSValue(range: NSRange(location: location, length: length))
+            }
+        }
+
+        private struct TextLinePosition {
+            let line: Int
+            let column: Int
+        }
+
+        private func linePosition(for location: Int, in text: NSString) -> TextLinePosition {
+            let clampedLocation = min(max(location, 0), text.length)
+            var line = 0
+            var lineStart = 0
+            var cursor = 0
+
+            while cursor < clampedLocation {
+                if text.character(at: cursor) == 10 {
+                    line += 1
+                    lineStart = cursor + 1
+                }
+                cursor += 1
+            }
+
+            return TextLinePosition(line: line, column: clampedLocation - lineStart)
+        }
+
+        private func locationForMatchingLinePosition(_ position: TextLinePosition, in text: NSString) -> Int {
+            var line = 0
+            var lineStart = 0
+            var cursor = 0
+
+            while line < position.line, cursor < text.length {
+                if text.character(at: cursor) == 10 {
+                    line += 1
+                    lineStart = cursor + 1
+                }
+                cursor += 1
+            }
+
+            guard line == position.line else {
+                return text.length
+            }
+
+            var lineEnd = lineStart
+            while lineEnd < text.length, text.character(at: lineEnd) != 10 {
+                lineEnd += 1
+            }
+
+            return min(lineStart + position.column, lineEnd)
+        }
+
+        private func contentByTrimmingTrailingSpacesAndTabs(_ text: String) -> String {
+            text
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map { line in
+                    var end = line.endIndex
+                    while end > line.startIndex {
+                        let previous = line.index(before: end)
+                        guard line[previous] == " " || line[previous] == "\t" else { break }
+                        end = previous
+                    }
+                    return String(line[..<end])
+                }
+                .joined(separator: "\n")
         }
 
         private func editedLineRange(for editedRange: NSRange, replacementLength: Int, textLength: Int) -> NSRange {
