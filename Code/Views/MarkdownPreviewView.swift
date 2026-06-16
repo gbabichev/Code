@@ -62,9 +62,21 @@ private struct MarkdownPreviewWebView: NSViewRepresentable {
         guard context.coordinator.loadedHTML != html
                 || context.coordinator.loadedBaseURL != baseURL else { return }
 
+        let nextHTMLParts = renderedHTMLParts(from: html)
+        if context.coordinator.loadedBaseURL == baseURL,
+           let loadedHTMLParts = context.coordinator.loadedHTMLParts,
+           let nextHTMLParts,
+           loadedHTMLParts.shell == nextHTMLParts.shell,
+           context.coordinator.replaceBodyHTML(nextHTMLParts.bodyInnerHTML, in: webView) {
+            context.coordinator.loadedHTML = html
+            context.coordinator.loadedHTMLParts = nextHTMLParts
+            return
+        }
+
         context.coordinator.prepareForReload(in: webView)
         context.coordinator.loadedHTML = html
         context.coordinator.loadedBaseURL = baseURL
+        context.coordinator.loadedHTMLParts = nextHTMLParts
         context.coordinator.loadHTML(html, baseURL: baseURL, in: webView)
     }
 
@@ -87,9 +99,24 @@ private struct MarkdownPreviewWebView: NSViewRepresentable {
         return preferences
     }
 
+    private func renderedHTMLParts(from html: String) -> RenderedHTMLParts? {
+        guard let bodyOpenRange = html.range(of: "<body>"),
+              let bodyCloseRange = html.range(of: "</body>", options: .backwards),
+              bodyOpenRange.upperBound <= bodyCloseRange.lowerBound else {
+            return nil
+        }
+
+        let bodyInnerHTML = String(html[bodyOpenRange.upperBound..<bodyCloseRange.lowerBound])
+        let shell = String(html[..<bodyOpenRange.upperBound])
+            + RenderedHTMLParts.bodyPlaceholder
+            + String(html[bodyCloseRange.lowerBound...])
+        return RenderedHTMLParts(shell: shell, bodyInnerHTML: bodyInnerHTML)
+    }
+
     final class Coordinator: NSObject {
         var loadedHTML = ""
         var loadedBaseURL: URL?
+        var loadedHTMLParts: RenderedHTMLParts?
         private var observedClipView: NSClipView?
         private var clipViewBoundsObserver: NSObjectProtocol?
         private var lastKnownScrollState: PreviewScrollState?
@@ -112,6 +139,27 @@ private struct MarkdownPreviewWebView: NSViewRepresentable {
                 with: html,
                 with: baseURL as NSURL?
             )
+        }
+
+        func replaceBodyHTML(_ bodyHTML: String, in webView: NSView) -> Bool {
+            guard let bodyElement = bodyElement(in: webView),
+                  bodyElement.responds(to: NSSelectorFromString("setInnerHTML:")) else {
+                return false
+            }
+
+            updateObservedScrollView(in: webView)
+            if let currentScrollState = captureScrollState(in: webView) {
+                lastKnownScrollState = currentScrollState
+            }
+            pendingScrollState = lastKnownScrollState
+            isReloadingPreview = true
+
+            unsafe _ = bodyElement.perform(
+                NSSelectorFromString("setInnerHTML:"),
+                with: bodyHTML
+            )
+            restorePendingScrollState(in: webView)
+            return true
         }
 
         @objc(webView:decidePolicyForNavigationAction:request:frame:decisionListener:)
@@ -268,6 +316,17 @@ private struct MarkdownPreviewWebView: NSViewRepresentable {
             return firstScrollView(in: webView)
         }
 
+        private func bodyElement(in webView: NSView) -> NSObject? {
+            guard let mainFrame = mainFrame(in: webView),
+                  mainFrame.responds(to: NSSelectorFromString("DOMDocument")),
+                  let document = unsafe mainFrame.perform(NSSelectorFromString("DOMDocument"))?.takeUnretainedValue() as? NSObject,
+                  document.responds(to: NSSelectorFromString("body")) else {
+                return nil
+            }
+
+            return unsafe document.perform(NSSelectorFromString("body"))?.takeUnretainedValue() as? NSObject
+        }
+
         private func mainFrame(in webView: NSView) -> AnyObject? {
             guard webView.responds(to: NSSelectorFromString("mainFrame")) else { return nil }
             return webView.value(forKey: "mainFrame") as AnyObject?
@@ -293,6 +352,13 @@ private struct MarkdownPreviewWebView: NSViewRepresentable {
     private struct PreviewScrollState {
         let offset: NSPoint
         let maxOffset: NSPoint
+    }
+
+    struct RenderedHTMLParts {
+        static let bodyPlaceholder = "{{MARKDOWN_PREVIEW_BODY}}"
+
+        let shell: String
+        let bodyInnerHTML: String
     }
 }
 

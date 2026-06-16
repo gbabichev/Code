@@ -1045,7 +1045,7 @@ struct CodeEditorView: NSViewRepresentable {
 
             let clipSize = scrollView.contentView.bounds.size
             guard clipSize.width > 1, clipSize.height > 1 else { return nil }
-            guard isWordWrapEnabled || documentView.frame.width > clipSize.width + 0.5 else { return nil }
+            guard !isWordWrapEnabled, documentView.frame.width > clipSize.width + 0.5 else { return nil }
             return scrollView.contentView.bounds.origin
         }
 
