@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -25,6 +26,7 @@ struct ContentView: View {
     @State private var toastMessage: String?
     @State private var dismissedExternalModificationBannerVersionsByTabID: [EditorTab.ID: Int] = [:]
     @State private var hiddenMarkdownPreviewTabIDs: Set<EditorTab.ID> = []
+    @StateObject private var markdownPreviewWindowController = MarkdownPreviewWindowController()
     @State private var isShowingIndentationFixConfirmation = false
     @FocusState private var focusedSearchField: SearchField?
 
@@ -352,6 +354,18 @@ struct ContentView: View {
         .onChange(of: workspace.selectedTabID) { _, _ in
             refreshSearchSummary()
         }
+        .onChange(of: preferences.selectedSkinID) { _, _ in
+            refreshOpenMarkdownPreviewWindows()
+        }
+        .onChange(of: preferences.editorFontName) { _, _ in
+            refreshOpenMarkdownPreviewWindows()
+        }
+        .onChange(of: preferences.editorFontSize) { _, _ in
+            refreshOpenMarkdownPreviewWindows()
+        }
+        .onChange(of: preferences.appTheme) { _, _ in
+            refreshOpenMarkdownPreviewWindows()
+        }
         .onAppear {
             refreshSearchSummary()
         }
@@ -405,6 +419,15 @@ struct ContentView: View {
                 .buttonStyle(.borderless)
                 .help(isMarkdownPreviewVisible(for: tab) ? "Hide Markdown Preview" : "Show Markdown Preview")
                 .accessibilityLabel(isMarkdownPreviewVisible(for: tab) ? "Hide Markdown Preview" : "Show Markdown Preview")
+
+                Button {
+                    openMarkdownPreviewWindow(for: tab)
+                } label: {
+                    Image(systemName: "macwindow.badge.plus")
+                }
+                .buttonStyle(.borderless)
+                .help("Open Markdown Preview in New Window")
+                .accessibilityLabel("Open Markdown Preview in New Window")
 
                 Divider()
                     .frame(height: 12)
@@ -694,6 +717,12 @@ struct ContentView: View {
                             statusIndicators: workspace.statusIndicators(for: primaryTab),
                             onFocus: { workspace.focusPane(.primary) },
                             onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) },
+                            onOpenMarkdownPreviewWindow: { markdown in
+                                openMarkdownPreviewWindow(for: primaryTab, markdown: markdown)
+                            },
+                            onMarkdownPreviewTextChange: { updatedText in
+                                updateMarkdownPreviewWindow(for: primaryTab, markdown: updatedText)
+                            },
                             onClose: { workspace.removeTabFromSplitView(primaryTab.id) }
                         )
 
@@ -720,6 +749,12 @@ struct ContentView: View {
                             statusIndicators: workspace.statusIndicators(for: secondaryTab),
                             onFocus: { workspace.focusPane(.secondary) },
                             onToggleMarkdownPreview: { toggleMarkdownPreview(for: secondaryTab.id) },
+                            onOpenMarkdownPreviewWindow: { markdown in
+                                openMarkdownPreviewWindow(for: secondaryTab, markdown: markdown)
+                            },
+                            onMarkdownPreviewTextChange: { updatedText in
+                                updateMarkdownPreviewWindow(for: secondaryTab, markdown: updatedText)
+                            },
                             onClose: { workspace.removeTabFromSplitView(secondaryTab.id) }
                         )
                     }
@@ -743,7 +778,13 @@ struct ContentView: View {
                         editorSemiboldFont: preferences.editorSemiboldFont,
                         isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: primaryTab),
                         onFocus: { workspace.focusPane(.primary) },
-                        onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) }
+                        onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) },
+                        onOpenMarkdownPreviewWindow: { markdown in
+                            openMarkdownPreviewWindow(for: primaryTab, markdown: markdown)
+                        },
+                        onMarkdownPreviewTextChange: { updatedText in
+                            updateMarkdownPreviewWindow(for: primaryTab, markdown: updatedText)
+                        }
                     )
                 }
             }
@@ -767,6 +808,34 @@ struct ContentView: View {
             updatedHiddenTabIDs.insert(tabID)
         }
         hiddenMarkdownPreviewTabIDs = updatedHiddenTabIDs
+    }
+
+    private func openMarkdownPreviewWindow(for tab: EditorTab, markdown: String? = nil) {
+        markdownPreviewWindowController.openPreview(
+            tabID: tab.id,
+            title: tab.title,
+            markdown: markdown ?? tab.content,
+            baseURL: tab.fileURL?.deletingLastPathComponent(),
+            skin: preferences.selectedSkin,
+            editorFont: preferences.editorFont
+        )
+    }
+
+    private func updateMarkdownPreviewWindow(for tab: EditorTab, markdown: String) {
+        markdownPreviewWindowController.updatePreview(
+            tabID: tab.id,
+            title: tab.title,
+            markdown: markdown,
+            baseURL: tab.fileURL?.deletingLastPathComponent(),
+            skin: preferences.selectedSkin,
+            editorFont: preferences.editorFont
+        )
+    }
+
+    private func refreshOpenMarkdownPreviewWindows() {
+        for tab in workspace.openTabs where tab.language == .markdown {
+            updateMarkdownPreviewWindow(for: tab, markdown: tab.content)
+        }
     }
 
     private func requestCloseTab(_ id: EditorTab.ID) {
@@ -1159,7 +1228,10 @@ private struct EditorAreaView: View {
     let isMarkdownPreviewVisible: Bool
     let onFocus: () -> Void
     let onToggleMarkdownPreview: () -> Void
+    let onOpenMarkdownPreviewWindow: (String) -> Void
+    let onMarkdownPreviewTextChange: (String) -> Void
     @State private var markdownPreviewText = ""
+    @State private var latestMarkdownText = ""
     @State private var markdownPreviewEditorID: EditorTab.ID?
     @State private var pendingMarkdownPreviewUpdate: DispatchWorkItem?
 
@@ -1169,6 +1241,10 @@ private struct EditorAreaView: View {
 
     private var currentMarkdownPreviewText: String {
         markdownPreviewEditorID == editorID ? markdownPreviewText : text.wrappedValue
+    }
+
+    private var currentMarkdownSourceText: String {
+        markdownPreviewEditorID == editorID ? latestMarkdownText : text.wrappedValue
     }
 
     var body: some View {
@@ -1246,6 +1322,18 @@ private struct EditorAreaView: View {
                 Spacer(minLength: 0)
 
                 Button {
+                    onOpenMarkdownPreviewWindow(currentMarkdownSourceText)
+                } label: {
+                    Image(systemName: "macwindow.badge.plus")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderless)
+                .help("Open Preview in New Window")
+                .accessibilityLabel("Open Preview in New Window")
+
+                Button {
                     onToggleMarkdownPreview()
                 } label: {
                     Image(systemName: "xmark")
@@ -1287,6 +1375,18 @@ private struct EditorAreaView: View {
             .accessibilityLabel("Show Markdown Preview")
             .padding(.top, 6)
 
+            Button {
+                onOpenMarkdownPreviewWindow(currentMarkdownSourceText)
+            } label: {
+                Image(systemName: "macwindow.badge.plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .help("Open Preview in New Window")
+            .accessibilityLabel("Open Preview in New Window")
+
             Spacer(minLength: 0)
         }
         .frame(maxHeight: .infinity)
@@ -1311,7 +1411,7 @@ private struct EditorAreaView: View {
             editorFont: editorFont,
             editorSemiboldFont: editorSemiboldFont,
             onDidFocus: onFocus,
-            onTextChange: scheduleMarkdownPreviewUpdate
+            onTextChange: handleEditorTextChange
         )
         .id(editorID)
     }
@@ -1320,6 +1420,7 @@ private struct EditorAreaView: View {
         cancelPendingMarkdownPreviewUpdate()
         markdownPreviewEditorID = editorID
         markdownPreviewText = text.wrappedValue
+        latestMarkdownText = text.wrappedValue
     }
 
     private func scheduleMarkdownPreviewUpdate(_ updatedText: String) {
@@ -1340,6 +1441,15 @@ private struct EditorAreaView: View {
     private func cancelPendingMarkdownPreviewUpdate() {
         pendingMarkdownPreviewUpdate?.cancel()
         pendingMarkdownPreviewUpdate = nil
+    }
+
+    private func handleEditorTextChange(_ updatedText: String) {
+        if language == .markdown {
+            markdownPreviewEditorID = editorID
+            latestMarkdownText = updatedText
+            onMarkdownPreviewTextChange(updatedText)
+        }
+        scheduleMarkdownPreviewUpdate(updatedText)
     }
 
     @ViewBuilder
@@ -1407,6 +1517,8 @@ private struct EditorSplitPaneView: View {
     let statusIndicators: [EditorFileStatusKind]
     let onFocus: () -> Void
     let onToggleMarkdownPreview: () -> Void
+    let onOpenMarkdownPreviewWindow: (String) -> Void
+    let onMarkdownPreviewTextChange: (String) -> Void
     let onClose: () -> Void
 
     var body: some View {
@@ -1430,6 +1542,18 @@ private struct EditorSplitPaneView: View {
                 Spacer(minLength: 0)
 
                 if language == .markdown {
+                    Button {
+                        onOpenMarkdownPreviewWindow(text.wrappedValue)
+                    } label: {
+                        Image(systemName: "macwindow.badge.plus")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Open Markdown Preview in New Window")
+                    .accessibilityLabel("Open Markdown Preview in New Window")
+
                     Button {
                         onToggleMarkdownPreview()
                     } label: {
@@ -1487,7 +1611,9 @@ private struct EditorSplitPaneView: View {
                 editorSemiboldFont: editorSemiboldFont,
                 isMarkdownPreviewVisible: isMarkdownPreviewVisible,
                 onFocus: onFocus,
-                onToggleMarkdownPreview: onToggleMarkdownPreview
+                onToggleMarkdownPreview: onToggleMarkdownPreview,
+                onOpenMarkdownPreviewWindow: onOpenMarkdownPreviewWindow,
+                onMarkdownPreviewTextChange: onMarkdownPreviewTextChange
             )
         }
         .background(Color(nsColor: .textBackgroundColor))
@@ -1496,6 +1622,207 @@ private struct EditorSplitPaneView: View {
                 onFocus()
             }
         )
+    }
+}
+
+@MainActor
+private final class MarkdownPreviewWindowController: ObservableObject {
+    private var documents: [EditorTab.ID: MarkdownPreviewWindowDocument] = [:]
+    private var windows: [EditorTab.ID: NSWindow] = [:]
+    private var delegates: [EditorTab.ID: MarkdownPreviewWindowDelegate] = [:]
+
+    func openPreview(
+        tabID: EditorTab.ID,
+        title: String,
+        markdown: String,
+        baseURL: URL?,
+        skin: SkinDefinition,
+        editorFont: NSFont
+    ) {
+        let document = document(
+            for: tabID,
+            title: title,
+            markdown: markdown,
+            baseURL: baseURL,
+            skin: skin,
+            editorFont: editorFont
+        )
+
+        if let window = windows[tabID] {
+            window.title = MarkdownPreviewWindowDocument.windowTitle(for: title)
+            show(window)
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 650),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = document.windowTitle
+        window.minSize = NSSize(width: 420, height: 320)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: MarkdownPreviewWindowContent(document: document))
+
+        let delegate = MarkdownPreviewWindowDelegate { [weak self] in
+            self?.documents.removeValue(forKey: tabID)
+            self?.windows.removeValue(forKey: tabID)
+            self?.delegates.removeValue(forKey: tabID)
+        }
+        window.delegate = delegate
+        delegates[tabID] = delegate
+        windows[tabID] = window
+
+        window.center()
+        show(window)
+    }
+
+    func updatePreview(
+        tabID: EditorTab.ID,
+        title: String,
+        markdown: String,
+        baseURL: URL?,
+        skin: SkinDefinition,
+        editorFont: NSFont
+    ) {
+        guard let document = documents[tabID] else { return }
+        document.update(
+            title: title,
+            markdown: markdown,
+            baseURL: baseURL,
+            skin: skin,
+            editorFont: editorFont
+        )
+        windows[tabID]?.title = MarkdownPreviewWindowDocument.windowTitle(for: title)
+    }
+
+    private func document(
+        for tabID: EditorTab.ID,
+        title: String,
+        markdown: String,
+        baseURL: URL?,
+        skin: SkinDefinition,
+        editorFont: NSFont
+    ) -> MarkdownPreviewWindowDocument {
+        if let document = documents[tabID] {
+            document.update(
+                title: title,
+                markdown: markdown,
+                baseURL: baseURL,
+                skin: skin,
+                editorFont: editorFont
+            )
+            return document
+        }
+
+        let document = MarkdownPreviewWindowDocument(
+            title: title,
+            markdown: markdown,
+            baseURL: baseURL,
+            skin: skin,
+            editorFont: editorFont
+        )
+        documents[tabID] = document
+        return document
+    }
+
+    private func show(_ window: NSWindow) {
+        NSApp.activate(ignoringOtherApps: true)
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+    }
+}
+
+@MainActor
+private final class MarkdownPreviewWindowDocument: ObservableObject {
+    @Published var title: String
+    @Published var markdown: String
+    @Published var baseURL: URL?
+    @Published var skin: SkinDefinition
+    @Published var editorFont: NSFont
+    private var pendingUpdate: (title: String, markdown: String, baseURL: URL?, skin: SkinDefinition, editorFont: NSFont)?
+    private var pendingUpdateTask: Task<Void, Never>?
+
+    var windowTitle: String {
+        Self.windowTitle(for: title)
+    }
+
+    static func windowTitle(for title: String) -> String {
+        "\(title.isEmpty ? "Untitled" : title) Preview"
+    }
+
+    init(
+        title: String,
+        markdown: String,
+        baseURL: URL?,
+        skin: SkinDefinition,
+        editorFont: NSFont
+    ) {
+        self.title = title
+        self.markdown = markdown
+        self.baseURL = baseURL
+        self.skin = skin
+        self.editorFont = editorFont
+    }
+
+    func update(
+        title: String,
+        markdown: String,
+        baseURL: URL?,
+        skin: SkinDefinition,
+        editorFont: NSFont
+    ) {
+        pendingUpdate = (title, markdown, baseURL, skin, editorFont)
+        guard pendingUpdateTask == nil else { return }
+
+        pendingUpdateTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(16))
+            } catch {
+                return
+            }
+            self?.flushPendingUpdate()
+        }
+    }
+
+    private func flushPendingUpdate() {
+        pendingUpdateTask = nil
+        guard let pendingUpdate else { return }
+        self.pendingUpdate = nil
+        title = pendingUpdate.title
+        markdown = pendingUpdate.markdown
+        baseURL = pendingUpdate.baseURL
+        skin = pendingUpdate.skin
+        editorFont = pendingUpdate.editorFont
+    }
+}
+
+private final class MarkdownPreviewWindowDelegate: NSObject, NSWindowDelegate {
+    private let onClose: () -> Void
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose()
+    }
+}
+
+private struct MarkdownPreviewWindowContent: View {
+    @ObservedObject var document: MarkdownPreviewWindowDocument
+
+    var body: some View {
+        MarkdownPreviewView(
+            markdown: document.markdown,
+            baseURL: document.baseURL,
+            skin: document.skin,
+            editorFont: document.editorFont
+        )
+        .frame(minWidth: 420, minHeight: 320)
     }
 }
 
