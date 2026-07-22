@@ -63,6 +63,12 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ## 📝 Changelog
 
+### 1.1.3
+- Fixed a race condition which could re-open the window when hitting cmd+w quickly.
+- Improved cmd+f search highlight color.
+- Improved search living per document, not per window.
+- Improved cursor when in the Settings overlay.
+
 ### 1.1.2
 - Improved editing while previewing Markdown.
 - Added a "Open in new window" for markdown previews.
