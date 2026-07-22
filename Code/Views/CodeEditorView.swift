@@ -35,6 +35,17 @@ final class ActiveEditorTextViewRegistry {
         (textView as? LineClickableTextView)?.outdentSelection()
     }
 
+    func showFindMatchHighlight(_ range: NSRange, in textView: NSTextView) {
+        clearFindMatchHighlights()
+        (textView as? LineClickableTextView)?.findMatchHighlightRange = range
+    }
+
+    func clearFindMatchHighlights() {
+        for textView in textViews.allObjects {
+            textView.findMatchHighlightRange = nil
+        }
+    }
+
     func flushPendingModelSync() {
         guard let textView = textView as? LineClickableTextView,
               textView.hasPendingModelSync?() == true else { return }
@@ -2067,6 +2078,49 @@ final class LineClickableTextView: NSTextView {
     var hasPendingModelSync: (() -> Bool)?
     var didBecomeActive: (() -> Void)?
     private var pendingCompletionTriggerSelection: NSRange?
+    var findMatchHighlightRange: NSRange? {
+        didSet {
+            if !NSEqualRanges(oldValue ?? NSRange(location: NSNotFound, length: 0),
+                              findMatchHighlightRange ?? NSRange(location: NSNotFound, length: 0)) {
+                needsDisplay = true
+            }
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        drawFindMatchHighlight()
+    }
+
+    private func drawFindMatchHighlight() {
+        guard let range = findMatchHighlightRange,
+              range.location != NSNotFound,
+              range.length > 0,
+              NSMaxRange(range) <= (string as NSString).length,
+              let layoutManager = unsafe self.layoutManager,
+              let textContainer = unsafe self.textContainer else { return }
+
+        let glyphRange = unsafe layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        let origin = textContainerOrigin
+        let fillColor = NSColor.controlAccentColor.withAlphaComponent(0.34)
+        let borderColor = NSColor.controlAccentColor.withAlphaComponent(0.9)
+
+        unsafe layoutManager.enumerateEnclosingRects(
+            forGlyphRange: glyphRange,
+            withinSelectedGlyphRange: glyphRange,
+            in: textContainer
+        ) { rect, _ in
+            let highlightRect = rect
+                .offsetBy(dx: origin.x, dy: origin.y)
+                .insetBy(dx: -1, dy: 0)
+            let path = NSBezierPath(roundedRect: highlightRect, xRadius: 2, yRadius: 2)
+            fillColor.setFill()
+            path.fill()
+            borderColor.setStroke()
+            path.lineWidth = 1.5
+            path.stroke()
+        }
+    }
 
     override func mouseDown(with event: NSEvent) {
         ActiveEditorTextViewRegistry.shared.register(self)

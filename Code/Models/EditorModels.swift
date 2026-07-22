@@ -244,7 +244,7 @@ struct SkinDefinition: Codable, Identifiable, Hashable {
             stringColor: palette.string.resolveColor(),
             commentColor: palette.comment.resolveColor(),
             commandColor: palette.command.resolveColor(),
-            selectionColor: editor.foreground.withAlpha(0.15),
+            selectionColor: NSColor.controlAccentColor.withAlphaComponent(0.32),
             gutterBackgroundColor: backgroundColor,
             gutterBorderColor: editor.foreground.withAlpha(0.10),
             gutterTextColor: editor.foreground.withAlpha(0.55),

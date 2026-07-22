@@ -343,15 +343,20 @@ struct ContentView: View {
             handleSearchCommand()
         }
         .onChange(of: searchController.query) { _, _ in
+            ActiveEditorTextViewRegistry.shared.clearFindMatchHighlights()
             scheduleSearchSummaryRefresh()
         }
         .onChange(of: searchController.isCaseSensitive) { _, _ in
             scheduleSearchSummaryRefresh()
         }
-        .onChange(of: searchController.isPresented) { _, _ in
+        .onChange(of: searchController.isPresented) { _, isPresented in
+            if !isPresented {
+                ActiveEditorTextViewRegistry.shared.clearFindMatchHighlights()
+            }
             refreshSearchSummary()
         }
         .onChange(of: workspace.selectedTabID) { _, _ in
+            ActiveEditorTextViewRegistry.shared.clearFindMatchHighlights()
             refreshSearchSummary()
         }
         .onChange(of: preferences.selectedSkinID) { _, _ in
@@ -1038,6 +1043,7 @@ struct ContentView: View {
 
     private func select(_ range: NSRange, in textView: NSTextView) {
         textView.setSelectedRange(range)
+        ActiveEditorTextViewRegistry.shared.showFindMatchHighlight(range, in: textView)
         textView.scrollRangeToVisible(range)
     }
 
