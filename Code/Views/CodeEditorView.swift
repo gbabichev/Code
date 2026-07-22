@@ -7,13 +7,23 @@ import SwiftUI
 
 @MainActor
 final class ActiveEditorTextViewRegistry {
+    private struct EditorInteractionState {
+        let isEditable: Bool
+        let isSelectable: Bool
+    }
+
     static let shared = ActiveEditorTextViewRegistry()
 
     weak var textView: NSTextView?
     private let textViews = NSHashTable<LineClickableTextView>.weakObjects()
+    private var disabledEditorStates: [ObjectIdentifier: EditorInteractionState] = [:]
+    private var areEditorsEnabled = true
 
     func track(_ textView: LineClickableTextView) {
         textViews.add(textView)
+        if !areEditorsEnabled {
+            disable(textView)
+        }
     }
 
     func register(_ textView: NSTextView) {
@@ -44,6 +54,45 @@ final class ActiveEditorTextViewRegistry {
         for textView in textViews.allObjects {
             textView.findMatchHighlightRange = nil
         }
+    }
+
+    func setEditorsEnabled(_ isEnabled: Bool) {
+        guard areEditorsEnabled != isEnabled else { return }
+        areEditorsEnabled = isEnabled
+
+        for textView in textViews.allObjects {
+            if isEnabled {
+                restore(textView)
+            } else {
+                disable(textView)
+            }
+        }
+
+        if isEnabled {
+            disabledEditorStates.removeAll()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
+    private func disable(_ textView: LineClickableTextView) {
+        let identifier = ObjectIdentifier(textView)
+        if disabledEditorStates[identifier] == nil {
+            disabledEditorStates[identifier] = EditorInteractionState(
+                isEditable: textView.isEditable,
+                isSelectable: textView.isSelectable
+            )
+        }
+        textView.isEditable = false
+        textView.isSelectable = false
+        unsafe textView.window?.invalidateCursorRects(for: textView)
+    }
+
+    private func restore(_ textView: LineClickableTextView) {
+        guard let state = disabledEditorStates[ObjectIdentifier(textView)] else { return }
+        textView.isSelectable = state.isSelectable
+        textView.isEditable = state.isEditable
+        unsafe textView.window?.invalidateCursorRects(for: textView)
     }
 
     func flushPendingModelSync() {

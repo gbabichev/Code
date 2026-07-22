@@ -1981,6 +1981,12 @@ private struct SettingsOverlayView: View {
         .background(SettingsEscapeKeyHandler {
             isPresented = false
         })
+        .onAppear {
+            ActiveEditorTextViewRegistry.shared.setEditorsEnabled(false)
+        }
+        .onDisappear {
+            ActiveEditorTextViewRegistry.shared.setEditorsEnabled(true)
+        }
     }
 
     private var settingsHeader: some View {
