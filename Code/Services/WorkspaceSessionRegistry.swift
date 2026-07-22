@@ -16,6 +16,7 @@ final class WorkspaceSessionRegistry: ObservableObject {
     private var connectedSessionCounts: [String: Int] = [:]
     private var pendingLaunchRestoreSessionIDs: [String] = []
     private var pendingRestoreWorkItem: DispatchWorkItem?
+    private var isLaunchRestorationActive = true
 
     init(
         userDefaults: UserDefaults = .standard,
@@ -65,6 +66,14 @@ final class WorkspaceSessionRegistry: ObservableObject {
     func handleWindowWillClose(sessionID: String) {
         guard !sessionID.isEmpty else { return }
         guard !ApplicationLifecycleState.shared.isTerminating else { return }
+
+        // Closing a workspace during the launch grace period is intentional. Stop the
+        // delayed missing-session check from interpreting it as a failed restoration.
+        isLaunchRestorationActive = false
+        pendingRestoreWorkItem?.cancel()
+        pendingRestoreWorkItem = nil
+        pendingLaunchRestoreSessionIDs.removeAll()
+
         guard connectedSessionCounts[sessionID, default: 0] <= 1 else { return }
 
         var sessionIDs = storedRestorableSessionIDs()
@@ -172,16 +181,22 @@ final class WorkspaceSessionRegistry: ObservableObject {
         openAdditionalWindows: @escaping (_ count: Int) -> Void
     ) {
         pendingRestoreWorkItem?.cancel()
+        guard isLaunchRestorationActive else { return }
 
         let workItem = DispatchWorkItem { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
+                guard self.isLaunchRestorationActive else { return }
 
                 let missingSessionIDs = self.orderedRestorableSessionIDs().filter { sessionID in
                     self.connectedSessionCounts[sessionID, default: 0] == 0
                         && !self.pendingLaunchRestoreSessionIDs.contains(sessionID)
                 }
-                guard !missingSessionIDs.isEmpty else { return }
+                guard !missingSessionIDs.isEmpty else {
+                    self.isLaunchRestorationActive = false
+                    self.pendingRestoreWorkItem = nil
+                    return
+                }
 
                 self.pendingLaunchRestoreSessionIDs.append(contentsOf: missingSessionIDs)
                 openAdditionalWindows(missingSessionIDs.count)
