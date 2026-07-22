@@ -1317,6 +1317,14 @@ private final class WindowCloseDelegateProxy: NSObject, NSWindowDelegate {
 
 @MainActor
 final class EditorSearchController: ObservableObject {
+    private struct DocumentState {
+        var isPresented = false
+        var isReplaceVisible = false
+        var query = ""
+        var replacement = ""
+        var isCaseSensitive = false
+    }
+
     enum Command {
         case showFind
         case showReplace
@@ -1325,13 +1333,45 @@ final class EditorSearchController: ObservableObject {
         case useSelectionForFind
     }
 
-    @Published var isPresented = false
-    @Published var isReplaceVisible = false
-    @Published var query = ""
-    @Published var replacement = ""
-    @Published var isCaseSensitive = false
+    @Published private var documentStates: [String: DocumentState] = [:]
+    @Published private(set) var activeDocumentID: String?
     @Published private(set) var eventID = UUID()
     private(set) var lastCommand: Command = .showFind
+
+    var isPresented: Bool {
+        get { activeState.isPresented }
+        set { updateActiveState { $0.isPresented = newValue } }
+    }
+
+    var isReplaceVisible: Bool {
+        get { activeState.isReplaceVisible }
+        set { updateActiveState { $0.isReplaceVisible = newValue } }
+    }
+
+    var query: String {
+        get { activeState.query }
+        set { updateActiveState { $0.query = newValue } }
+    }
+
+    var replacement: String {
+        get { activeState.replacement }
+        set { updateActiveState { $0.replacement = newValue } }
+    }
+
+    var isCaseSensitive: Bool {
+        get { activeState.isCaseSensitive }
+        set { updateActiveState { $0.isCaseSensitive = newValue } }
+    }
+
+    func activateDocument(_ id: String?) {
+        activeDocumentID = id
+        guard let id, documentStates[id] == nil else { return }
+        documentStates[id] = DocumentState()
+    }
+
+    func retainDocuments(withIDs ids: Set<String>) {
+        documentStates = documentStates.filter { ids.contains($0.key) }
+    }
 
     func showFind() {
         isPresented = true
@@ -1380,5 +1420,17 @@ final class EditorSearchController: ObservableObject {
         }
         lastCommand = .useSelectionForFind
         eventID = UUID()
+    }
+
+    private var activeState: DocumentState {
+        guard let activeDocumentID else { return DocumentState() }
+        return documentStates[activeDocumentID] ?? DocumentState()
+    }
+
+    private func updateActiveState(_ update: (inout DocumentState) -> Void) {
+        guard let activeDocumentID else { return }
+        var state = documentStates[activeDocumentID] ?? DocumentState()
+        update(&state)
+        documentStates[activeDocumentID] = state
     }
 }

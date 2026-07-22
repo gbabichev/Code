@@ -283,32 +283,6 @@ struct ContentView: View {
 
                 Divider()
 
-                if searchController.isPresented, let selectedTab = workspace.selectedTab {
-                    EditorSearchBar(
-                        query: $searchController.query,
-                        replacement: $searchController.replacement,
-                        isCaseSensitive: $searchController.isCaseSensitive,
-                        isReplaceVisible: searchController.isReplaceVisible,
-                        matchSummary: matchSummaryText,
-                        focusedField: $focusedSearchField,
-                        onClose: { searchController.hide() },
-                        onFindNext: { findNext(in: selectedTab) },
-                        onFindPrevious: { findPrevious(in: selectedTab) },
-                        onReplace: { replaceCurrentMatch(in: selectedTab) },
-                        onReplaceAll: { replaceAllMatches(in: selectedTab) }
-                    )
-                    .onAppear {
-                        DispatchQueue.main.async {
-                            focusedSearchField = .find
-                        }
-                    }
-                    .onExitCommand {
-                        searchController.hide()
-                    }
-
-                    Divider()
-                }
-
                 editorArea
             }
         }
@@ -355,7 +329,9 @@ struct ContentView: View {
             }
             refreshSearchSummary()
         }
-        .onChange(of: workspace.selectedTabID) { _, _ in
+        .onChange(of: workspace.selectedTabID) { _, selectedTabID in
+            searchController.activateDocument(selectedTabID)
+            searchController.retainDocuments(withIDs: Set(workspace.openTabs.map(\.id)))
             ActiveEditorTextViewRegistry.shared.clearFindMatchHighlights()
             refreshSearchSummary()
         }
@@ -372,6 +348,8 @@ struct ContentView: View {
             refreshOpenMarkdownPreviewWindows()
         }
         .onAppear {
+            searchController.activateDocument(workspace.selectedTabID)
+            searchController.retainDocuments(withIDs: Set(workspace.openTabs.map(\.id)))
             refreshSearchSummary()
         }
     }
@@ -728,7 +706,8 @@ struct ContentView: View {
                             onMarkdownPreviewTextChange: { updatedText in
                                 updateMarkdownPreviewWindow(for: primaryTab, markdown: updatedText)
                             },
-                            onClose: { workspace.removeTabFromSplitView(primaryTab.id) }
+                            onClose: { workspace.removeTabFromSplitView(primaryTab.id) },
+                            searchBar: documentSearchBar(for: primaryTab)
                         )
 
                         EditorSplitPaneView(
@@ -760,39 +739,82 @@ struct ContentView: View {
                             onMarkdownPreviewTextChange: { updatedText in
                                 updateMarkdownPreviewWindow(for: secondaryTab, markdown: updatedText)
                             },
-                            onClose: { workspace.removeTabFromSplitView(secondaryTab.id) }
+                            onClose: { workspace.removeTabFromSplitView(secondaryTab.id) },
+                            searchBar: documentSearchBar(for: secondaryTab)
                         )
                     }
                 } else {
-                    EditorAreaView(
-                        showsExternalModificationBanner: workspace.externalModificationVersion(for: primaryTab.id) != nil,
-                        isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: primaryTab.id),
-                        onExternalModificationRefresh: { workspace.requestRefreshFile(for: primaryTab.id) },
-                        editorID: primaryTab.id,
-                        baseURL: primaryTab.fileURL?.deletingLastPathComponent(),
-                        text: selectedTabBinding(primaryTab),
-                        scrollPosition: scrollPositionBinding(primaryTab),
-                        isWordWrapEnabled: preferences.isWordWrapEnabled,
-                        isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
-                        showsInvisibleCharacters: preferences.showsInvisibleCharacters,
-                        skin: preferences.selectedSkin,
-                        language: primaryTab.language,
-                        indentation: primaryTab.indentation,
-                        autocompleteMode: preferences.autocompleteMode,
-                        editorFont: preferences.editorFont,
-                        editorSemiboldFont: preferences.editorSemiboldFont,
-                        isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: primaryTab),
-                        onFocus: { workspace.focusPane(.primary) },
-                        onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) },
-                        onOpenMarkdownPreviewWindow: { markdown in
-                            openMarkdownPreviewWindow(for: primaryTab, markdown: markdown)
-                        },
-                        onMarkdownPreviewTextChange: { updatedText in
-                            updateMarkdownPreviewWindow(for: primaryTab, markdown: updatedText)
-                        }
-                    )
+                    VStack(spacing: 0) {
+                        documentSearchBar(for: primaryTab)
+
+                        EditorAreaView(
+                            showsExternalModificationBanner: workspace.externalModificationVersion(for: primaryTab.id) != nil,
+                            isExternalModificationBannerDismissed: externalModificationBannerDismissedBinding(for: primaryTab.id),
+                            onExternalModificationRefresh: { workspace.requestRefreshFile(for: primaryTab.id) },
+                            editorID: primaryTab.id,
+                            baseURL: primaryTab.fileURL?.deletingLastPathComponent(),
+                            text: selectedTabBinding(primaryTab),
+                            scrollPosition: scrollPositionBinding(primaryTab),
+                            isWordWrapEnabled: preferences.isWordWrapEnabled,
+                            isSyntaxHighlightingEnabled: preferences.isSyntaxHighlightingEnabled,
+                            showsInvisibleCharacters: preferences.showsInvisibleCharacters,
+                            skin: preferences.selectedSkin,
+                            language: primaryTab.language,
+                            indentation: primaryTab.indentation,
+                            autocompleteMode: preferences.autocompleteMode,
+                            editorFont: preferences.editorFont,
+                            editorSemiboldFont: preferences.editorSemiboldFont,
+                            isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: primaryTab),
+                            onFocus: { workspace.focusPane(.primary) },
+                            onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) },
+                            onOpenMarkdownPreviewWindow: { markdown in
+                                openMarkdownPreviewWindow(for: primaryTab, markdown: markdown)
+                            },
+                            onMarkdownPreviewTextChange: { updatedText in
+                                updateMarkdownPreviewWindow(for: primaryTab, markdown: updatedText)
+                            }
+                        )
+                    }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func documentSearchBar(for tab: EditorTab) -> some View {
+        if searchController.isPresented, searchController.activeDocumentID == tab.id {
+            EditorSearchBar(
+                query: Binding(
+                    get: { searchController.query },
+                    set: { searchController.query = $0 }
+                ),
+                replacement: Binding(
+                    get: { searchController.replacement },
+                    set: { searchController.replacement = $0 }
+                ),
+                isCaseSensitive: Binding(
+                    get: { searchController.isCaseSensitive },
+                    set: { searchController.isCaseSensitive = $0 }
+                ),
+                isReplaceVisible: searchController.isReplaceVisible,
+                matchSummary: matchSummaryText,
+                focusedField: $focusedSearchField,
+                onClose: { searchController.hide() },
+                onFindNext: { findNext(in: tab) },
+                onFindPrevious: { findPrevious(in: tab) },
+                onReplace: { replaceCurrentMatch(in: tab) },
+                onReplaceAll: { replaceAllMatches(in: tab) }
+            )
+            .onAppear {
+                DispatchQueue.main.async {
+                    focusedSearchField = .find
+                }
+            }
+            .onExitCommand {
+                searchController.hide()
+            }
+
+            Divider()
         }
     }
 
@@ -1500,7 +1522,7 @@ private struct EditorAreaView: View {
     }
 }
 
-private struct EditorSplitPaneView: View {
+private struct EditorSplitPaneView<SearchBarContent: View>: View {
     let showsExternalModificationBanner: Bool
     let isExternalModificationBannerDismissed: Binding<Bool>
     let onExternalModificationRefresh: () -> Void
@@ -1526,6 +1548,7 @@ private struct EditorSplitPaneView: View {
     let onOpenMarkdownPreviewWindow: (String) -> Void
     let onMarkdownPreviewTextChange: (String) -> Void
     let onClose: () -> Void
+    let searchBar: SearchBarContent
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1597,6 +1620,8 @@ private struct EditorSplitPaneView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(Color(nsColor: .controlBackgroundColor))
+
+            searchBar
 
             EditorAreaView(
                 showsExternalModificationBanner: showsExternalModificationBanner,
