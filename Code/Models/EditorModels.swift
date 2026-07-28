@@ -33,6 +33,7 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
     case powerShell
     case xml
     case json
+    case yaml
 
     var id: String { rawValue }
 
@@ -58,6 +59,8 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
             self = .xml
         case "json":
             self = .json
+        case "yaml":
+            self = .yaml
         default:
             self = .plainText
         }
@@ -116,12 +119,16 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
             return .json
         }
 
+        if ["yaml", "yml"].contains(url.pathExtension.lowercased()) {
+            return .yaml
+        }
+
         return .plainText
     }
 
     var lineCommentPrefix: String? {
         switch self {
-        case .shell, .dotenv, .python, .powerShell:
+        case .shell, .dotenv, .python, .powerShell, .yaml:
             return "#"
         case .plainText, .logfile, .markdown, .xml, .json:
             return nil
@@ -148,6 +155,8 @@ enum EditorLanguage: String, Codable, CaseIterable, Identifiable {
             "XML"
         case .json:
             "JSON"
+        case .yaml:
+            "YAML"
         }
     }
 }

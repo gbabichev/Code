@@ -1631,6 +1631,321 @@ final class JSONSyntaxHighlighter: SyntaxHighlighting {
     }
 }
 
+// MARK: - YAML Highlighter
+struct YAMLSyntaxHighlighter: SyntaxHighlighting {
+    let theme: SkinTheme
+
+    func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
+        let fullRange = NSRange(location: 0, length: storage.length)
+        let nsText = text as NSString
+        let highlightRange = highlightedRange(for: range, in: nsText, fallback: fullRange)
+        storage.setAttributes(theme.baseAttributes, range: highlightRange)
+
+        let contextStart = max(highlightRange.location - 65_536, 0)
+        var lineLocation = lineStart(in: nsText, at: contextStart)
+        let scanEnd = min(NSMaxRange(highlightRange), nsText.length)
+        var blockScalarParentIndent: Int?
+
+        while lineLocation < scanEnd {
+            let lineRange = NSRange(
+                location: lineLocation,
+                length: lineEnd(in: nsText, at: lineLocation) - lineLocation
+            )
+            blockScalarParentIndent = scanYAMLLine(
+                in: nsText,
+                lineRange: lineRange,
+                visibleRange: highlightRange,
+                blockScalarParentIndent: blockScalarParentIndent,
+                storage: storage
+            )
+            lineLocation = NSMaxRange(lineRange)
+        }
+    }
+
+    private func scanYAMLLine(
+        in text: NSString,
+        lineRange: NSRange,
+        visibleRange: NSRange,
+        blockScalarParentIndent: Int?,
+        storage: NSMutableAttributedString
+    ) -> Int? {
+        let contentEnd = yamlContentEnd(in: text, lineRange: lineRange)
+        let first = firstCodeCharacter(in: text, lineRange: lineRange)
+        let indent = first - lineRange.location
+
+        if let parentIndent = blockScalarParentIndent {
+            if first >= contentEnd || indent > parentIndent {
+                applyAttributes(theme.stringAttributes, range: lineRange, visibleIn: visibleRange, to: storage)
+                return parentIndent
+            }
+        }
+
+        guard first < contentEnd else { return nil }
+
+        if yamlHasMarker("---", in: text, at: first, lineEnd: contentEnd)
+            || yamlHasMarker("...", in: text, at: first, lineEnd: contentEnd) {
+            applyAttributes(
+                theme.keywordAttributes,
+                range: NSRange(location: first, length: 3),
+                visibleIn: visibleRange,
+                to: storage
+            )
+        }
+
+        if text.character(at: first) == 37 {
+            applyAttributes(
+                theme.commandAttributes,
+                range: NSRange(location: first, length: contentEnd - first),
+                visibleIn: visibleRange,
+                to: storage
+            )
+            return nil
+        }
+
+        var tokenStart = first
+        if text.character(at: first) == 45,
+           first + 1 < contentEnd,
+           isWhitespace(text.character(at: first + 1)) {
+            applyAttributes(
+                theme.keywordAttributes,
+                range: NSRange(location: first, length: 1),
+                visibleIn: visibleRange,
+                to: storage
+            )
+            tokenStart = first + 1
+            while tokenStart < contentEnd, isWhitespace(text.character(at: tokenStart)) {
+                tokenStart += 1
+            }
+        }
+
+        if let keyRange = yamlMappingKeyRange(in: text, startingAt: tokenStart, lineEnd: contentEnd) {
+            applyAttributes(theme.variableAttributes, range: keyRange, visibleIn: visibleRange, to: storage)
+        }
+
+        var index = tokenStart
+        while index < contentEnd {
+            let ch = text.character(at: index)
+
+            if isWhitespace(ch) || ch == 44 || ch == 91 || ch == 93 || ch == 123 || ch == 125 {
+                index += 1
+                continue
+            }
+
+            if ch == 35, index == first || isWhitespace(text.character(at: index - 1)) {
+                applyAttributes(
+                    theme.commentAttributes,
+                    range: NSRange(location: index, length: contentEnd - index),
+                    visibleIn: visibleRange,
+                    to: storage
+                )
+                break
+            }
+
+            if ch == 34 || ch == 39 {
+                let end = yamlQuotedStringEnd(in: text, startingAt: index, quote: ch, lineEnd: contentEnd)
+                applyAttributes(
+                    theme.stringAttributes,
+                    range: NSRange(location: index, length: end - index),
+                    visibleIn: visibleRange,
+                    to: storage
+                )
+                index = end
+                continue
+            }
+
+            if ch == 38 || ch == 42 {
+                let end = yamlSymbolEnd(in: text, startingAt: index + 1, lineEnd: contentEnd)
+                applyAttributes(
+                    theme.builtinAttributes,
+                    range: NSRange(location: index, length: end - index),
+                    visibleIn: visibleRange,
+                    to: storage
+                )
+                index = end
+                continue
+            }
+
+            if ch == 33 {
+                let end = yamlSymbolEnd(in: text, startingAt: index + 1, lineEnd: contentEnd)
+                applyAttributes(
+                    theme.commandAttributes,
+                    range: NSRange(location: index, length: end - index),
+                    visibleIn: visibleRange,
+                    to: storage
+                )
+                index = end
+                continue
+            }
+
+            if ch == 124 || ch == 62,
+               let markerEnd = yamlBlockScalarMarkerEnd(in: text, startingAt: index, lineEnd: contentEnd) {
+                applyAttributes(
+                    theme.keywordAttributes,
+                    range: NSRange(location: index, length: markerEnd - index),
+                    visibleIn: visibleRange,
+                    to: storage
+                )
+                return indent
+            }
+
+            let end = yamlPlainScalarEnd(in: text, startingAt: index, lineEnd: contentEnd)
+            guard end > index else {
+                index += 1
+                continue
+            }
+            let scalar = text.substring(with: NSRange(location: index, length: end - index))
+            let normalized = scalar.lowercased()
+            if ["null", "~"].contains(normalized) {
+                applyAttributes(
+                    theme.keywordAttributes,
+                    range: NSRange(location: index, length: end - index),
+                    visibleIn: visibleRange,
+                    to: storage
+                )
+            } else if ["true", "false", "yes", "no", "on", "off", ".nan", ".inf", "-.inf", "+.inf"].contains(normalized)
+                        || yamlIsNumber(scalar) {
+                applyAttributes(
+                    theme.builtinAttributes,
+                    range: NSRange(location: index, length: end - index),
+                    visibleIn: visibleRange,
+                    to: storage
+                )
+            }
+            index = end
+        }
+
+        return nil
+    }
+
+    private func yamlContentEnd(in text: NSString, lineRange: NSRange) -> Int {
+        var end = NSMaxRange(lineRange)
+        while end > lineRange.location {
+            let ch = text.character(at: end - 1)
+            guard ch == 10 || ch == 13 else { break }
+            end -= 1
+        }
+        return end
+    }
+
+    private func yamlHasMarker(_ marker: String, in text: NSString, at index: Int, lineEnd: Int) -> Bool {
+        let length = (marker as NSString).length
+        guard index + length <= lineEnd,
+              text.substring(with: NSRange(location: index, length: length)) == marker else { return false }
+        return index + length == lineEnd || isWhitespace(text.character(at: index + length))
+    }
+
+    private func yamlMappingKeyRange(in text: NSString, startingAt start: Int, lineEnd: Int) -> NSRange? {
+        var index = start
+        var quote: unichar?
+        while index < lineEnd {
+            let ch = text.character(at: index)
+            if let activeQuote = quote {
+                if ch == activeQuote {
+                    if activeQuote == 39, index + 1 < lineEnd, text.character(at: index + 1) == 39 {
+                        index += 2
+                        continue
+                    }
+                    quote = nil
+                } else if activeQuote == 34, ch == 92 {
+                    index += 2
+                    continue
+                }
+                index += 1
+                continue
+            }
+            if ch == 34 || ch == 39 {
+                quote = ch
+                index += 1
+                continue
+            }
+            if ch == 35, index == start || isWhitespace(text.character(at: index - 1)) {
+                return nil
+            }
+            if ch == 58,
+               index > start,
+               (index + 1 == lineEnd || isWhitespace(text.character(at: index + 1))) {
+                var keyStart = start
+                while keyStart < index, isWhitespace(text.character(at: keyStart)) { keyStart += 1 }
+                var keyEnd = index
+                while keyEnd > keyStart, isWhitespace(text.character(at: keyEnd - 1)) { keyEnd -= 1 }
+                guard keyEnd > keyStart else { return nil }
+                return NSRange(location: keyStart, length: keyEnd - keyStart)
+            }
+            index += 1
+        }
+        return nil
+    }
+
+    private func yamlQuotedStringEnd(in text: NSString, startingAt start: Int, quote: unichar, lineEnd: Int) -> Int {
+        var index = start + 1
+        while index < lineEnd {
+            let ch = text.character(at: index)
+            if quote == 34, ch == 92 {
+                index = min(index + 2, lineEnd)
+                continue
+            }
+            if ch == quote {
+                if quote == 39, index + 1 < lineEnd, text.character(at: index + 1) == 39 {
+                    index += 2
+                    continue
+                }
+                return index + 1
+            }
+            index += 1
+        }
+        return lineEnd
+    }
+
+    private func yamlSymbolEnd(in text: NSString, startingAt start: Int, lineEnd: Int) -> Int {
+        var index = start
+        while index < lineEnd {
+            let ch = text.character(at: index)
+            if isWhitespace(ch) || ch == 44 || ch == 91 || ch == 93 || ch == 123 || ch == 125 || ch == 35 {
+                break
+            }
+            index += 1
+        }
+        return index
+    }
+
+    private func yamlBlockScalarMarkerEnd(in text: NSString, startingAt start: Int, lineEnd: Int) -> Int? {
+        var index = start + 1
+        while index < lineEnd {
+            let ch = text.character(at: index)
+            if ch == 43 || ch == 45 || (ch >= 49 && ch <= 57) {
+                index += 1
+                continue
+            }
+            break
+        }
+        guard index == lineEnd || isWhitespace(text.character(at: index)) || text.character(at: index) == 35 else {
+            return nil
+        }
+        return index
+    }
+
+    private func yamlPlainScalarEnd(in text: NSString, startingAt start: Int, lineEnd: Int) -> Int {
+        var index = start
+        while index < lineEnd {
+            let ch = text.character(at: index)
+            if isWhitespace(ch) || ch == 44 || ch == 91 || ch == 93 || ch == 123 || ch == 125 || ch == 58 || ch == 35 {
+                break
+            }
+            index += 1
+        }
+        return index
+    }
+
+    private func yamlIsNumber(_ scalar: String) -> Bool {
+        let normalized = scalar.replacingOccurrences(of: "_", with: "")
+        if Double(normalized) != nil { return true }
+        let lowercased = normalized.lowercased()
+        return lowercased.hasPrefix("0x") && Int(lowercased.dropFirst(2), radix: 16) != nil
+            || lowercased.hasPrefix("0o") && Int(lowercased.dropFirst(2), radix: 8) != nil
+            || lowercased.hasPrefix("0b") && Int(lowercased.dropFirst(2), radix: 2) != nil
+    }
+}
+
 struct LogfileSyntaxHighlighter: SyntaxHighlighting {
     let theme: SkinTheme
 
@@ -1850,6 +2165,8 @@ enum SyntaxHighlighterFactory {
             return XMLSyntaxHighlighter(theme: theme)
         case .json:
             return JSONSyntaxHighlighter(theme: theme)
+        case .yaml:
+            return YAMLSyntaxHighlighter(theme: theme)
         case .plainText:
             return PlainTextHighlighter(theme: theme)
         }

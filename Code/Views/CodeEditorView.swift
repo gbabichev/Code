@@ -2093,7 +2093,7 @@ struct CodeEditorView: NSViewRepresentable {
                     "break", "continue", "return", "function", "filter", "param", "begin",
                     "process", "end", "trap", "throw", "try", "catch", "finally", "class"
                 ]
-            case .markdown, .xml, .json:
+            case .markdown, .xml, .json, .yaml:
                 return []
             }
         }
@@ -2784,6 +2784,8 @@ final class LineClickableTextView: NSTextView {
             return shouldIncreasePowerShellIndent(after: code)
         case .json:
             return shouldIncreaseJSONIndent(after: code)
+        case .yaml:
+            return shouldIncreaseYAMLIndent(after: code)
         case .xml:
             return shouldIncreaseXMLIndent(after: code)
         case .plainText, .logfile, .markdown, .dotenv:
@@ -2820,6 +2822,11 @@ final class LineClickableTextView: NSTextView {
         code.hasSuffix("{") || code.hasSuffix("[")
     }
 
+    private func shouldIncreaseYAMLIndent(after code: String) -> Bool {
+        code.hasSuffix(":")
+            || code.range(of: #"[|>][1-9]?[+-]?$"#, options: .regularExpression) != nil
+    }
+
     private func shouldIncreaseXMLIndent(after code: String) -> Bool {
         guard code.hasSuffix(">"),
               let tagStart = code.lastIndex(of: "<") else { return false }
@@ -2841,7 +2848,7 @@ final class LineClickableTextView: NSTextView {
 
     private func codeBeforeComment(in line: String) -> String {
         switch language {
-        case .python, .shell, .powerShell, .dotenv:
+        case .python, .shell, .powerShell, .dotenv, .yaml:
             return String(line.prefixBeforeCommentMarker("#"))
         case .plainText, .logfile, .markdown, .xml, .json:
             return line
