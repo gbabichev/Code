@@ -25,7 +25,7 @@ struct ContentView: View {
     @State private var searchSummaryGeneration = 0
     @State private var toastMessage: String?
     @State private var dismissedExternalModificationBannerVersionsByTabID: [EditorTab.ID: Int] = [:]
-    @State private var hiddenMarkdownPreviewTabIDs: Set<EditorTab.ID> = []
+    @State private var markdownPreviewVisibilityOverrides: [EditorTab.ID: Bool] = [:]
     @StateObject private var markdownPreviewWindowController = MarkdownPreviewWindowController()
     @State private var isShowingIndentationFixConfirmation = false
     @FocusState private var focusedSearchField: SearchField?
@@ -346,6 +346,9 @@ struct ContentView: View {
         }
         .onChange(of: preferences.appTheme) { _, _ in
             refreshOpenMarkdownPreviewWindows()
+        }
+        .onChange(of: preferences.autoOpenMarkdownPreviews) { _, _ in
+            markdownPreviewVisibilityOverrides.removeAll()
         }
         .onAppear {
             searchController.activateDocument(workspace.selectedTabID)
@@ -819,22 +822,17 @@ struct ContentView: View {
     }
 
     private func isMarkdownPreviewVisible(for tab: EditorTab) -> Bool {
-        tab.language == .markdown && !hiddenMarkdownPreviewTabIDs.contains(tab.id)
+        tab.language == .markdown
+            && (markdownPreviewVisibilityOverrides[tab.id] ?? preferences.autoOpenMarkdownPreviews)
     }
 
     private func toggleMarkdownPreview(for tabID: EditorTab.ID) {
-        let shouldShow = hiddenMarkdownPreviewTabIDs.contains(tabID)
-        setMarkdownPreviewVisible(shouldShow, for: tabID)
+        guard let tab = workspace.openTabs.first(where: { $0.id == tabID }) else { return }
+        setMarkdownPreviewVisible(!isMarkdownPreviewVisible(for: tab), for: tabID)
     }
 
     private func setMarkdownPreviewVisible(_ isVisible: Bool, for tabID: EditorTab.ID) {
-        var updatedHiddenTabIDs = hiddenMarkdownPreviewTabIDs
-        if isVisible {
-            updatedHiddenTabIDs.remove(tabID)
-        } else {
-            updatedHiddenTabIDs.insert(tabID)
-        }
-        hiddenMarkdownPreviewTabIDs = updatedHiddenTabIDs
+        markdownPreviewVisibilityOverrides[tabID] = isVisible
     }
 
     private func openMarkdownPreviewWindow(for tab: EditorTab, markdown: String? = nil) {
@@ -1324,7 +1322,8 @@ private struct EditorAreaView: View {
 
                 if isMarkdownPreviewVisible {
                     markdownPreviewPane
-                        .frame(minWidth: 260)
+                        .frame(minWidth: 260, idealWidth: 420)
+                        .layoutPriority(1)
                 } else {
                     markdownPreviewCollapsedRail
                         .frame(minWidth: 38, idealWidth: 38, maxWidth: 38)
@@ -2153,6 +2152,16 @@ private struct SettingsOverlayView: View {
                 caption: "Recent item history and file access behavior"
             ) {
                 VStack(alignment: .leading, spacing: 14) {
+                    SettingsRow(
+                        "Auto-Open Markdown Previews",
+                        systemImage: "doc.richtext",
+                        subtitle: "Show the inline web preview when opening Markdown files."
+                    ) {
+                        Toggle(isOn: $preferences.autoOpenMarkdownPreviews) {
+                        }
+                        .toggleStyle(.switch)
+                    }
+
                     settingStepperRow(
                         title: "Recent Items",
                         detail: preferences.recentItemLimit == 0 ? "Off" : "\(preferences.recentItemLimit) items",

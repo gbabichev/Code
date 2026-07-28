@@ -74,6 +74,7 @@ final class AppPreferences: ObservableObject {
     static let minIndentWidth = 1
     static let maxIndentWidth = 8
     static let defaultSyntaxHighlightingEnabled = true
+    static let defaultAutoOpenMarkdownPreviews = true
     static let defaultRecentItemLimit = 5
     static let minRecentItemLimit = 0
     static let maxRecentItemLimit = 20
@@ -160,6 +161,12 @@ final class AppPreferences: ObservableObject {
     @Published var trimsTrailingWhitespaceOnSave: Bool {
         didSet {
             userDefaults.set(trimsTrailingWhitespaceOnSave, forKey: Keys.trimsTrailingWhitespaceOnSave)
+        }
+    }
+
+    @Published var autoOpenMarkdownPreviews: Bool {
+        didSet {
+            userDefaults.set(autoOpenMarkdownPreviews, forKey: Keys.autoOpenMarkdownPreviews)
         }
     }
 
@@ -253,6 +260,12 @@ final class AppPreferences: ObservableObject {
             trimsTrailingWhitespaceOnSave = false
         }
 
+        if userDefaults.object(forKey: Keys.autoOpenMarkdownPreviews) != nil {
+            autoOpenMarkdownPreviews = userDefaults.bool(forKey: Keys.autoOpenMarkdownPreviews)
+        } else {
+            autoOpenMarkdownPreviews = Self.defaultAutoOpenMarkdownPreviews
+        }
+
         if userDefaults.object(forKey: Keys.recentItemLimit) != nil {
             recentItemLimit = userDefaults.integer(forKey: Keys.recentItemLimit)
         } else {
@@ -281,6 +294,7 @@ final class AppPreferences: ObservableObject {
         userDefaults.set(isSyntaxHighlightingEnabled, forKey: Keys.isSyntaxHighlightingEnabled)
         userDefaults.set(showsInvisibleCharacters, forKey: Keys.showsInvisibleCharacters)
         userDefaults.set(trimsTrailingWhitespaceOnSave, forKey: Keys.trimsTrailingWhitespaceOnSave)
+        userDefaults.set(autoOpenMarkdownPreviews, forKey: Keys.autoOpenMarkdownPreviews)
         userDefaults.set(recentItemLimit, forKey: Keys.recentItemLimit)
         persistRecentItems()
         applyAppAppearance()
@@ -507,6 +521,7 @@ private enum Keys {
     static let isSyntaxHighlightingEnabled = "preferences.isSyntaxHighlightingEnabled"
     static let showsInvisibleCharacters = "preferences.showsInvisibleCharacters"
     static let trimsTrailingWhitespaceOnSave = "preferences.trimsTrailingWhitespaceOnSave"
+    static let autoOpenMarkdownPreviews = "preferences.autoOpenMarkdownPreviews"
     static let recentItemLimit = "preferences.recentItemLimit"
     static let recentItems = "preferences.recentItems"
 }
