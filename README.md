@@ -63,6 +63,11 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ## 📝 Changelog
 
+### 1.1.4
+- Improved auto-indent analyzer.
+- Added support for YAML Syntax Highlighting.
+- Added a toggle for "Auto-Open md previews".
+
 ### 1.1.3
 - Fixed a race condition which could re-open the window when hitting cmd+w quickly.
 - Improved cmd+f search highlight color.
