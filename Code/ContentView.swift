@@ -115,7 +115,7 @@ struct ContentView: View {
         } message: { pending in
             Text("Refreshing \(pending.fileName) will discard unsaved changes and reload the file from disk.")
         }
-        .alert("Fix Mixed Indentation?", isPresented: $isShowingIndentationFixConfirmation) {
+        .alert("Fix Indentation?", isPresented: $isShowingIndentationFixConfirmation) {
             Button("Fix Indentation") {
                 workspace.fixSelectedTabIndentation()
             }
@@ -425,7 +425,7 @@ struct ContentView: View {
                 FileStatusIndicatorStrip(
                     indicators: statusIndicators,
                     style: .badge,
-                    clickableIndicators: [.mixedIndentation],
+                    clickableIndicators: [.mixedIndentation, .unevenIndentation],
                     onIndicatorClick: handleStatusIndicatorClick
                 )
 
@@ -618,7 +618,7 @@ struct ContentView: View {
     }
 
     private func handleStatusIndicatorClick(_ indicator: EditorFileStatusKind) {
-        guard indicator == .mixedIndentation else { return }
+        guard indicator == .mixedIndentation || indicator == .unevenIndentation else { return }
         isShowingIndentationFixConfirmation = true
     }
 

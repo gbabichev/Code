@@ -28,7 +28,11 @@ enum IndentationAnalyzer {
             width: width,
             isInferred: analysis.hasEvidence,
             hasMixedIndentation: analysis.hasMixedIndentation,
-            hasUnevenIndentation: analysis.hasUnevenIndentation(style: inferredStyle, width: width)
+            hasUnevenIndentation: analysis.hasUnevenIndentation(
+                style: inferredStyle,
+                width: width,
+                toleratedOutlierCount: outlierTolerance(forSampleCount: analysis.spaceOnlyIndentCounts.count)
+            )
         )
     }
 
@@ -45,7 +49,11 @@ enum IndentationAnalyzer {
             width: width,
             isInferred: false,
             hasMixedIndentation: analysis.hasMixedIndentation,
-            hasUnevenIndentation: analysis.hasUnevenIndentation(style: style, width: width)
+            hasUnevenIndentation: analysis.hasUnevenIndentation(
+                style: style,
+                width: width,
+                toleratedOutlierCount: 0
+            )
         )
     }
 
@@ -61,7 +69,15 @@ enum IndentationAnalyzer {
         guard !prefix.isEmpty else { return line }
 
         let columns = indentationColumnCount(in: prefix, tabWidth: settings.width)
-        let replacement = indentationPrefix(forColumnCount: columns, using: settings)
+        let normalizedColumns: Int
+        switch settings.style {
+        case .spaces:
+            let roundedLevel = Int((Double(columns) / Double(settings.width)).rounded())
+            normalizedColumns = max(roundedLevel, 1) * settings.width
+        case .tabs:
+            normalizedColumns = columns
+        }
+        let replacement = indentationPrefix(forColumnCount: normalizedColumns, using: settings)
         return replacement + line[prefix.endIndex...]
     }
 
@@ -135,31 +151,47 @@ enum IndentationAnalyzer {
             let divisibleCount = counts.filter { $0 % candidate == 0 }.count
             let exactCount = counts.filter { $0 == candidate }.count
             let remainderPenalty = counts.reduce(0) { $0 + ($1 % candidate) }
-            let fallbackBonus = candidate == fallbackWidth ? 1 : 0
             return (
                 candidate: candidate,
                 divisibleCount: divisibleCount,
                 exactCount: exactCount,
-                remainderPenalty: remainderPenalty,
-                fallbackBonus: fallbackBonus
+                remainderPenalty: remainderPenalty
             )
         }
 
-        return scored.max { lhs, rhs in
+        let maximumDivisibleCount = scored.map { $0.divisibleCount }.max() ?? 0
+        let outlierTolerance = outlierTolerance(forSampleCount: counts.count)
+        let viableScores = scored.filter {
+            $0.divisibleCount >= maximumDivisibleCount - outlierTolerance
+        }
+
+        // Prefer the smallest viable width that occurs directly or matches the user's
+        // fallback. A real indent unit normally appears on at least one line, while
+        // larger values are nested levels. Allowing a small number of outliers keeps
+        // aligned continuation lines from making width 1 win automatically.
+        var preferredWidths = viableScores
+            .filter { score in score.exactCount > 0 }
+            .map { score in score.candidate }
+        if viableScores.contains(where: { $0.candidate == fallbackWidth }) {
+            preferredWidths.append(fallbackWidth)
+        }
+        if let preferredWidth = preferredWidths.min() {
+            return preferredWidth
+        }
+
+        return viableScores.max { lhs, rhs in
             if lhs.divisibleCount != rhs.divisibleCount {
                 return lhs.divisibleCount < rhs.divisibleCount
-            }
-            if lhs.exactCount != rhs.exactCount {
-                return lhs.exactCount < rhs.exactCount
             }
             if lhs.remainderPenalty != rhs.remainderPenalty {
                 return lhs.remainderPenalty > rhs.remainderPenalty
             }
-            if lhs.fallbackBonus != rhs.fallbackBonus {
-                return lhs.fallbackBonus < rhs.fallbackBonus
-            }
             return lhs.candidate < rhs.candidate
         }?.candidate ?? fallbackWidth
+    }
+
+    private static func outlierTolerance(forSampleCount count: Int) -> Int {
+        max(1, count / 20)
     }
 
     private static func clampedWidth(_ width: Int) -> Int {
@@ -183,8 +215,14 @@ enum IndentationAnalyzer {
             mixedLineCount > 0 || (spaceOnlyLineCount > 0 && tabOnlyLineCount > 0)
         }
 
-        func hasUnevenIndentation(style: EditorIndentationStyle, width: Int) -> Bool {
-            style == .spaces && spaceOnlyIndentCounts.contains { $0 % width != 0 }
+        func hasUnevenIndentation(
+            style: EditorIndentationStyle,
+            width: Int,
+            toleratedOutlierCount: Int
+        ) -> Bool {
+            guard style == .spaces else { return false }
+            let unevenCount = spaceOnlyIndentCounts.count { $0 % width != 0 }
+            return unevenCount > toleratedOutlierCount
         }
     }
 }
