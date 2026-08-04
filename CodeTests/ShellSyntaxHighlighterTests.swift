@@ -33,6 +33,27 @@ final class ShellSyntaxHighlighterTests: XCTestCase {
     }
 
     @MainActor
+    func testBooleanLiteralsHighlightInAssignmentsAndCommands() {
+        let text = #"""
+        DEBUG=false
+        ADD_DOCK_ICON=true
+        NOT_A_BOOLEAN=falsehood
+        MESSAGE="true"
+        true
+        false
+        """#
+        let highlighter = ShellSyntaxHighlighter(theme: Self.theme)
+        let storage = Self.makeStorage(for: text)
+
+        highlighter.apply(to: storage, text: text, in: nil)
+
+        assertColor(Self.theme.builtinColor, for: "false", in: text, storage: storage)
+        assertColor(Self.theme.builtinColor, for: "true", in: text, storage: storage)
+        assertColor(Self.theme.commandColor, for: "falsehood", in: text, storage: storage)
+        assertStringColor(#""true""#, in: text, storage: storage)
+    }
+
+    @MainActor
     private static var theme: SkinTheme {
         SkinDefinition(
             id: "shell-test",
@@ -82,6 +103,30 @@ final class ShellSyntaxHighlighterTests: XCTestCase {
             XCTAssertTrue(
                 color?.isEqual(Self.theme.stringColor) == true,
                 "Expected string color for \(needle) at UTF-16 offset \(location)",
+                file: file,
+                line: line
+            )
+        }
+    }
+
+    @MainActor
+    private func assertColor(
+        _ expectedColor: NSColor,
+        for needle: String,
+        in text: String,
+        storage: NSMutableAttributedString,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let range = (text as NSString).range(of: needle)
+        XCTAssertNotEqual(range.location, NSNotFound, "Missing test range \(needle)", file: file, line: line)
+        guard range.location != NSNotFound else { return }
+
+        for location in range.location..<NSMaxRange(range) {
+            let color = storage.attribute(.foregroundColor, at: location, effectiveRange: nil) as? NSColor
+            XCTAssertTrue(
+                color?.isEqual(expectedColor) == true,
+                "Unexpected color for \(needle) at UTF-16 offset \(location)",
                 file: file,
                 line: line
             )

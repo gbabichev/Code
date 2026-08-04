@@ -159,7 +159,7 @@ struct MarkdownSyntaxHighlighter: SyntaxHighlighting {
         switch state {
         case .fence(let delimiter):
             applyAttributes(theme.stringAttributes, range: lineRange, visibleIn: visibleRange, to: storage)
-            return lineHasPrefix(delimiter, in: text, at: first, lineEnd: end) ? .normal : state
+            return isMarkdownFenceClosingLine(delimiter, in: text, at: first, lineEnd: end) ? .normal : state
         case .htmlComment:
             let tokenEnd = markdownHTMLCommentEnd(in: text, startingAt: lineRange.location, lineEnd: end)
             applyAttributes(theme.commentAttributes, range: NSRange(location: lineRange.location, length: tokenEnd.location - lineRange.location), visibleIn: visibleRange, to: storage)
@@ -172,13 +172,9 @@ struct MarkdownSyntaxHighlighter: SyntaxHighlighting {
             break
         }
 
-        if lineHasPrefix("```", in: text, at: first, lineEnd: end) {
+        if let delimiter = markdownFenceDelimiter(in: text, at: first, lineEnd: end) {
             applyAttributes(theme.stringAttributes, range: lineRange, visibleIn: visibleRange, to: storage)
-            return .fence("```")
-        }
-        if lineHasPrefix("~~~", in: text, at: first, lineEnd: end) {
-            applyAttributes(theme.stringAttributes, range: lineRange, visibleIn: visibleRange, to: storage)
-            return .fence("~~~")
+            return .fence(delimiter)
         }
         if lineHasPrefix("<!--", in: text, at: first, lineEnd: end) {
             let tokenEnd = markdownHTMLCommentEnd(in: text, startingAt: first + 4, lineEnd: end)
@@ -265,13 +261,14 @@ struct MarkdownSyntaxHighlighter: SyntaxHighlighting {
         let first = firstCodeCharacter(in: text, lineRange: lineRange)
         switch initialState {
         case .fence(let delimiter):
-            return lineHasPrefix(delimiter, in: text, at: first, lineEnd: end) ? .normal : initialState
+            return isMarkdownFenceClosingLine(delimiter, in: text, at: first, lineEnd: end) ? .normal : initialState
         case .htmlComment:
             let tokenEnd = markdownHTMLCommentEnd(in: text, startingAt: lineRange.location, lineEnd: end)
             return tokenEnd.closed ? .normal : .htmlComment
         case .normal:
-            if lineHasPrefix("```", in: text, at: first, lineEnd: end) { return .fence("```") }
-            if lineHasPrefix("~~~", in: text, at: first, lineEnd: end) { return .fence("~~~") }
+            if let delimiter = markdownFenceDelimiter(in: text, at: first, lineEnd: end) {
+                return .fence(delimiter)
+            }
             if lineHasPrefix("<!--", in: text, at: first, lineEnd: end) {
                 let tokenEnd = markdownHTMLCommentEnd(in: text, startingAt: first + 4, lineEnd: end)
                 return tokenEnd.closed ? .normal : .htmlComment
@@ -334,6 +331,41 @@ struct MarkdownSyntaxHighlighter: SyntaxHighlighting {
         guard index + length <= lineEnd else { return false }
         return text.substring(with: NSRange(location: index, length: length)) == prefix
     }
+
+    private func markdownFenceDelimiter(in text: NSString, at index: Int, lineEnd: Int) -> String? {
+        guard index < lineEnd else { return nil }
+        let marker = text.character(at: index)
+        guard marker == 96 || marker == 126 else { return nil }
+
+        var cursor = index
+        while cursor < lineEnd, text.character(at: cursor) == marker {
+            cursor += 1
+        }
+        let length = cursor - index
+        guard length >= 3 else { return nil }
+        return String(repeating: marker == 96 ? "`" : "~", count: length)
+    }
+
+    private func isMarkdownFenceClosingLine(
+        _ delimiter: String,
+        in text: NSString,
+        at index: Int,
+        lineEnd: Int
+    ) -> Bool {
+        guard index < lineEnd else { return false }
+        let marker = (delimiter as NSString).character(at: 0)
+        var cursor = index
+        while cursor < lineEnd, text.character(at: cursor) == marker {
+            cursor += 1
+        }
+        guard cursor - index >= (delimiter as NSString).length else { return false }
+        while cursor < lineEnd {
+            let character = text.character(at: cursor)
+            guard isWhitespace(character) || character == 10 || character == 13 else { return false }
+            cursor += 1
+        }
+        return true
+    }
 }
 
 struct ShellSyntaxHighlighter: SyntaxHighlighting {
@@ -347,6 +379,7 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
         "export", "local", "readonly", "return", "shift", "unset", "eval",
         "exec", "source", "alias", "trap", "cd", "exit", "echo", "printf"
     ]
+    private static let booleanLiterals: Set<String> = ["true", "false"]
 
     func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: storage.length)
@@ -434,10 +467,13 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
                 let tokenRange = NSRange(location: index, length: tokenEnd - index)
                 if Self.keywords.contains(word) {
                     applyAttributes(theme.keywordAttributes, range: tokenRange, visibleIn: visibleRange, to: storage)
-                } else if Self.builtins.contains(word) {
+                } else if Self.builtins.contains(word) || Self.booleanLiterals.contains(word) {
                     applyAttributes(theme.builtinAttributes, range: tokenRange, visibleIn: visibleRange, to: storage)
                 } else if expectsCommand {
                     applyAttributes(theme.commandAttributes, range: tokenRange, visibleIn: visibleRange, to: storage)
+                }
+                if let booleanRange = shellAssignmentBooleanRange(for: word, tokenRange: tokenRange) {
+                    applyAttributes(theme.builtinAttributes, range: booleanRange, visibleIn: visibleRange, to: storage)
                 }
                 index = tokenEnd
                 expectsCommand = false
@@ -459,12 +495,18 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
 
     private func shellVariableEnd(in text: NSString, startingAt index: Int, lineEnd: Int) -> Int {
         guard index + 1 < lineEnd else { return index }
-        if text.character(at: index + 1) == 123 {
+        let next = text.character(at: index + 1)
+        if next == 123 {
             var cursor = index + 2
             while cursor < lineEnd, text.character(at: cursor) != 125 {
                 cursor += 1
             }
             return cursor < lineEnd ? cursor + 1 : cursor
+        }
+
+        if isDigit(next) || next == 35 || next == 36 || next == 42 || next == 45
+            || next == 63 || next == 64 || next == 33 {
+            return index + 2
         }
 
         var cursor = index + 1
@@ -525,6 +567,26 @@ struct ShellSyntaxHighlighter: SyntaxHighlighting {
             cursor += 1
         }
         return cursor
+    }
+
+    private func shellAssignmentBooleanRange(for word: String, tokenRange: NSRange) -> NSRange? {
+        let nsWord = word as NSString
+        let equalsRange = nsWord.range(of: "=")
+        guard equalsRange.location != NSNotFound, equalsRange.location > 0 else { return nil }
+
+        guard isIdentifierStart(nsWord.character(at: 0)) else { return nil }
+        for index in 1..<equalsRange.location where !isIdentifierCharacter(nsWord.character(at: index)) {
+            return nil
+        }
+
+        let valueLocation = NSMaxRange(equalsRange)
+        let valueRange = NSRange(location: valueLocation, length: nsWord.length - valueLocation)
+        guard Self.booleanLiterals.contains(nsWord.substring(with: valueRange)) else { return nil }
+
+        return NSRange(
+            location: tokenRange.location + valueRange.location,
+            length: valueRange.length
+        )
     }
 }
 
@@ -593,20 +655,24 @@ struct DotEnvSyntaxHighlighter: SyntaxHighlighting {
     }
 
     private func inlineCommentOffset(in value: String) -> Int? {
+        let text = value as NSString
         var inDoubleQuotes = false
         var inSingleQuotes = false
-        var previousCharacter: Character?
+        var consecutiveBackslashes = 0
 
-        for (offset, character) in value.enumerated() {
-            if character == "\"" && previousCharacter != "\\" && !inSingleQuotes {
+        for offset in 0..<text.length {
+            let character = text.character(at: offset)
+            let isEscaped = consecutiveBackslashes % 2 == 1
+
+            if character == 34, !isEscaped, !inSingleQuotes {
                 inDoubleQuotes.toggle()
-            } else if character == "'" && previousCharacter != "\\" && !inDoubleQuotes {
+            } else if character == 39, !isEscaped, !inDoubleQuotes {
                 inSingleQuotes.toggle()
-            } else if character == "#", !inDoubleQuotes, !inSingleQuotes {
+            } else if character == 35, !inDoubleQuotes, !inSingleQuotes {
                 return offset
             }
 
-            previousCharacter = character
+            consecutiveBackslashes = character == 92 ? consecutiveBackslashes + 1 : 0
         }
 
         return nil
@@ -634,10 +700,11 @@ struct PythonSyntaxHighlighter: SyntaxHighlighting {
         "callable", "chr", "classmethod", "compile", "dict", "dir", "enumerate",
         "filter", "float", "format", "frozenset", "getattr", "hasattr", "hash",
         "hex", "input", "int", "isinstance", "issubclass", "iter", "len", "list",
-        "map", "max", "min", "next", "object", "open", "ord", "pow", "print",
+        "map", "max", "memoryview", "min", "next", "object", "open", "ord", "pow", "print",
         "property", "range", "repr", "reversed", "round", "set", "setattr",
         "slice", "sorted", "staticmethod", "str", "sum", "super", "tuple",
-        "type", "vars", "zip"
+        "type", "vars", "zip", "__import__", "aiter", "anext", "ascii", "bin",
+        "complex", "delattr", "divmod", "globals", "help", "id", "locals", "oct"
     ]
 
     func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
@@ -849,6 +916,7 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
         "get-location", "clear-host", "out-file", "set-content", "add-content",
         "get-content"
     ]
+    private static let literalVariables: Set<String> = ["$true", "$false", "$null"]
 
     func apply(to storage: NSMutableAttributedString, text: String, in range: NSRange?) {
         let fullRange = NSRange(location: 0, length: storage.length)
@@ -931,7 +999,7 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
             }
 
             if ch == 34 || ch == 39 {
-                let tokenEnd = quotedStringEnd(in: text, startingAt: index, quote: ch, lineEnd: end)
+                let tokenEnd = powershellQuotedStringEnd(in: text, startingAt: index, quote: ch, lineEnd: end)
                 applyAttributes(theme.stringAttributes, range: NSRange(location: index, length: tokenEnd - index), visibleIn: visibleRange, to: storage)
                 index = tokenEnd
                 continue
@@ -940,7 +1008,12 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
             if ch == 36 {
                 let tokenEnd = powershellVariableEnd(in: text, startingAt: index, lineEnd: end)
                 if tokenEnd > index + 1 {
-                    applyAttributes(theme.variableAttributes, range: NSRange(location: index, length: tokenEnd - index), visibleIn: visibleRange, to: storage)
+                    let tokenRange = NSRange(location: index, length: tokenEnd - index)
+                    let variable = text.substring(with: tokenRange).lowercased()
+                    let attributes = Self.literalVariables.contains(variable)
+                        ? theme.builtinAttributes
+                        : theme.variableAttributes
+                    applyAttributes(attributes, range: tokenRange, visibleIn: visibleRange, to: storage)
                     index = tokenEnd
                     continue
                 }
@@ -1016,7 +1089,7 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
                 continue
             }
             if ch == 34 || ch == 39 {
-                index = quotedStringEnd(in: text, startingAt: index, quote: ch, lineEnd: end)
+                index = powershellQuotedStringEnd(in: text, startingAt: index, quote: ch, lineEnd: end)
                 continue
             }
             index += 1
@@ -1036,21 +1109,40 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
     }
 
     private func powershellHereStringEnd(in text: NSString, startingAt index: Int, lineEnd: Int, delimiter: String) -> (location: Int, closed: Bool) {
-        let found = text.range(of: delimiter, options: [], range: NSRange(location: index, length: max(0, lineEnd - index)))
-        if found.location == NSNotFound {
+        let markerLocation = lineStart(in: text, at: index)
+        let delimiterLength = (delimiter as NSString).length
+        guard markerLocation >= index,
+              markerLocation + delimiterLength <= lineEnd,
+              text.substring(with: NSRange(location: markerLocation, length: delimiterLength)) == delimiter else {
             return (lineEnd, false)
         }
-        return (found.location + 2, true)
+
+        var cursor = markerLocation + delimiterLength
+        while cursor < lineEnd {
+            let character = text.character(at: cursor)
+            if character == 10 || character == 13 {
+                cursor += 1
+            } else if isWhitespace(character) {
+                cursor += 1
+            } else {
+                return (lineEnd, false)
+            }
+        }
+        return (cursor, true)
     }
 
     private func powershellVariableEnd(in text: NSString, startingAt index: Int, lineEnd: Int) -> Int {
         guard index + 1 < lineEnd else { return index }
-        if text.character(at: index + 1) == 123 {
+        let next = text.character(at: index + 1)
+        if next == 123 {
             var cursor = index + 2
             while cursor < lineEnd, text.character(at: cursor) != 125 {
                 cursor += 1
             }
             return cursor < lineEnd ? cursor + 1 : cursor
+        }
+        if next == 36 || next == 63 || next == 94 {
+            return index + 2
         }
         var cursor = index + 1
         guard cursor < lineEnd, isIdentifierStart(text.character(at: cursor)) else { return index }
@@ -1064,6 +1156,31 @@ struct PowerShellSyntaxHighlighter: SyntaxHighlighting {
             }
         }
         return cursor
+    }
+
+    private func powershellQuotedStringEnd(
+        in text: NSString,
+        startingAt index: Int,
+        quote: unichar,
+        lineEnd: Int
+    ) -> Int {
+        var cursor = index + 1
+        while cursor < lineEnd {
+            let character = text.character(at: cursor)
+            if quote == 34, character == 96 {
+                cursor = min(cursor + 2, lineEnd)
+                continue
+            }
+            if character == quote {
+                if quote == 39, cursor + 1 < lineEnd, text.character(at: cursor + 1) == 39 {
+                    cursor += 2
+                    continue
+                }
+                return cursor + 1
+            }
+            cursor += 1
+        }
+        return lineEnd
     }
 
     private func powershellWordEnd(in text: NSString, startingAt index: Int, lineEnd: Int) -> Int {
@@ -1718,12 +1835,18 @@ struct YAMLSyntaxHighlighter: SyntaxHighlighting {
             }
         }
 
-        if let keyRange = yamlMappingKeyRange(in: text, startingAt: tokenStart, lineEnd: contentEnd) {
+        let keyRange = yamlMappingKeyRange(in: text, startingAt: tokenStart, lineEnd: contentEnd)
+        if let keyRange {
             applyAttributes(theme.variableAttributes, range: keyRange, visibleIn: visibleRange, to: storage)
         }
 
         var index = tokenStart
         while index < contentEnd {
+            if let keyRange, index == keyRange.location {
+                index = NSMaxRange(keyRange)
+                continue
+            }
+
             let ch = text.character(at: index)
 
             if isWhitespace(ch) || ch == 44 || ch == 91 || ch == 93 || ch == 123 || ch == 125 {
@@ -1995,7 +2118,13 @@ struct LogfileSyntaxHighlighter: SyntaxHighlighting {
             if ch == 91 {
                 let tokenEnd = bracketContextEnd(in: text, startingAt: index, lineEnd: end)
                 if tokenEnd > index {
-                    applyAttributes(theme.variableAttributes, range: NSRange(location: index, length: tokenEnd - index), visibleIn: visibleRange, to: storage)
+                    let tokenRange = NSRange(location: index, length: tokenEnd - index)
+                    let contentRange = NSRange(location: index + 1, length: tokenEnd - index - 2)
+                    let content = text.substring(with: contentRange).lowercased()
+                    let attributes = Self.levels.contains(content)
+                        ? theme.keywordAttributes
+                        : theme.variableAttributes
+                    applyAttributes(attributes, range: tokenRange, visibleIn: visibleRange, to: storage)
                     index = tokenEnd
                     continue
                 }
@@ -2127,7 +2256,17 @@ private func lineStart(in text: NSString, at location: Int) -> Int {
     if index == text.length, index > 0 {
         index -= 1
     }
-    while index > 0, text.character(at: index - 1) != 10 {
+    if index > 0,
+       index < text.length,
+       text.character(at: index) == 10,
+       text.character(at: index - 1) == 13 {
+        index -= 1
+    }
+    while index > 0 {
+        let previous = text.character(at: index - 1)
+        if previous == 10 || previous == 13 {
+            break
+        }
         index -= 1
     }
     return index
@@ -2135,10 +2274,19 @@ private func lineStart(in text: NSString, at location: Int) -> Int {
 
 private func lineEnd(in text: NSString, at location: Int) -> Int {
     var index = min(max(location, 0), text.length)
-    while index < text.length, text.character(at: index) != 10 {
+    while index < text.length {
+        let character = text.character(at: index)
+        if character == 10 || character == 13 {
+            break
+        }
         index += 1
     }
     if index < text.length {
+        if text.character(at: index) == 13,
+           index + 1 < text.length,
+           text.character(at: index + 1) == 10 {
+            index += 1
+        }
         index += 1
     }
     return index

@@ -65,6 +65,7 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ### 1.1.5
 - Improved markdown preview pane.
+- Improved syntax highlighting.
 
 ### 1.1.4
 - Improved auto-indent analyzer.
