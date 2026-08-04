@@ -700,6 +700,7 @@ struct ContentView: View {
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
                             isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: primaryTab),
+                            markdownPreviewWidth: $preferences.markdownPreviewWidth,
                             statusIndicators: workspace.statusIndicators(for: primaryTab),
                             onFocus: { workspace.focusPane(.primary) },
                             onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) },
@@ -733,6 +734,7 @@ struct ContentView: View {
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
                             isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: secondaryTab),
+                            markdownPreviewWidth: $preferences.markdownPreviewWidth,
                             statusIndicators: workspace.statusIndicators(for: secondaryTab),
                             onFocus: { workspace.focusPane(.secondary) },
                             onToggleMarkdownPreview: { toggleMarkdownPreview(for: secondaryTab.id) },
@@ -768,6 +770,7 @@ struct ContentView: View {
                             editorFont: preferences.editorFont,
                             editorSemiboldFont: preferences.editorSemiboldFont,
                             isMarkdownPreviewVisible: isMarkdownPreviewVisible(for: primaryTab),
+                            markdownPreviewWidth: $preferences.markdownPreviewWidth,
                             onFocus: { workspace.focusPane(.primary) },
                             onToggleMarkdownPreview: { toggleMarkdownPreview(for: primaryTab.id) },
                             onOpenMarkdownPreviewWindow: { markdown in
@@ -1252,6 +1255,7 @@ private struct EditorAreaView: View {
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
     let isMarkdownPreviewVisible: Bool
+    let markdownPreviewWidth: Binding<Double>
     let onFocus: () -> Void
     let onToggleMarkdownPreview: () -> Void
     let onOpenMarkdownPreviewWindow: (String) -> Void
@@ -1316,19 +1320,13 @@ private struct EditorAreaView: View {
     @ViewBuilder
     private var editorContent: some View {
         if language == .markdown {
-            HSplitView {
-                codeEditor
-                    .frame(minWidth: 260)
-
-                if isMarkdownPreviewVisible {
-                    markdownPreviewPane
-                        .frame(minWidth: 260, idealWidth: 420)
-                        .layoutPriority(1)
-                } else {
-                    markdownPreviewCollapsedRail
-                        .frame(minWidth: 38, idealWidth: 38, maxWidth: 38)
-                }
-            }
+            MarkdownEditorSplitView(
+                previewWidth: markdownPreviewWidth,
+                isPreviewVisible: isMarkdownPreviewVisible,
+                editor: codeEditor,
+                preview: markdownPreviewPane,
+                collapsedPreview: markdownPreviewCollapsedRail
+            )
         } else {
             codeEditor
         }
@@ -1471,12 +1469,17 @@ private struct EditorAreaView: View {
     }
 
     private func handleEditorTextChange(_ updatedText: String) {
-        if language == .markdown {
-            markdownPreviewEditorID = editorID
-            latestMarkdownText = updatedText
-            onMarkdownPreviewTextChange(updatedText)
+        let sourceEditorID = editorID
+        DispatchQueue.main.async {
+            guard sourceEditorID == editorID else { return }
+
+            if language == .markdown {
+                markdownPreviewEditorID = sourceEditorID
+                latestMarkdownText = updatedText
+                onMarkdownPreviewTextChange(updatedText)
+            }
+            scheduleMarkdownPreviewUpdate(updatedText)
         }
-        scheduleMarkdownPreviewUpdate(updatedText)
     }
 
     @ViewBuilder
@@ -1521,6 +1524,139 @@ private struct EditorAreaView: View {
     }
 }
 
+private struct MarkdownEditorSplitView<EditorContent: View, PreviewContent: View, CollapsedPreviewContent: View>: View {
+    private static var minimumEditorWidth: CGFloat { 260 }
+    private static var dividerHitWidth: CGFloat { 12 }
+    private static var collapsedPreviewWidth: CGFloat { 38 }
+
+    @Binding var previewWidth: Double
+    let isPreviewVisible: Bool
+    let editor: EditorContent
+    let preview: PreviewContent
+    let collapsedPreview: CollapsedPreviewContent
+    @State private var dragStartPreviewWidth: CGFloat?
+    @State private var draggedPreviewWidth: CGFloat?
+    @State private var isResizeHandleHovered = false
+
+    var body: some View {
+        GeometryReader { geometry in
+            HStack(spacing: 0) {
+                editor
+                    .frame(minWidth: Self.minimumEditorWidth, maxWidth: .infinity, maxHeight: .infinity)
+
+                if isPreviewVisible {
+                    resizeHandle(totalWidth: geometry.size.width)
+
+                    preview
+                        .frame(width: resolvedPreviewWidth(totalWidth: geometry.size.width))
+                        .frame(maxHeight: .infinity)
+                } else {
+                    collapsedPreview
+                        .frame(width: Self.collapsedPreviewWidth)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+        }
+    }
+
+    private func resizeHandle(totalWidth: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color.clear)
+            .frame(width: Self.dividerHitWidth)
+            .overlay {
+                ZStack {
+                    Rectangle()
+                        .fill(Color(nsColor: .separatorColor))
+                        .frame(width: 1)
+
+                    Capsule()
+                        .fill(
+                            isResizeHandleHovered
+                                ? Color.accentColor
+                                : Color(nsColor: .secondaryLabelColor)
+                        )
+                        .frame(width: 4, height: 36)
+                        .shadow(
+                            color: .black.opacity(isResizeHandleHovered ? 0.18 : 0.08),
+                            radius: 1,
+                            y: 1
+                        )
+                }
+            }
+            .contentShape(Rectangle())
+            .onHover { isHovering in
+                isResizeHandleHovered = isHovering
+                if isHovering {
+                    NSCursor.resizeLeftRight.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { value in
+                        let startingWidth = dragStartPreviewWidth
+                            ?? clampedPreviewWidth(
+                                CGFloat(previewWidth),
+                                totalWidth: totalWidth
+                            )
+                        if dragStartPreviewWidth == nil {
+                            dragStartPreviewWidth = startingWidth
+                        }
+
+                        draggedPreviewWidth = clampedPreviewWidth(
+                            startingWidth - value.translation.width,
+                            totalWidth: totalWidth
+                        )
+                    }
+                    .onEnded { _ in
+                        if let draggedPreviewWidth {
+                            previewWidth = Double(draggedPreviewWidth)
+                        }
+                        dragStartPreviewWidth = nil
+                        draggedPreviewWidth = nil
+                    }
+            )
+            .help("Drag to resize Markdown preview")
+            .accessibilityElement()
+            .accessibilityLabel("Markdown preview width")
+            .accessibilityValue("\(Int(resolvedPreviewWidth(totalWidth: totalWidth))) points")
+            .accessibilityAdjustableAction { direction in
+                let adjustment: CGFloat = direction == .increment ? 20 : -20
+                previewWidth = Double(
+                    clampedPreviewWidth(
+                        resolvedPreviewWidth(totalWidth: totalWidth) + adjustment,
+                        totalWidth: totalWidth
+                    )
+                )
+            }
+    }
+
+    private func resolvedPreviewWidth(totalWidth: CGFloat) -> CGFloat {
+        clampedPreviewWidth(
+            draggedPreviewWidth ?? CGFloat(previewWidth),
+            totalWidth: totalWidth
+        )
+    }
+
+    private func clampedPreviewWidth(_ requestedWidth: CGFloat, totalWidth: CGFloat) -> CGFloat {
+        return min(
+            max(requestedWidth, CGFloat(AppPreferences.minMarkdownPreviewWidth)),
+            maximumPreviewWidth(totalWidth: totalWidth)
+        )
+    }
+
+    private func maximumPreviewWidth(totalWidth: CGFloat) -> CGFloat {
+        max(
+            CGFloat(AppPreferences.minMarkdownPreviewWidth),
+            min(
+                CGFloat(AppPreferences.maxMarkdownPreviewWidth),
+                totalWidth - Self.minimumEditorWidth - Self.dividerHitWidth
+            )
+        )
+    }
+}
+
 private struct EditorSplitPaneView<SearchBarContent: View>: View {
     let showsExternalModificationBanner: Bool
     let isExternalModificationBannerDismissed: Binding<Bool>
@@ -1541,6 +1677,7 @@ private struct EditorSplitPaneView<SearchBarContent: View>: View {
     let editorFont: NSFont
     let editorSemiboldFont: NSFont
     let isMarkdownPreviewVisible: Bool
+    let markdownPreviewWidth: Binding<Double>
     let statusIndicators: [EditorFileStatusKind]
     let onFocus: () -> Void
     let onToggleMarkdownPreview: () -> Void
@@ -1640,6 +1777,7 @@ private struct EditorSplitPaneView<SearchBarContent: View>: View {
                 editorFont: editorFont,
                 editorSemiboldFont: editorSemiboldFont,
                 isMarkdownPreviewVisible: isMarkdownPreviewVisible,
+                markdownPreviewWidth: markdownPreviewWidth,
                 onFocus: onFocus,
                 onToggleMarkdownPreview: onToggleMarkdownPreview,
                 onOpenMarkdownPreviewWindow: onOpenMarkdownPreviewWindow,

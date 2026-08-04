@@ -75,6 +75,9 @@ final class AppPreferences: ObservableObject {
     static let maxIndentWidth = 8
     static let defaultSyntaxHighlightingEnabled = true
     static let defaultAutoOpenMarkdownPreviews = true
+    static let defaultMarkdownPreviewWidth: Double = 420
+    static let minMarkdownPreviewWidth: Double = 260
+    static let maxMarkdownPreviewWidth: Double = 1_600
     static let defaultRecentItemLimit = 5
     static let minRecentItemLimit = 0
     static let maxRecentItemLimit = 20
@@ -167,6 +170,20 @@ final class AppPreferences: ObservableObject {
     @Published var autoOpenMarkdownPreviews: Bool {
         didSet {
             userDefaults.set(autoOpenMarkdownPreviews, forKey: Keys.autoOpenMarkdownPreviews)
+        }
+    }
+
+    @Published var markdownPreviewWidth: Double {
+        didSet {
+            let clampedWidth = min(
+                max(markdownPreviewWidth, Self.minMarkdownPreviewWidth),
+                Self.maxMarkdownPreviewWidth
+            )
+            if clampedWidth != markdownPreviewWidth {
+                markdownPreviewWidth = clampedWidth
+                return
+            }
+            userDefaults.set(markdownPreviewWidth, forKey: Keys.markdownPreviewWidth)
         }
     }
 
@@ -266,6 +283,15 @@ final class AppPreferences: ObservableObject {
             autoOpenMarkdownPreviews = Self.defaultAutoOpenMarkdownPreviews
         }
 
+        if userDefaults.object(forKey: Keys.markdownPreviewWidth) != nil {
+            let storedWidth = userDefaults.double(forKey: Keys.markdownPreviewWidth)
+            markdownPreviewWidth = storedWidth.isFinite
+                ? min(max(storedWidth, Self.minMarkdownPreviewWidth), Self.maxMarkdownPreviewWidth)
+                : Self.defaultMarkdownPreviewWidth
+        } else {
+            markdownPreviewWidth = Self.defaultMarkdownPreviewWidth
+        }
+
         if userDefaults.object(forKey: Keys.recentItemLimit) != nil {
             recentItemLimit = userDefaults.integer(forKey: Keys.recentItemLimit)
         } else {
@@ -295,6 +321,7 @@ final class AppPreferences: ObservableObject {
         userDefaults.set(showsInvisibleCharacters, forKey: Keys.showsInvisibleCharacters)
         userDefaults.set(trimsTrailingWhitespaceOnSave, forKey: Keys.trimsTrailingWhitespaceOnSave)
         userDefaults.set(autoOpenMarkdownPreviews, forKey: Keys.autoOpenMarkdownPreviews)
+        userDefaults.set(markdownPreviewWidth, forKey: Keys.markdownPreviewWidth)
         userDefaults.set(recentItemLimit, forKey: Keys.recentItemLimit)
         persistRecentItems()
         applyAppAppearance()
@@ -522,6 +549,7 @@ private enum Keys {
     static let showsInvisibleCharacters = "preferences.showsInvisibleCharacters"
     static let trimsTrailingWhitespaceOnSave = "preferences.trimsTrailingWhitespaceOnSave"
     static let autoOpenMarkdownPreviews = "preferences.autoOpenMarkdownPreviews"
+    static let markdownPreviewWidth = "preferences.markdownPreviewWidth"
     static let recentItemLimit = "preferences.recentItemLimit"
     static let recentItems = "preferences.recentItems"
 }

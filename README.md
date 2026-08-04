@@ -63,6 +63,9 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ## 📝 Changelog
 
+### 1.1.5
+- Improved markdown preview pane.
+
 ### 1.1.4
 - Improved auto-indent analyzer.
 - Added support for YAML Syntax Highlighting.
