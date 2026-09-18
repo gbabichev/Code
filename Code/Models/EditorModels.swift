@@ -667,8 +667,7 @@ struct EditorSessionSnapshot: Codable {
     var isBlankWorkspace: Bool {
         rootFolderPath == nil
             && selectedFilePath == nil
-            && !tabs.isEmpty
-            && tabs.allSatisfy(\.isBlankUntitledTab)
+            && (tabs.isEmpty || tabs.allSatisfy(\.isBlankUntitledTab))
     }
 }
 

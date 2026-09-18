@@ -9,9 +9,14 @@ struct SessionStore {
     private let fileManager: FileManager
     private let sessionURL: URL
 
-    init(sessionID: String? = nil, fileManager: FileManager = .default) {
+    init(
+        sessionID: String? = nil,
+        fileManager: FileManager = .default,
+        applicationSupportDirectoryURL: URL? = nil
+    ) {
         self.fileManager = fileManager
-        let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupportURL = applicationSupportDirectoryURL
+            ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let directoryURL = appSupportURL.appendingPathComponent("Code", isDirectory: true)
 
         if !fileManager.fileExists(atPath: directoryURL.path(percentEncoded: false)) {
@@ -49,8 +54,35 @@ struct SessionStore {
         try? data.write(to: sessionURL, options: .atomic)
     }
 
-    static func savedSessions(fileManager: FileManager = .default) -> [(id: String, modificationDate: Date)] {
-        let appSupportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+    func remove() {
+        guard fileManager.fileExists(atPath: sessionURL.path(percentEncoded: false)) else { return }
+        try? fileManager.removeItem(at: sessionURL)
+    }
+
+    static func removeSavedSessions(
+        excluding retainedSessionIDs: Set<String>,
+        fileManager: FileManager = .default,
+        applicationSupportDirectoryURL: URL? = nil
+    ) {
+        for session in savedSessions(
+            fileManager: fileManager,
+            applicationSupportDirectoryURL: applicationSupportDirectoryURL
+        )
+        where !retainedSessionIDs.contains(session.id) {
+            SessionStore(
+                sessionID: session.id,
+                fileManager: fileManager,
+                applicationSupportDirectoryURL: applicationSupportDirectoryURL
+            ).remove()
+        }
+    }
+
+    static func savedSessions(
+        fileManager: FileManager = .default,
+        applicationSupportDirectoryURL: URL? = nil
+    ) -> [(id: String, modificationDate: Date)] {
+        let appSupportURL = applicationSupportDirectoryURL
+            ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let sessionsDirectoryURL = appSupportURL
             .appendingPathComponent("Code", isDirectory: true)
             .appendingPathComponent("Sessions", isDirectory: true)

@@ -191,6 +191,7 @@ private struct WorkspaceContentView: View {
     @StateObject private var searchController = EditorSearchController()
     @EnvironmentObject private var activeWorkspaceRegistry: ActiveWorkspaceRegistry
     @EnvironmentObject private var workspacePersistenceRegistry: WorkspacePersistenceRegistry
+    @EnvironmentObject private var sessionRegistry: WorkspaceSessionRegistry
     @EnvironmentObject private var detachedTabTransfer: DetachedTabTransferCoordinator
     @EnvironmentObject private var externalFileRouter: ExternalFileRouter
     @EnvironmentObject private var recentItemRouter: RecentItemRouter
@@ -229,7 +230,11 @@ private struct WorkspaceContentView: View {
             .onDisappear {
                 workspacePersistenceRegistry.unregister(workspace)
                 activeWorkspaceRegistry.clearIfNeeded(workspace)
-                workspace.flushSession()
+                if sessionRegistry.consumeSessionDiscardRequest(sessionID: sessionID) {
+                    workspace.discardSession()
+                } else {
+                    workspace.flushSession()
+                }
             }
             .onChange(of: externalFileRouter.pendingRequestID) { _, _ in
                 openPendingExternalFiles()

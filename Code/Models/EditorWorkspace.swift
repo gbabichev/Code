@@ -961,6 +961,12 @@ final class EditorWorkspace: ObservableObject {
         writeSession(flushPendingModelSync: true, reconcileDirtyStates: true)
     }
 
+    func discardSession() {
+        persistSessionTimer?.invalidate()
+        persistSessionTimer = nil
+        sessionStore.remove()
+    }
+
     private func writeSession(flushPendingModelSync: Bool, reconcileDirtyStates: Bool) {
         persistSessionTimer?.invalidate()
         persistSessionTimer = nil

@@ -12,18 +12,22 @@ final class WorkspaceSessionRegistry: ObservableObject {
 
     private let userDefaults: UserDefaults
     private let fileManager: FileManager
+    private let applicationSupportDirectoryURL: URL?
     private var didConsumeLaunchRestore = false
     private var connectedSessionCounts: [String: Int] = [:]
     private var pendingLaunchRestoreSessionIDs: [String] = []
+    private var discardedSessionIDs: Set<String> = []
     private var pendingRestoreWorkItem: DispatchWorkItem?
     private var isLaunchRestorationActive = true
 
     init(
         userDefaults: UserDefaults = .standard,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        applicationSupportDirectoryURL: URL? = nil
     ) {
         self.userDefaults = userDefaults
         self.fileManager = fileManager
+        self.applicationSupportDirectoryURL = applicationSupportDirectoryURL
     }
 
     func makeSceneBootstrapSessionID() -> String {
@@ -76,9 +80,24 @@ final class WorkspaceSessionRegistry: ObservableObject {
 
         guard connectedSessionCounts[sessionID, default: 0] <= 1 else { return }
 
+        discardedSessionIDs.insert(sessionID)
+        SessionStore(
+            sessionID: sessionID,
+            fileManager: fileManager,
+            applicationSupportDirectoryURL: applicationSupportDirectoryURL
+        ).remove()
+
         var sessionIDs = storedRestorableSessionIDs()
         sessionIDs.removeAll { $0 == sessionID }
         userDefaults.set(sessionIDs, forKey: Keys.restorableSessionIDs)
+        if userDefaults.string(forKey: Keys.lastFocusedSessionID) == sessionID {
+            userDefaults.removeObject(forKey: Keys.lastFocusedSessionID)
+        }
+    }
+
+    func consumeSessionDiscardRequest(sessionID: String) -> Bool {
+        guard !sessionID.isEmpty else { return false }
+        return discardedSessionIDs.remove(sessionID) != nil
     }
 
     func noteRestoredSceneSession(sessionID: String) {
@@ -102,9 +121,16 @@ final class WorkspaceSessionRegistry: ObservableObject {
     }
 
     private func orderedRestorableSessionIDs() -> [String] {
-        let savedSessions = SessionStore.savedSessions(fileManager: fileManager)
+        let savedSessions = SessionStore.savedSessions(
+            fileManager: fileManager,
+            applicationSupportDirectoryURL: applicationSupportDirectoryURL
+        )
         let availableSessionIDs = storedRestorableSessionIDs().filter {
-            SessionStore(sessionID: $0, fileManager: fileManager).hasSavedSession
+            SessionStore(
+                sessionID: $0,
+                fileManager: fileManager,
+                applicationSupportDirectoryURL: applicationSupportDirectoryURL
+            ).hasSavedSession
         }
 
         if availableSessionIDs != storedRestorableSessionIDs() {
@@ -121,7 +147,39 @@ final class WorkspaceSessionRegistry: ObservableObject {
             orderedSessionIDs = availableSessionIDs
         }
 
-        return filteredLaunchRestoreSessionIDs(from: orderedSessionIDs)
+        let restorableSessionIDs = filteredLaunchRestoreSessionIDs(from: orderedSessionIDs)
+        let connectedSessionIDs = Set(connectedSessionCounts.compactMap { sessionID, count in
+            count > 0 ? sessionID : nil
+        })
+        let retainedSessionIDs = Set(restorableSessionIDs)
+            .union(connectedSessionIDs)
+            .union(pendingLaunchRestoreSessionIDs)
+
+        SessionStore.removeSavedSessions(
+            excluding: retainedSessionIDs,
+            fileManager: fileManager,
+            applicationSupportDirectoryURL: applicationSupportDirectoryURL
+        )
+
+        let storedSessionIDs = storedRestorableSessionIDs()
+        var reconciledStoredSessionIDs = restorableSessionIDs
+        for sessionID in storedSessionIDs where retainedSessionIDs.contains(sessionID) {
+            if !reconciledStoredSessionIDs.contains(sessionID) {
+                reconciledStoredSessionIDs.append(sessionID)
+            }
+        }
+        for sessionID in connectedSessionIDs where !reconciledStoredSessionIDs.contains(sessionID) {
+            reconciledStoredSessionIDs.append(sessionID)
+        }
+        if reconciledStoredSessionIDs != storedSessionIDs {
+            userDefaults.set(reconciledStoredSessionIDs, forKey: Keys.restorableSessionIDs)
+        }
+        if let lastFocusedSessionID = userDefaults.string(forKey: Keys.lastFocusedSessionID),
+           !retainedSessionIDs.contains(lastFocusedSessionID) {
+            userDefaults.removeObject(forKey: Keys.lastFocusedSessionID)
+        }
+
+        return restorableSessionIDs
     }
 
     private func fallbackRestorableSessionIDs(from savedSessions: [(id: String, modificationDate: Date)]) -> [String] {
@@ -159,9 +217,14 @@ final class WorkspaceSessionRegistry: ObservableObject {
     private func filteredLaunchRestoreSessionIDs(from sessionIDs: [String]) -> [String] {
         guard !sessionIDs.isEmpty else { return [] }
 
-        let classifiedSessionIDs = sessionIDs.map { sessionID in
-            let snapshot = SessionStore(sessionID: sessionID, fileManager: fileManager).load()
-            return (sessionID: sessionID, isBlankWorkspace: snapshot?.isBlankWorkspace == true)
+        let classifiedSessionIDs: [(sessionID: String, isBlankWorkspace: Bool)] = sessionIDs.compactMap { sessionID in
+            let snapshot = SessionStore(
+                sessionID: sessionID,
+                fileManager: fileManager,
+                applicationSupportDirectoryURL: applicationSupportDirectoryURL
+            ).load()
+            guard let snapshot else { return nil }
+            return (sessionID: sessionID, isBlankWorkspace: snapshot.isBlankWorkspace)
         }
 
         let nonBlankSessionIDs = classifiedSessionIDs

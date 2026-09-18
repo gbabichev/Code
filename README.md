@@ -63,6 +63,9 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ## 📝 Changelog
 
+### 1.1.6
+- Fixed stale sessions not clearing on disk.
+
 ### 1.1.5
 - Improved markdown preview pane.
 - Improved syntax highlighting.
