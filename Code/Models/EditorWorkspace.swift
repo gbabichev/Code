@@ -452,6 +452,8 @@ final class EditorWorkspace: ObservableObject {
     func selectTab(_ id: EditorTab.ID, persist: Bool = true) {
         guard tab(withID: id) != nil else { return }
 
+        synchronizeTabWithDisk(id)
+
         if primaryTabID == id {
             focusedPane = .primary
         } else if secondaryTabID == id {
@@ -576,6 +578,19 @@ final class EditorWorkspace: ObservableObject {
             guard let currentDiskState = try? diskState(for: fileURL) else { continue }
             guard knownDiskStatesByTabID[tab.id] != currentDiskState else { continue }
             noteExternalModification(for: tab.id, diskState: currentDiskState)
+        }
+    }
+
+    private func synchronizeTabWithDisk(_ id: EditorTab.ID) {
+        ActiveEditorTextViewRegistry.shared.flushAllPendingModelSync()
+        guard let tab = tab(withID: id), let fileURL = tab.fileURL else { return }
+        guard let currentDiskState = try? diskState(for: fileURL) else { return }
+        guard knownDiskStatesByTabID[tab.id] != currentDiskState else { return }
+
+        if tab.isDirty {
+            noteExternalModification(for: tab.id, diskState: currentDiskState)
+        } else {
+            _ = refreshFile(for: tab.id, reportErrors: false)
         }
     }
 

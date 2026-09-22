@@ -21,6 +21,7 @@ struct TabBarView: View {
     let onMoveToEnd: (EditorTab.ID) -> Void
     let onMoveToNewWindow: (EditorTab.ID) -> Void
     let onOpenInSplitView: (EditorTab.ID) -> Void
+    let onRefresh: (EditorTab.ID) -> Void
     let onCloseOtherTabs: (EditorTab.ID) -> Void
     let statusIndicators: (EditorTab) -> [EditorFileStatusKind]
     @State private var draggedTabID: EditorTab.ID?
@@ -39,6 +40,7 @@ struct TabBarView: View {
                             onMove: onMove,
                             onMoveToNewWindow: onMoveToNewWindow,
                             onOpenInSplitView: onOpenInSplitView,
+                            onRefresh: onRefresh,
                             onCloseOtherTabs: onCloseOtherTabs,
                             statusIndicators: statusIndicators(tab)
                         )
@@ -94,6 +96,7 @@ private struct TabItemView: View {
     let onMove: (EditorTab.ID, EditorTab.ID) -> Void
     let onMoveToNewWindow: (EditorTab.ID) -> Void
     let onOpenInSplitView: (EditorTab.ID) -> Void
+    let onRefresh: (EditorTab.ID) -> Void
     let onCloseOtherTabs: (EditorTab.ID) -> Void
     let statusIndicators: [EditorFileStatusKind]
 
@@ -155,6 +158,13 @@ private struct TabItemView: View {
             }
         )
         .contextMenu {
+            Button("Refresh") {
+                onRefresh(tab.id)
+            }
+            .disabled(tab.fileURL == nil)
+
+            Divider()
+
             Button("Close This Tab") {
                 onClose(tab.id)
             }

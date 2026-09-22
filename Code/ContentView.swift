@@ -272,6 +272,7 @@ struct ContentView: View {
                     onMoveToEnd: workspace.moveTabToEnd,
                     onMoveToNewWindow: moveTabToNewWindow,
                     onOpenInSplitView: workspace.openTabInSplitView,
+                    onRefresh: workspace.requestRefreshFile,
                     onCloseOtherTabs: workspace.requestCloseOtherTabs,
                     statusIndicators: workspace.statusIndicators(for:)
                 )
