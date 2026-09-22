@@ -63,6 +63,10 @@ Choose a light or dark appearance, switch editor skins, adjust font and wrapping
 
 ## 📝 Changelog
 
+### 1.1.7
+- Improved unknown file type classification. File types not explicitly defined will no longer open as 'binary'.
+- Refresh files when switching tabs and add tab refresh action
+
 ### 1.1.6
 - Fixed stale sessions not clearing on disk.
 
