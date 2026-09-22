@@ -19,7 +19,7 @@ final class EditorWorkspace: ObservableObject {
         "bash", "c", "cc", "conf", "config", "cpp", "css", "csv", "env",
         "h", "hpp", "html", "ini", "js", "json", "ksh", "log", "m", "md",
         "markdown", "mm", "plist", "properties", "ps1", "psd1", "psm1", "py",
-        "pyi", "pyw", "rb", "sh", "swift", "toml", "txt", "xml", "yaml", "yml",
+        "pyi", "pyw", "rb", "sh", "srt", "swift", "toml", "txt", "xml", "yaml", "yml",
         "zsh"
     ]
 
@@ -1461,7 +1461,19 @@ final class EditorWorkspace: ObservableObject {
             return false
         }
 
-        return true
+        let requiresContentInspection = contentType.isDynamic
+            || contentType == .data
+            || contentType == .content
+            || contentType == .item
+        guard requiresContentInspection else { return true }
+        guard let fileHandle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? fileHandle.close() }
+
+        guard let sample = try? fileHandle.read(upToCount: FileContentClassifier.sampleByteCount) else {
+            return false
+        }
+
+        return FileContentClassifier.isLikelyBinary(sample)
     }
 
     private func inferredIndentationSettings(for content: String) -> EditorIndentationSettings {
